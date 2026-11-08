@@ -1,6 +1,6 @@
 //! Immutable lexical indexes over caller-owned frozen candidate rows.
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Mutex, RwLock},
 };
@@ -11,15 +11,16 @@ use tantivy::{
     Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term,
     collector::TopDocs,
     query::{BooleanQuery, ConstScoreQuery, Occur, Query, TermQuery, TermSetQuery},
-    schema::{
-        Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
-    },
+    schema::{Field, IndexRecordOption, Value},
     snippet::SnippetGenerator,
-    tokenizer::{LowerCaser, RemoveLongFilter, TextAnalyzer, TokenStream},
 };
-use tantivy_jieba::JiebaTokenizer;
 mod grouped;
+pub(crate) mod live;
 mod scoped;
+mod search;
+mod text;
+pub use text::match_score;
+use text::{analyzer, schema, tokenize};
 #[cfg(windows)]
 mod windows_directory;
 
@@ -79,11 +80,13 @@ struct Fields {
     group: Field,
 }
 struct Inner {
+    index: Index,
     reader: IndexReader,
     writer: Mutex<Option<IndexWriter>>,
     fields: Fields,
     coverage: RwLock<IndexCoverage>,
     scopes: RwLock<BTreeMap<String, String>>,
+    live_stats: Option<Arc<live::LiveStats>>,
 }
 
 impl RetrievalIndex {
@@ -133,6 +136,13 @@ impl RetrievalIndex {
                 payload
             }
         };
+        let live_stats = live::LiveStats::load(path.as_ref())?.map(Arc::new);
+        if let Some(stats) = &live_stats {
+            ensure!(
+                stats.count() as u64 == reader.searcher().num_docs(),
+                "live lexical statistics disagree with index"
+            );
+        }
         let coverage = IndexCoverage {
             through_commit_seq: payload.through_commit_seq,
             generation: payload.generation,
@@ -140,11 +150,13 @@ impl RetrievalIndex {
         };
         Ok(Self {
             inner: Arc::new(Inner {
+                index,
                 reader,
                 writer: Mutex::new(Some(writer)),
                 fields,
                 coverage: RwLock::new(coverage),
                 scopes: RwLock::new(payload.scopes),
+                live_stats,
             }),
         })
     }
@@ -287,6 +299,33 @@ impl RetrievalIndex {
         Ok(coverage)
     }
 
+    /// Bound deleted postings and segment growth without mutating any earlier snapshot.
+    pub(crate) fn compact_if_needed(&self) -> Result<bool> {
+        let searcher = self.inner.reader.searcher();
+        let segments = searcher.segment_readers();
+        let total: u64 = segments
+            .iter()
+            .map(|segment| u64::from(segment.max_doc()))
+            .sum();
+        let live = searcher.num_docs();
+        if total.saturating_sub(live) <= live.max(512) && segments.len() <= 32 {
+            return Ok(false);
+        }
+        drop(searcher);
+        let mut guard = self
+            .inner
+            .writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lexical writer lock poisoned"))?;
+        let writer = guard.as_mut().context("lexical index is closed")?;
+        let segments = self.inner.index.searchable_segment_ids()?;
+        if !segments.is_empty() {
+            writer.merge(&segments).wait()?;
+            self.inner.reader.reload()?;
+        }
+        Ok(true)
+    }
+
     /// Natural language is literal text; it is never parsed as Tantivy query syntax.
     pub fn search(
         &self,
@@ -310,213 +349,32 @@ impl RetrievalIndex {
         self.search_inner(query, namespace_id, subject_id, limit, Some(allowed), None)
     }
 
-    pub fn search_grouped(
-        &self,
-        query: &str,
-        allowed: &BTreeSet<String>,
-        limit: usize,
-        passages: usize,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(SearchPage, crate::grouping::LaneCoverage)> {
-        let collector = grouped::GroupedCollector {
-            limit,
-            passages,
-            cancel: cancel.clone(),
-        };
-        let mut coverage = crate::grouping::LaneCoverage {
-            recall_exhausted: true,
-            eligible_groups_known: Some(0),
-            ..Default::default()
-        };
-        let page = self.search_inner(
-            query,
-            "snapshot",
-            "snapshot",
-            limit,
-            Some(allowed),
-            Some((&collector, &mut coverage)),
-        )?;
-        cancel.check()?;
-        Ok((page, coverage))
-    }
-
-    fn search_inner(
-        &self,
-        query: &str,
-        namespace_id: &str,
-        subject_id: &str,
-        limit: usize,
-        allowed: Option<&BTreeSet<String>>,
-        grouped: Option<(
-            &grouped::GroupedCollector,
-            &mut crate::grouping::LaneCoverage,
-        )>,
-    ) -> Result<SearchPage> {
-        let coverage = self.coverage()?;
-        let terms = tokenize(query);
-        if terms.is_empty() || limit == 0 || allowed.is_some_and(BTreeSet::is_empty) {
-            return Ok(SearchPage {
-                hits: Vec::new(),
-                coverage,
-            });
-        }
-        ensure!(limit <= 10_000, "lexical candidate limit exceeds 10000");
-        let text = BooleanQuery::new(
-            terms
-                .into_iter()
-                .flat_map(|term| [self.inner.fields.body, self.inner.fields.title].map(move |field| {
-                    (
-                        Occur::Should,
-                        Box::new(TermQuery::new(
-                            Term::from_field_text(field, &term),
-                            IndexRecordOption::WithFreqs,
-                        )) as Box<dyn Query>,
-                    )
-                }))
-                .collect(),
-        );
-        let exact_scope = |field, value: &str| {
-            Box::new(ConstScoreQuery::new(
-                Box::new(TermQuery::new(
-                    Term::from_field_text(field, value),
-                    IndexRecordOption::Basic,
-                )),
-                0.0,
-            )) as Box<dyn Query>
-        };
-        let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![
-            (Occur::Must, Box::new(text)),
-            (
-                Occur::Must,
-                exact_scope(self.inner.fields.namespace, namespace_id),
-            ),
-            (
-                Occur::Must,
-                exact_scope(self.inner.fields.subject, subject_id),
-            ),
-        ];
-        if let Some(allowed) = allowed {
-            clauses.push((
-                Occur::Must,
-                Box::new(ConstScoreQuery::new(
-                    Box::new(TermSetQuery::new(
-                        allowed
-                            .iter()
-                            .map(|id| Term::from_field_text(self.inner.fields.id, id)),
-                    )),
-                    0.0,
-                )),
-            ));
-        }
-        let query = BooleanQuery::new(clauses);
-        let searcher = self.inner.reader.searcher();
-        let scored = if let Some((collector, coverage)) = grouped {
-            let (groups, examined) = searcher.search(&query, collector)?;
-            collector.cancel.check()?;
-            coverage.examined_rows = examined;
-            coverage.eligible_groups_known = Some(groups.len());
-            coverage.recall_exhausted = true;
-            coverage.truncated = groups.len() > collector.limit;
-            coverage.reason = coverage.truncated.then(|| "lane_group_limit".into());
-            let mut groups = groups.into_iter().collect::<Vec<_>>();
-            groups.sort_by(|a, b| b.1[0].0.total_cmp(&a.1[0].0).then(a.0.cmp(&b.0)));
-            let mut hits = groups
-                .into_iter()
-                .take(collector.limit)
-                .flat_map(|(_, hits)| hits)
-                .collect::<Vec<_>>();
-            hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-            hits
-        } else {
-            searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?
-        };
-        let hits = scored
-            .into_iter()
-            .map(|(score, address)| -> Result<SearchHit> {
-                let document: TantivyDocument = searcher.doc(address)?;
-                let id = document
-                    .get_first(self.inner.fields.id)
-                    .and_then(|v| v.as_str())
-                    .context("lexical document has no identity")?
-                    .to_owned();
-                Ok(SearchHit { id, score })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(SearchPage { hits, coverage })
-    }
-
     /// Select source offsets with the same analyzer as the lexical index.
     pub fn evidence(&self, query: &str, body: &str, title: &str) -> serde_json::Value {
-        let terms = tokenize(query).into_iter().map(|term| (term, 1.0)).collect();
+        let terms = tokenize(query)
+            .into_iter()
+            .map(|term| (term, 1.0))
+            .collect();
         let body_generator = SnippetGenerator::new(terms, analyzer(), self.inner.fields.body, 500);
         let body_snippet = body_generator.snippet(body);
-        let title_terms = tokenize(query).into_iter().map(|term| (term, 1.0)).collect();
-        let title_generator = SnippetGenerator::new(title_terms, analyzer(), self.inner.fields.title, 500);
+        let title_terms = tokenize(query)
+            .into_iter()
+            .map(|term| (term, 1.0))
+            .collect();
+        let title_generator =
+            SnippetGenerator::new(title_terms, analyzer(), self.inner.fields.title, 500);
         let title_snippet = title_generator.snippet(title);
         let mut fields = Vec::new();
-        if !title_snippet.is_empty() { fields.push("title"); }
-        if !body_snippet.is_empty() { fields.push("body"); }
+        if !title_snippet.is_empty() {
+            fields.push("title");
+        }
+        if !body_snippet.is_empty() {
+            fields.push("body");
+        }
         let range = body_snippet.fragment_range();
         serde_json::json!({
             "matched_fields": fields,
             "body_range": if body_snippet.is_empty() { None } else { Some([range.start, range.end]) },
         })
     }
-}
-
-/// Token overlap for a bounded authority delta, using the exact same Chinese/Latin analyzer.
-/// Index BM25 and this local score share matching semantics; the app owns rank fusion.
-pub fn match_score(query: &str, text: &str) -> Option<f32> {
-    let query = tokenize(query);
-    if query.is_empty() {
-        return None;
-    }
-    let document = tokenize(text);
-    let matched = query.intersection(&document).count();
-    (matched > 0).then_some(matched as f32 / query.len() as f32)
-}
-
-fn analyzer() -> TextAnalyzer {
-    TextAnalyzer::builder(JiebaTokenizer::new())
-        .filter(RemoveLongFilter::limit(80))
-        .filter(LowerCaser)
-        .build()
-}
-
-fn tokenize(text: &str) -> HashSet<String> {
-    let mut analyzer = analyzer();
-    let mut stream = analyzer.token_stream(text);
-    let mut terms = HashSet::new();
-    while stream.advance() {
-        let text = &stream.token().text;
-        if text.chars().any(char::is_alphanumeric) {
-            terms.insert(text.clone());
-        }
-    }
-    terms
-}
-
-fn schema() -> Schema {
-    let mut builder = Schema::builder();
-    builder.add_text_field("id", STRING | STORED);
-    builder.add_u64_field("group", tantivy::schema::FAST);
-    builder.add_text_field("namespace", STRING);
-    builder.add_text_field("subject", STRING);
-    builder.add_text_field(
-        "body",
-        TextOptions::default().set_indexing_options(
-            TextFieldIndexing::default()
-                .set_tokenizer(TOKENIZER)
-                .set_index_option(IndexRecordOption::WithFreqs),
-        ),
-    );
-    builder.add_text_field(
-        "title",
-        TextOptions::default().set_indexing_options(
-            TextFieldIndexing::default()
-                .set_tokenizer(TOKENIZER)
-                .set_index_option(IndexRecordOption::WithFreqs),
-        ),
-    );
-    builder.build()
 }

@@ -23,6 +23,7 @@ from nous.presentation import translate
 from nous.runtime.bootstrap import open_instance
 
 from . import cli, emit_content_view, language_for, options, run_async
+from .input_files import input_bytes
 
 note_cli = typer.Typer(help="Notes", no_args_is_help=True)
 journal_cli = typer.Typer(help="Journals", no_args_is_help=True)
@@ -41,7 +42,7 @@ def read_body(text: str | None, file: Path | None) -> str:
     if text is not None:
         return text
     if file is not None:
-        return file.read_bytes().decode("utf-8")
+        return input_bytes(file).decode("utf-8")
     if stdin:
         return sys.stdin.read()
     raise NousError("input.body_required", "Provide --text, --file or stdin")
@@ -114,8 +115,7 @@ def source_requests(
 async def _create(
     ctx: typer.Context,
     namespace: str | None,
-    text: str | None,
-    file: Path | None,
+    body: str,
     title: str | None,
     kind: str,
     remember: bool | None = None,
@@ -129,7 +129,6 @@ async def _create(
     inline: bool = False,
     annotate: bool = False,
 ) -> RecordOutcome:
-    body = read_body(text, file)
     async with open_instance(options(ctx).locator) as runtime:
         records = (await runtime.cognition(namespace)).records
         requests = source_requests(source, current_basis, inspiration)
@@ -178,8 +177,7 @@ def note_add(
             _create(
                 ctx,
                 namespace,
-                text,
-                file,
+                read_body(text, file),
                 title,
                 "note",
                 remember,
@@ -224,8 +222,7 @@ def journal_create(
             _create(
                 ctx,
                 namespace,
-                text,
-                file,
+                read_body(text, file),
                 title,
                 "journal",
                 purpose=purpose,
@@ -291,7 +288,7 @@ def revise_record(
     if source_changes is not None and clear_sources:
         raise NousError("input.conflicting_sources", "Choose source changes or --clear-sources")
     changes = (
-        SourceChanges.model_validate_json(source_changes.read_bytes())
+        SourceChanges.model_validate_json(input_bytes(source_changes))
         if source_changes
         else SourceChanges(preserve=False)
         if clear_sources
@@ -299,7 +296,7 @@ def revise_record(
     )
     body = read_body(text, file)
     mappings = (
-        TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
+        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
         if feedback_mappings
         else {}
     )
@@ -347,14 +344,14 @@ def patch_record(
     inline: bool = False,
     annotate: bool = False,
 ):
-    parsed = TypeAdapter(list[TextChange]).validate_json(changes.read_bytes())
+    parsed = TypeAdapter(list[TextChange]).validate_json(input_bytes(changes))
     mappings = (
-        TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
+        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
         if feedback_mappings
         else {}
     )
     bindings = (
-        SourceChanges.model_validate_json(source_changes.read_bytes()) if source_changes else None
+        SourceChanges.model_validate_json(input_bytes(source_changes)) if source_changes else None
     )
 
     async def run():

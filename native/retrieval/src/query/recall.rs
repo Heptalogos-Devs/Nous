@@ -32,6 +32,7 @@ impl Snapshot {
                 &refs,
                 limit,
                 o.passages_per_group,
+                self.inner.group_ranks.clone(),
                 cancel,
             )?;
             o.lane_coverage
@@ -69,15 +70,24 @@ impl Snapshot {
             .ok_or_else(|| failure("wave.capability_missing", "Dense vectors unavailable"))?;
         let ids = allowed
             .iter()
-            .map(|r| *r as i64 + 1)
+            .map(|r| self.inner.candidate_ids[*r as usize])
             .collect::<BTreeSet<_>>();
         if o.grouping != "document" {
             cancel.check()?;
             return Ok(ann
                 .search_candidates(vector, limit, Some(&ids))?
                 .into_iter()
-                .map(|h| ((h.id - 1) as u64, h.similarity))
-                .collect());
+                .map(|h| {
+                    self.inner
+                        .candidate_rows
+                        .get(&h.id)
+                        .copied()
+                        .map(|row| (row, h.similarity))
+                        .ok_or_else(|| {
+                            failure("wave.invalid_snapshot", "Unknown ANN candidate identity")
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?);
         }
         let groups = &self.inner.candidates.group_rows;
         let mut remaining = ids;
@@ -102,7 +112,9 @@ impl Snapshot {
                 }
                 added += 1;
                 remaining.remove(&hit.id);
-                let row = (hit.id - 1) as u64;
+                let row = *self.inner.candidate_rows.get(&hit.id).ok_or_else(|| {
+                    failure("wave.invalid_snapshot", "Unknown ANN candidate identity")
+                })?;
                 let group = groups[row as usize];
                 if !counts.contains_key(&group) && counts.len() >= limit {
                     continue;
@@ -119,7 +131,7 @@ impl Snapshot {
             }
             remaining.retain(|id| {
                 counts
-                    .get(&groups[(*id - 1) as usize])
+                    .get(&groups[self.inner.candidate_rows[id] as usize])
                     .is_none_or(|count| *count < o.passages_per_group)
             });
             if counts.len() >= limit {

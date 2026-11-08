@@ -1,95 +1,13 @@
 //! Complete coordinated candidate readout and result materialization.
 use super::*;
+mod materialize;
+mod pool;
+mod query_context;
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadoutRequest {
-    #[serde(default = "default_top_k")]
-    pub top_k: usize,
-    #[serde(default)]
-    pub include_trace: bool,
-    pub pool: PreparedPool,
-    pub allowed_file_ids: Option<Vec<i64>>,
-    #[serde(default)]
-    pub config: NativeConfig,
-}
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PoolCalibration {
-    pub id: i64,
-    pub union_score: f64,
-    pub union_rank: usize,
-    pub sources: Vec<String>,
-    pub anchor_score: f64,
-}
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PreparedPool {
-    pub candidates: Vec<CandidateInput>,
-    pub bm25_reference: f64,
-    pub selection: Vec<PoolCalibration>,
-}
-/// Calibrate over the complete authorized recall pool once, before selecting its union.
-pub fn prepare_pool(
-    connection: &MemoAssets,
-    cached: &PipelineOutput,
-    candidates: Vec<CandidateInput>,
-    config: &NativeConfig,
-    fixed: bool,
-) -> Result<PreparedPool, String> {
-    cached.validate_for(connection)?;
-    config.validate()?;
-    let curve_load = load_curves(connection, &candidates, connection.dimension)?;
-    let mut curves = curve_load.curves;
-    let local_domain: HashSet<i64> = cached.local_domain_ids.iter().copied().collect();
-    compute_anchor_scores(&mut curves, |curve| {
-        curve_load
-            .relations
-            .get(&curve.file_id)
-            .into_iter()
-            .flatten()
-            .filter(|t| local_domain.contains(&t.0) && connection.tag_vectors.contains_key(&t.0))
-            .count()
-    });
-    let bm25_reference = if config.bm25_k > 0 {
-        curves.iter().map(|c| c.bm25_score).fold(0.0, f64::max)
-    } else {
-        0.0
-    };
-    for curve in &mut curves {
-        curve.query_score = cosine(&cached.original_query_vector, &curve.chunk_vector);
-        curve.denoised_score = cosine(&cached.enhanced_vector, &curve.chunk_vector);
-        curve.local_score = cosine(&cached.local_vector, &curve.chunk_vector);
-        curve.transfer_score = cosine(&cached.transfer_vector, &curve.chunk_vector);
-    }
-    let all = if fixed { Some(curves.clone()) } else { None };
-    let mut selected = select_superset(curves, config, !fixed);
-    if let Some(all) = all {
-        for mut curve in all {
-            if !selected.iter().any(|c| c.id == curve.id) {
-                curve.union_rank = selected.len() + 1;
-                selected.push(curve);
-            }
-        }
-    }
-    let selection = selected
-        .iter()
-        .map(|c| PoolCalibration {
-            id: c.id,
-            union_score: c.union_score,
-            union_rank: c.union_rank,
-            sources: c.sources.clone(),
-            anchor_score: c.anchor_score,
-        })
-        .collect::<Vec<_>>();
-    let by_id = candidates
-        .into_iter()
-        .map(|c| (c.id, c))
-        .collect::<HashMap<_, _>>();
-    Ok(PreparedPool {
-        candidates: selected.iter().map(|c| by_id[&c.id].clone()).collect(),
-        bm25_reference,
-        selection,
-    })
-}
+use materialize::{ResultContext, materialize_results};
+pub use pool::{PoolCalibration, PreparedPool, ReadoutRequest, prepare_pool};
+use query_context::{QueryContext, query_context};
+
 pub fn readout(
     connection: &MemoAssets,
     cached: &PipelineOutput,
@@ -224,12 +142,15 @@ pub fn readout(
         })
         .collect();
     let maximum_bm25 = request.pool.bm25_reference;
+    let mut calibration_by_id = HashMap::new();
+    for calibration in &request.pool.selection {
+        calibration_by_id
+            .entry(calibration.id)
+            .or_insert(calibration);
+    }
     for curve in &mut curves {
-        let calibrated = request
-            .pool
-            .selection
-            .iter()
-            .find(|c| c.id == curve.id)
+        let calibrated = calibration_by_id
+            .get(&curve.id)
             .ok_or_else(|| "MEMO_POOL_CALIBRATION_MISSING".to_string())?;
         curve.union_score = calibrated.union_score;
         curve.union_rank = calibrated.union_rank;
@@ -267,77 +188,12 @@ pub fn readout(
     attach_tags(&mut curves, &curve_load.relations, &tag_vectors);
     let selected_count = curves.len();
 
-    let local_domain: HashSet<i64> = input.query_state.local_domain_ids.iter().copied().collect();
-    let workspace = FieldWorkspace {
-        local: normalize_field(&input.query_state.local_field),
-        transfer: normalize_field(&input.query_state.transfer_field),
-        local_domain,
-        transfer_domain: input
-            .query_state
-            .transfer_domain_ids
-            .iter()
-            .copied()
-            .collect(),
-        source_ids: input
-            .query_state
-            .source_field
-            .iter()
-            .map(|entry| entry.0)
-            .collect(),
-        active_edges: input
-            .query_state
-            .river_edges
-            .iter()
-            .filter_map(|edge| {
-                // Query support is conditioned on an observed, real transport edge.
-                let flow = clamp01(if edge.normalized_flow != 0.0 {
-                    edge.normalized_flow
-                } else {
-                    edge.flow
-                });
-                (flow >= input.config.minimum_river_edge_flow
-                    && artifact.edge_weight(edge.source_id, edge.target_id) > 0.0)
-                    .then_some(((edge.source_id, edge.target_id), flow))
-            })
-            .collect(),
-    };
-    let direct_ids: Vec<i64> = input
-        .query_state
-        .field_provenance
-        .iter()
-        .filter(|entry| {
-            entry.hop == 0 && matches!(entry.source_type.as_str(), "core" | "lexical_seed" | "seed")
-        })
-        .map(|entry| entry.id)
-        .collect();
-    let fallback_anchor = direct_ids.is_empty();
-    let anchor_ids: HashSet<i64> = if fallback_anchor {
-        input
-            .query_state
-            .source_field
-            .iter()
-            .map(|entry| entry.0)
-            .collect()
-    } else {
-        direct_ids.into_iter().collect()
-    };
-    let mut seeds: Vec<(i64, f64)> = input
-        .query_state
-        .source_field
-        .iter()
-        .filter(|entry| anchor_ids.contains(&entry.0) && entry.1 > 0.0)
-        .copied()
-        .collect();
-
-    let maximum_seed = seeds.iter().map(|s| s.1).fold(0.0, f64::max);
-    let core_ids: HashSet<i64> = input
-        .query_state
-        .field_provenance
-        .iter()
-        .filter(|p| p.hop == 0 && matches!(p.source_type.as_str(), "core" | "lexical_seed"))
-        .map(|p| p.id)
-        .collect();
-    seeds.retain(|s| s.1 >= maximum_seed * 0.2 || core_ids.contains(&s.0));
+    let QueryContext {
+        field: workspace,
+        seeds,
+        core_ids,
+        fallback_anchor,
+    } = query_context(&input, &artifact);
 
     // Query River 节点和 Direct Anchor/Seed 共享一次分块 Tag 向量读取。
     // 同一 ID 同时属于河网和锚点时只读取、解码并存储一次。
@@ -524,12 +380,11 @@ pub fn readout(
     assign_v3_scores(&mut work, mode, &omega, &input.config);
     let mut path_diagnostics = HashMap::<i64, Vec<Value>>::new();
     let mut selected_paths = Vec::<ScoredWork>::new();
+    let mut selected_by_id = HashMap::<i64, usize>::new();
     for item in work {
         path_diagnostics.entry(item.curve.id).or_default().push(serde_json::json!({"path":item.curve.path_index,"P":item.path_bonus,"G":item.gated_bonus,"B":item.pure_score,"A":item.anchor_bonus}));
-        if let Some(existing) = selected_paths
-            .iter_mut()
-            .find(|w| w.curve.id == item.curve.id)
-        {
+        if let Some(&index) = selected_by_id.get(&item.curve.id) {
+            let existing = &mut selected_paths[index];
             if item.path_bonus + item.gated_bonus > existing.path_bonus + existing.gated_bonus {
                 let base = existing.pure_score;
                 let anchor = existing.anchor_bonus;
@@ -541,6 +396,7 @@ pub fn readout(
                 existing.ranking_score = existing.final_score;
             }
         } else {
+            selected_by_id.insert(item.curve.id, selected_paths.len());
             selected_paths.push(item);
         }
     }
@@ -566,111 +422,18 @@ pub fn readout(
     work.sort_by(|a, b| b.ranking_score.total_cmp(&a.ranking_score));
     let ranked_count = work.len();
 
-    let results: Vec<NativeResultItem> = work
-        .into_iter()
-        .take(input.top_k.max(1))
-        .enumerate()
-        .map(|(index, item)| {
-            // Same set as before, listed in curve order instead of hash order.
-            let mut seen_names = HashSet::new();
-            let matched_tags: Vec<String> = item
-                .curve
-                .tags
-                .iter()
-                .filter(|tag| seen_names.insert(tag.name.as_str()))
-                .map(|tag| tag.name.clone())
-                .collect();
-            let core_tags_matched = matched_tags
-                .iter()
-                .filter(|name| core_tag_names.contains(&name.to_lowercase()))
-                .cloned()
-                .collect();
-            let topology_v3 = if input.include_trace {
-                Some(serde_json::json!({
-                    "mode": "conservative_candidate_self_topology_v2.2",
-                    "branchNodeCoverage": clamp01(item.topology.matched_node_coverage / 0.35),
-                    "branchEdgeCoverage": clamp01(item.topology.matched_edge_coverage / 0.20),
-                    "branchCoverage": branch_coverage(&item.topology, mode),
-                    "branchConfidence": branch_confidence(&item.topology, mode),
-                    "strongestNodeMatchQuality": item.topology.strongest_node_match_quality,
-                    "precisionGrounding": precision_grounding(&item.topology),
-                    "fieldSupport": item.observables.field_support,
-                    "fieldResonanceBeforeSupport": field_resonance(&item.curve, &input, 1.0).2,
-                    "queryScore": clamp01(item.curve.query_score),
-                    "fieldScore": item.field_score,
-                    "fieldResonanceBonus": item.field_resonance_bonus,
-                    "directEvidence": item.direct_evidence,
-                    "omega": omega.omega,
-                    "regime": omega.regime,
-                    "omegaEdge": omega.omega_edge,
-                    "omegaEmerge": omega.omega_emerge,
-                    "omegaFlow": omega.omega_flow,
-                    "omegaGamma": input.config.omega_gamma,
-                    "graphGate": omega.omega.powf(input.config.omega_gamma.max(0.0)),
-                    "v2Bonus": item.v2_bonus,
-                    "gatedV2Bonus": item.gated_bonus,
-                    "anchorScore": item.anchor.score,
-                    "anchorReliability": item.anchor.reliability,
-                    "anchorStrength": item.anchor.strength,
-                    "implicitOnlyAnchor": item.anchor.implicit_only,
-                    "explicitExactContacts": item.anchor.explicit_exact_contacts,
-                    "explicitSemanticContacts": item.anchor.explicit_semantic_contacts,
-                    "hasExplicitFocus": item.anchor.has_explicit_focus,
-                    "anchorBonus": item.anchor_bonus,
-                    "contactedSeeds": item.anchor.contacted_seeds,
-                    "exactContacts": item.anchor.exact_contacts,
-                    "semanticContacts": item.anchor.semantic_contacts,
-                    "meanClosure": item.anchor.mean_closure,
-                    "role": item.role,
-                    "pureScore": item.pure_score,
-                    "pathBonus": item.path_bonus,
-                    "graphBonus": item.gated_bonus,
-                    "requestedGraphBonus": item.v2_bonus * omega.omega.powf(input.config.omega_gamma.max(0.0)),
-                    "finalScore": item.final_score,
-                    "nativeBackend": "rust-rayon"
-                })).map(|mut trace| {
-                    trace["wormholeRrf"] = wormhole_traces
-                        .get(&item.curve.id).cloned().unwrap_or(Value::Null);
-                    trace
-                })
-            } else {
-                None
-            };
-            NativeResultItem {
-                chosen_path:item.curve.path_index,
-                available_paths:path_diagnostics.remove(&item.curve.id).unwrap_or_default(),
-                id: item.curve.id,
-                chunk_id: item.curve.id,
-                rank: index + 1,
-                score: item.final_score,
-                ranking_score: item.ranking_score,
-                base_score: item.pure_score,
-                field_score: item.field_score,
-                field_resonance_bonus: item.field_resonance_bonus,
-                topology_bonus: item.path_bonus + item.gated_bonus,
-                anchor_bonus: item.anchor_bonus,
-                path_bonus: item.path_bonus,
-                graph_bonus: item.gated_bonus,
-                score_clipping: positive(item.pure_score + item.path_bonus + item.gated_bonus
-                    + item.anchor_bonus - wormhole_traces.get(&item.curve.id)
-                        .and_then(|v| v["baselineScore"].as_f64()).unwrap_or(item.final_score)),
-                role: item.role,
-                omega: omega.omega,
-                river_regime: omega.regime.clone(),
-                matched_tags,
-                core_tags_matched,
-                candidate_sources: item.curve.sources,
-                original_score: original_score_by_id
-                    .get(&item.curve.id)
-                    .copied()
-                    .unwrap_or(0.0),
-                topology_v3,
-                relative_topology: input.include_trace.then_some(item.topology),
-                geometry: input.include_trace.then_some(item.geometry),
-                observables: input.include_trace.then_some(item.observables),
-            }
-        })
-        .collect();
+    let results = materialize_results(
+        work,
+        ResultContext {
+            input: &input,
+            core_tag_names: &core_tag_names,
+            mode,
+            omega: &omega,
+            wormhole_traces: &wormhole_traces,
+            original_score_by_id: &original_score_by_id,
+            path_diagnostics,
+        },
+    );
     let compute_ms = compute_started.elapsed().as_secs_f64() * 1000.0;
 
     let output = NativeOutput {

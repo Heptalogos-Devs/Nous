@@ -303,7 +303,9 @@ class CollectionManifest(WaveValue):
             if group_key in group_documents and group_documents[group_key] != item.document:
                 raise ValueError("a candidate group must belong to one exact document")
             group_documents[group_key] = item.document
-            if item.document not in documents or item.content.document not in documents:
+            if item.document not in documents or (
+                isinstance(item, Candidate) and item.content.document not in documents
+            ):
                 raise ValueError(f"candidate {item.key} references an unknown document")
             if (
                 set(item.concepts or ())
@@ -340,7 +342,7 @@ class EvidenceProjection(WaveValue):
         if any(not key or not refs for key, refs in self.roots.items()):
             raise ValueError("evidence roots require an identity and exact artifact references")
         for document, roots in self.documents.items():
-            if len(roots) != len(set(roots)) or set(roots) - self.roots.keys():
+            if len(roots) != len(set(roots)) or any(root not in self.roots for root in roots):
                 raise ValueError(f"document {document} has undefined or repeated evidence roots")
         if set(self.source_documents) - self.documents.keys():
             raise ValueError("source sequences require a defined source document")
@@ -365,8 +367,9 @@ class CorpusView(CollectionManifest):
             raise ValueError("a corpus view requires accepted artifact references")
         if set(self.evidence.documents) != {document.key for document in self.documents}:
             raise ValueError("evidence projection must cover exactly the accepted documents")
+        source_documents = set(self.evidence.source_documents)
         if any(
-            document.derived_from and document.key in self.evidence.source_documents
+            document.derived_from and document.key in source_documents
             for document in self.documents
         ):
             raise ValueError("a derived document cannot contribute an original source sequence")

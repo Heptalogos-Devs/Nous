@@ -37,6 +37,7 @@ from .contracts import (
     SelectedText,
     SourceSelection,
 )
+from .input_access import current_input_access
 from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
 
 
@@ -84,10 +85,13 @@ class ArtifactStore:
         artifact identities even if the bytes are identical.
         """
         if isinstance(source, Path):
-            published = await self.content.publish_file(source)
-            name = display_name or source.name
+            access = current_input_access.get()
+            original = access.original(source) if access is not None else source
+            materialized = await access.materialize(source) if access is not None else source
+            published = await self.content.publish_file(materialized)
+            name = display_name or original.name
             media_type = media_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
-            origin = origin or str(source)
+            origin = origin or str(original)
         else:
             data = str.encode(source, "utf-8") if isinstance(source, str) else source
             published = await self.content.publish_bytes(data)

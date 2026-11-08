@@ -10,7 +10,7 @@ Python 使用包 `nous_native`，maturin 构建与 CPython 3.14/NumPy 兼容的�
 
 ```text
 NativeEngine(settings: EngineSettings)
-  build(assets: FrozenAssets, options: BuildOptions, output_dir, cancel) -> BuiltSnapshot
+  build(assets: FrozenAssets, options: BuildOptions, output_dir, base?, cancel) -> BuiltSnapshot
   open(path, expected_identity) -> NativeSnapshot
   close()
 
@@ -69,3 +69,10 @@ build 显式关闭构建期 writer 并释放 reader 的映射，最后原子写�
 核心的 Engine 持有有界 Rayon 池、关闭状态与实际工作锁；Snapshot/冻结资产由 retrieval 持有。PyO3 的 Engine/Snapshot 只借用核心对象并 detach。打开可传取消令牌，完整性摘要读取按块检查取消；Wave 对读者提供范围化借用并持有有界缓存。
 
 CandidatePool 保存快照身份、有序候选与各 lane 的原始分/名次，以及完整授权召回池产生的 BM25 参照、联合选择校准。普通 recall 完成一次校准和并集选择；固定外部池使用相同校准公式但保留明确给出的集合。readout 消费已准备的池，不再调用 select_superset 或索引。
+
+
+## 增量构建与旧代借用
+
+同集合的前一正式快照在整个派生构建期间持有生命周期借用；只有空间、构建配置及选项一致时才能作为基代。新目录复制独立词法文件，不对旧代文件写入或使用硬链接。按稳定候选键比较正文、标题和文档组键，只提交新增、替换及删除；快照中的稠密行号变化不触发无关文稿重写。Tantivy 默认 BM25 统计包含尚未合并的删除项，因此快照另存活跃词数和词频；增量更新只分析新旧变化文本，查询使用活跃统计，结果与干净构建一致。删除记录同时超过活跃项和 512 项、或段数超过 32 时压实，限制累积垃圾。
+
+每代保存并校验候选键和文档组键到内部数值 ID 的映射；存续对象沿用基代 ID，新对象使用不回退的计数器，查询再映射到当前快照的稠密行号。向量代从校验过的旧代私有加载并更新；旧代仍可搜索。若删除垃圾将超过阈值，先决定重建受影响的向量通道，避免先逐项删除再丢弃；重新打开时校验映射、数量和全部活动向量。HNSW 的近似拓扑可能因增量顺序与全量重建不同，不能声称逐项搜索排名完全相同。概念、事实、关联及构建选项均未变时复用图资产，否则重新计算。新代仍独立写清单并最后发布；失败或取消不改变旧代，未完成组件由现有恢复清理。

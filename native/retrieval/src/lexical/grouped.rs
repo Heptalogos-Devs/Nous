@@ -1,6 +1,6 @@
 //! Tantivy scores all matches; only the best passages for each group survive.
 use crate::CancellationToken;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 use tantivy::{
     DocAddress, DocId, Score, SegmentOrdinal, SegmentReader,
     collector::{Collector, SegmentCollector},
@@ -10,6 +10,7 @@ use tantivy::{
 pub(super) struct GroupedCollector {
     pub limit: usize,
     pub passages: usize,
+    pub ranks: Arc<BTreeMap<u64, u64>>,
     pub cancel: CancellationToken,
 }
 pub(super) struct GroupedSegment {

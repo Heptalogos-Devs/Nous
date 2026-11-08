@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -311,3 +312,42 @@ def test_hardlinked_cache_files_are_removed_across_candidates(checkout: Path) ->
     result = invoke(checkout, "clean", "--apply")
     assert result.returncode == 0, result.stderr
     assert not first.exists() and not same_candidate.exists() and not other_candidate.exists()
+
+
+def test_uv_protects_only_its_own_cache(checkout: Path) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is unavailable")
+    cache = checkout / "temp/cache/uv"
+    cache.mkdir(parents=True)
+    (cache / "valuable").write_text("active")
+    env = {**os.environ, "UV_CACHE_DIR": str(cache)}
+    child = subprocess.Popen(
+        [
+            uv,
+            "run",
+            "--no-project",
+            "--offline",
+            sys.executable,
+            "-c",
+            "import time; print('ready', flush=True); time.sleep(60)",
+        ],
+        cwd=checkout,
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert child.stdout is not None
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        result = invoke(checkout, "clean", "cache", "--apply")
+        assert result.returncode != 0 and cache.exists()
+        assert f"进程 {child.pid}" in result.stdout
+    finally:
+        os.killpg(child.pid, signal.SIGTERM)
+        child.wait(timeout=10)
+        child.stdout.close()
+    result = invoke(checkout, "clean", "cache", "--apply")
+    assert result.returncode == 0, result.stderr
+    assert not cache.exists()

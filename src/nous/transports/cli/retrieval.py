@@ -14,6 +14,7 @@ from nous.wave.contracts import CandidateFilter, ContextFragment, QueryCue
 
 from . import cli, emit, language_for, options, run_async
 from .cognition import journal_cli
+from .input_files import input_bytes
 
 
 @cli.command("query")
@@ -35,6 +36,15 @@ def query(
     purpose: str | None = None,
     explain: bool = False,
 ) -> None:
+    selected_context = (
+        TypeAdapter(tuple[ContextFragment, ...]).validate_json(input_bytes(context))
+        if context
+        else ()
+    )
+    selected_filters = (
+        CandidateFilter.model_validate_json(input_bytes(filters)) if filters else None
+    )
+
     async def run() -> QueryResult:
         async with open_instance(options(ctx).locator) as runtime:
             cognition = await runtime.cognition(namespace)
@@ -46,16 +56,10 @@ def query(
                     top_k=top_k,
                     include_review=True if include_review else None,
                     include_exploration=include_exploration,
-                    context=TypeAdapter(tuple[ContextFragment, ...]).validate_json(
-                        context.read_bytes()
-                    )
-                    if context
-                    else (),
+                    context=selected_context,
                     core_concepts=tuple(core or ()),
                     cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
-                    filters=CandidateFilter.model_validate_json(filters.read_bytes())
-                    if filters
-                    else None,
+                    filters=selected_filters,
                     purpose=purpose,
                     explain=explain,
                 )

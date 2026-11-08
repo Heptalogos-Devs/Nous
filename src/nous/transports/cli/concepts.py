@@ -15,6 +15,7 @@ from nous.runtime.bootstrap import open_instance
 
 from . import cli, language_for, options, run_async
 from .cognition import journal_cli, note_cli
+from .input_files import input_text
 
 concept_cli = typer.Typer(help="Concept meanings", no_args_is_help=True)
 annotation_cli = typer.Typer(help="Annotations", no_args_is_help=True)
@@ -192,7 +193,7 @@ def annotate(
         candidates[key] = target
     supplied: dict[str, ConceptTarget | None] | None = None
     if bindings is not None:
-        raw: object = json.loads(bindings.read_text(encoding="utf-8"))
+        raw: object = json.loads(input_text(bindings))
         if not isinstance(raw, dict) or any(
             not isinstance(key, str) or (value is not None and not isinstance(value, str))
             for key, value in cast(dict[object, object], raw).items()
@@ -202,11 +203,7 @@ def annotate(
                 "Bindings must map local Concept keys to exact refs or null for new",
             )
         supplied = cast(dict[str, ConceptTarget | None], raw)
-    manual = (
-        AnnotationProposal.model_validate_json(proposal.read_text(encoding="utf-8"))
-        if proposal
-        else None
-    )
+    manual = AnnotationProposal.model_validate_json(input_text(proposal)) if proposal else None
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:

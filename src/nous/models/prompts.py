@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
 )
 
 from nous.common.errors import NousError
+from nous.content.input_access import current_input_access
 from nous.media.contracts import PreparedSource
 from nous.presentation import translate
 
@@ -319,10 +320,21 @@ class PromptCatalog:
             root, selected = self.directory / prompt_id, "instance"
         return self._load(prompt_id, root, selected)
 
-    def _load(self, prompt_id: str, root: Traversable, origin: str) -> PromptResource:
+    def _load(
+        self,
+        prompt_id: str,
+        root: Traversable,
+        origin: str,
+        read_text: Callable[[Traversable], str] | None = None,
+    ) -> PromptResource:
         """Capture one resource directly from its declared directory."""
+
+        def default_read(path: Traversable) -> str:
+            return path.read_text(encoding="utf-8")
+
+        read = read_text or default_read
         try:
-            manifest_text = root.joinpath("prompt.toml").read_text(encoding="utf-8")
+            manifest_text = read(root.joinpath("prompt.toml"))
             manifest = PromptManifest.model_validate(tomllib.loads(manifest_text))
             if manifest.contract_id not in self.tasks:
                 raise NousError(
@@ -337,7 +349,7 @@ class PromptCatalog:
                 name = self._safe_name(pending.pop())
                 if name in templates:
                     continue
-                source = root.joinpath(name).read_text(encoding="utf-8")
+                source = read(root.joinpath(name))
                 templates[name] = source
                 parsed = parser.parse(source)
                 unknown = (
@@ -588,8 +600,19 @@ class PromptCatalog:
         if "/" in prompt_id:
             raise NousError("prompt.invalid_id", "Prompt ID must be a single directory name")
         # Validate in its current directory before publishing the instance resource.
-        source = source.resolve()
-        candidate = self._load(prompt_id, source, "import")
+        access = current_input_access.get()
+        if access is None:
+            source = source.resolve()
+            candidate = self._load(prompt_id, source, "import")
+        else:
+            # Fetch only the declared manifest and template dependencies from
+            # the client; unrelated files in the selected directory stay put.
+            source = source.absolute()
+
+            def read_client(path: Traversable) -> str:
+                return access.materialize_sync(Path(str(path))).read_text(encoding="utf-8")
+
+            candidate = self._load(prompt_id, source, "import", read_client)
         target = self.directory / prompt_id
         target.mkdir(parents=True, exist_ok=True)
         (target / "prompt.toml").write_text(candidate.manifest_text, encoding="utf-8")

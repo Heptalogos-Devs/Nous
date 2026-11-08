@@ -13,6 +13,7 @@ from nous.presentation import translate
 from nous.runtime.bootstrap import open_instance
 
 from . import cli, emit, language_for, options, run_async
+from .input_files import input_bytes
 
 feedback_cli = typer.Typer(help="Feedback", no_args_is_help=True)
 cli.add_typer(feedback_cli, name="feedback")
@@ -83,11 +84,18 @@ def record(
             "input.invalid_feedback", "Choose the delivered candidate from the query result"
         )
 
+    parsed_result = (
+        QueryResult.model_validate_json(input_bytes(query_result)) if query_result else None
+    )
+    parsed_selection = (
+        ContentSelection.model_validate_json(input_bytes(selection)) if selection else None
+    )
+
     async def run() -> FeedbackView:
         async with open_instance(options(ctx).locator) as runtime:
             cognition = await runtime.cognition(namespace)
-            if query_result is not None:
-                result = QueryResult.model_validate_json(query_result.read_bytes())
+            if parsed_result is not None:
+                result = parsed_result
                 target = None
                 if candidate is not None:
                     matches = [
@@ -109,9 +117,7 @@ def record(
                 value=value,
                 comment=comment,
                 author=author,
-                selection=ContentSelection.model_validate_json(selection.read_bytes())
-                if selection
-                else None,
+                selection=parsed_selection,
             )
 
     _show(ctx, run_async(run()))

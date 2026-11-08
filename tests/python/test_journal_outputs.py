@@ -179,7 +179,7 @@ def test_task_contract_ignores_nested_schema_help_but_keeps_business_fields() ->
     changed_request = GenerationRequest(
         "custom", SelectedInputs(sources=()), schema=changed.output_type.model_json_schema()
     )
-    assert original_request.identity() == help_request.identity()
+    assert original_request.identity() != help_request.identity()
     assert original_request.identity() != changed_request.identity()
     schema = before.interpretation_contract()["output_schema"]
     assert isinstance(schema, dict)

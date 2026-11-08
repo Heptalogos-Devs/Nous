@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -35,8 +36,9 @@ from .contracts import (
     SnapshotRef,
     WaveQuery,
 )
+from .manifests import encode_json
 from .query import WaveQueries
-from .snapshots import WaveSnapshots, build_profile, encode_json, view_profile
+from .snapshots import WaveSnapshots, build_profile, view_profile
 
 
 class WaveOperations:
@@ -147,10 +149,12 @@ class WaveOperations:
             profile = self.resolve_build_profile(space or view.space)
             prepared = await self.prepare_build(view, profile)
             publish_started = perf_counter()
-            async with self.database.write() as tx:
-                descriptor = await self.accept_in(tx, prepared)
-                await self.promote_in(tx, descriptor.ref)
-            self.release_prepared(prepared)
+            try:
+                async with self.database.write() as tx:
+                    descriptor = await self.accept_in(tx, prepared)
+                    await self.promote_in(tx, descriptor.ref)
+            finally:
+                self.release_prepared(prepared)
             get_logger(__name__).info(
                 "wave.publish.completed",
                 extra={
@@ -324,14 +328,14 @@ class WaveOperations:
                         "lanes": output["used_lanes"],
                     },
                 )
-                return output
+                return copy.deepcopy(output)
 
     async def read(
         self, ref: str, candidate_key: str, *, sources: bool = False
     ) -> dict[str, object]:
         async with self.execution.operation("wave.read"):
             async with self.snapshots.pin(ref) as row:
-                return await self.queries.read(row, candidate_key, sources=sources)
+                return copy.deepcopy(await self.queries.read(row, candidate_key, sources=sources))
 
     async def neighborhood(self, ref: str, concepts: Sequence[str]) -> dict[str, object]:
         async with self.execution.operation("wave.neighborhood"):
@@ -340,7 +344,7 @@ class WaveOperations:
                 result = await self.snapshots.compute(
                     lambda: snapshot.neighborhood(rows, cancel=token), token
                 )
-                return self.queries.neighborhood(row, concepts, result)
+                return copy.deepcopy(self.queries.neighborhood(row, concepts, result))
 
     async def segment(self, ref: str, fragments: Sequence[ContextFragment]) -> dict[str, object]:
         async with self.execution.operation("wave.segment") as context:
@@ -373,21 +377,23 @@ class WaveOperations:
     async def inspect(self, ref: str) -> dict[str, object]:
         async with self.execution.operation("wave.inspect"):
             async with self.snapshots.borrow(ref) as (row, snapshot, _):
-                return {
-                    "snapshot": {
-                        "instance_id": self.snapshots.instance_id,
-                        "id": row["id"],
-                        "identifier": row["identifier"],
-                    },
-                    "collection": row["mapping"]["name"],
-                    "space": row["space_definition"],
-                    "identity": row["identity"],
-                    "covered_generation": row["covered_generation"],
-                    "profile": row["profile"],
-                    "metadata": row["mapping"]["metadata"],
-                    "owner": row["mapping"]["owner"],
-                    "capabilities": list(snapshot.capabilities),
-                    "statistics": json.loads(snapshot.statistics_json),
-                    "source_roots": len(row["mapping"]["roots"]),
-                    "created_at": row["created_at"],
-                }
+                return copy.deepcopy(
+                    {
+                        "snapshot": {
+                            "instance_id": self.snapshots.instance_id,
+                            "id": row["id"],
+                            "identifier": row["identifier"],
+                        },
+                        "collection": row["mapping"]["name"],
+                        "space": row["space_definition"],
+                        "identity": row["identity"],
+                        "covered_generation": row["covered_generation"],
+                        "profile": row["profile"],
+                        "metadata": row["mapping"]["metadata"],
+                        "owner": row["mapping"]["owner"],
+                        "capabilities": list(snapshot.capabilities),
+                        "statistics": json.loads(snapshot.statistics_json),
+                        "source_roots": len(row["mapping"]["roots"]),
+                        "created_at": row["created_at"],
+                    }
+                )

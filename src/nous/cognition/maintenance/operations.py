@@ -250,7 +250,11 @@ class MaintenanceOperations:
     ) -> JobRef:
         if target.record_ref.instance_id != self.jobs.instance_id:
             raise NousError("cognition.instance_mismatch", "Record belongs to another instance")
-        job_id = _job_id("annotation", request.computation_key)
+        job_id = (
+            _job_id("record-annotation", target.record_ref.instance_id, target.revision_id)
+            if record_write
+            else _job_id("annotation", request.computation_key)
+        )
         payload: JsonObject = {
             "job_id": job_id,
             "namespace_ref": {
@@ -316,15 +320,23 @@ class MaintenanceOperations:
 
     async def record_annotation_job(self, target: RecordRevisionRef) -> JobView | None:
         """Read the annotation job registered by this exact record write, when present."""
-        cursor: int | None = 0
-        while cursor is not None:
-            page, cursor = await self.jobs.list(kind="annotation", limit=500, cursor=cursor)
-            for job in page:
-                if job.input.get("record_write") and job.input.get("target_revision") == (
-                    target.model_dump(mode="json")
-                ):
-                    return await self.jobs.read(job.ref)
-        return None
+        ref = JobRef(
+            instance_id=target.record_ref.instance_id,
+            workflow_id=_job_id(
+                "record-annotation", target.record_ref.instance_id, target.revision_id
+            ),
+        )
+        try:
+            job = await self.jobs.read(ref)
+        except NousError as error:
+            if error.code == "job.not_found":
+                return None
+            raise
+        if not job.input.get("record_write") or job.input.get("target_revision") != (
+            target.model_dump(mode="json")
+        ):
+            raise NousError("job.invalid_payload", "Record annotation job has a different target")
+        return job
 
     async def record_refresh_job(self, record: CommittedRecord) -> JobView | None:
         """Read the refresh registered by this exact write, when present."""

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TypeVar, cast
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from nous.common.errors import NousError
 from nous.common.operations import OperationDiagnostics
@@ -58,6 +59,16 @@ async def complete_cleanup[T](work: Awaitable[T]) -> T:
     return task.result()
 
 
+async def _try_acquire(lock: asyncio.Lock) -> bool:
+    """Take an immediately available fair lock without waiting for a holder."""
+    try:
+        async with asyncio.timeout(0):
+            await lock.acquire()
+    except TimeoutError:
+        return False
+    return True
+
+
 class ExecutionManager:
     """Own operation admission, inherited context and blocking-worker lifetimes.
 
@@ -75,6 +86,7 @@ class ExecutionManager:
         observability_scope: Callable[[], AbstractContextManager[None]] = nullcontext,
     ) -> None:
         self._semaphore = asyncio.Semaphore(int(settings.max_in_flight))
+        self._key_gates: WeakKeyDictionary[asyncio.Lock, asyncio.Lock] = WeakKeyDictionary()
         self._workers = ThreadPoolExecutor(
             max_workers=int(settings.max_blocking_workers), thread_name_prefix="nous-worker"
         )
@@ -110,6 +122,74 @@ class ExecutionManager:
             "accepting": self._accepting,
         }
 
+    def _resolve(
+        self, name: str, settings: ConfigSnapshot | None, deadline: float | None
+    ) -> tuple[OperationContext | None, ConfigSnapshot, float | None]:
+        parent = _current.get().get(self._owner)
+        if parent is not None and settings is not None and settings is not parent.settings:
+            raise NousError(
+                "operation.snapshot_conflict",
+                "A nested operation must use its parent's configuration snapshot.",
+                operation=name,
+            )
+        snapshot = (
+            parent.settings
+            if parent is not None
+            else (settings if settings is not None else self._snapshot())
+        )
+        if parent and parent.deadline is not None:
+            deadline = min(deadline, parent.deadline) if deadline is not None else parent.deadline
+        elif parent is None and deadline is None:
+            timeout = snapshot.values.execution.default_timeout_seconds
+            if timeout is not None:
+                deadline = asyncio.get_running_loop().time() + float(timeout)
+        return parent, snapshot, deadline
+
+    @asynccontextmanager
+    async def keyed_operation(
+        self,
+        name: str,
+        lock: asyncio.Lock,
+        settings: ConfigSnapshot | None = None,
+        *,
+        deadline: float | None = None,
+    ) -> AsyncGenerator[OperationContext]:
+        """Serialize a key without holding it while awaiting an execution slot.
+
+        Waiters are tracked for shutdown and their deadline covers both key and
+        slot queues. If the key becomes busy while admission is queued, release
+        the slot immediately and wait for the key without occupying capacity.
+        """
+        async with self.control():
+            parent, snapshot, effective_deadline = self._resolve(name, settings, deadline)
+            async with asyncio.timeout_at(effective_deadline):
+                if parent is not None:
+                    # This call already shares its parent's admission; it must
+                    # not queue behind a root waiting for that same capacity.
+                    async with (
+                        lock,
+                        self.operation(name, snapshot, deadline=effective_deadline) as active,
+                    ):
+                        yield active
+                    return
+                # Serialize only root contenders before they race for capacity.
+                # Nested calls bypass this gate because they already own a slot.
+                gate = self._key_gates.setdefault(lock, asyncio.Lock())
+                async with gate:
+                    while True:
+                        async with lock:
+                            pass
+                        async with self.operation(
+                            name, snapshot, deadline=effective_deadline
+                        ) as active:
+                            if not await _try_acquire(lock):
+                                continue
+                            try:
+                                yield active
+                            finally:
+                                lock.release()
+                            return
+
     @asynccontextmanager
     async def operation(
         self, name: str, settings: ConfigSnapshot | None = None, *, deadline: float | None = None
@@ -139,23 +219,7 @@ class ExecutionManager:
             and self._owner not in _admitted.get()
         ):
             raise NousError("operation.unavailable", "The runtime is stopping.", operation=name)
-        if parent is not None and settings is not None and settings is not parent.settings:
-            raise NousError(
-                "operation.snapshot_conflict",
-                "A nested operation must use its parent's configuration snapshot.",
-                operation=name,
-            )
-        snapshot = (
-            parent.settings
-            if parent is not None
-            else (settings if settings is not None else self._snapshot())
-        )
-        if parent and parent.deadline is not None:
-            deadline = min(deadline, parent.deadline) if deadline is not None else parent.deadline
-        elif parent is None and deadline is None:
-            timeout = snapshot.values.execution.default_timeout_seconds
-            if timeout is not None:
-                deadline = asyncio.get_running_loop().time() + float(timeout)
+        parent, snapshot, deadline = self._resolve(name, settings, deadline)
         diagnostic = parent.diagnostics if parent else OperationDiagnostics(str(uuid4()), name)
         stage = f"{parent.stage}/{name}" if parent else name
         context = OperationContext(
@@ -219,6 +283,7 @@ class ExecutionManager:
                 and task not in self._tasks
                 and task not in self._durable
                 and self._owner not in _admitted.get()
+                and self._owner not in _current.get()
             ):
                 raise NousError("operation.unavailable", "The runtime is stopping.")
             completed = asyncio.get_running_loop().create_future()

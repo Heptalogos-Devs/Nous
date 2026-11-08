@@ -207,6 +207,11 @@ def test_annotation_adoption_replay_and_refresh_are_atomic(tmp_path: Path) -> No
             ),
         )
         original = saved.jobs[0]
+        from unittest.mock import patch
+
+        with patch.object(runtime.jobs, "list", side_effect=AssertionError("history scan")):
+            registered = await runtime.maintenance.record_annotation_job(saved.record.revision_ref)
+        assert registered is not None and registered.ref == original
         with pytest.raises(NousError):
             await runtime.jobs.wait(original, timeout=30)
         failed = await runtime.jobs.read(original)

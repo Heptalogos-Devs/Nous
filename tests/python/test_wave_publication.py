@@ -304,6 +304,21 @@ def test_semantic_whole_hit_delivers_local_candidate(
                 finally:
                     for mapping in held:
                         mapping.close()
+                async with runtime.wave.snapshots.borrow(answer.context.snapshot_ref):
+                    await cognition.records.add_note("A later semantic document.", remember=True)
+                    later = await cognition.retrieval.query(
+                        CognitiveQuery(text="semantic question", mode="dense", top_k=1)
+                    )
+                    async with runtime.database.read() as tx:
+                        summary = (
+                            await tx.connection.execute(
+                                sa.select(schema.snapshots.c.build_summary).where(
+                                    schema.snapshots.c.id == later.context.snapshot_ref.id
+                                )
+                            )
+                        ).scalar_one()
+                    assert summary["statistics"]["timings"]["ann_delta"]["incremental"] is True
+                    assert later.groups
                 passage = answer.groups[0].passages[0]
                 assert passage.candidate_ref.key.endswith(":whole")
                 assert passage.passage_reason == "local_candidate"
@@ -376,6 +391,24 @@ def test_semantic_whole_hit_delivers_local_candidate(
                         second = await runtime.wave.accept_in(tx, another)
                         await runtime.wave.promote_in(tx, second.ref)
                     runtime.wave.release_prepared(another)
+                    candidate = view.candidates[0]
+                    updated = view.model_copy(
+                        update={
+                            "candidates": (
+                                *view.candidates,
+                                candidate.model_copy(update={"key": "doc-second"}),
+                            )
+                        }
+                    )
+                    derived = await runtime.wave.prepare_build(updated, profile)
+                    stats = cast(dict[str, object], derived.summary["statistics"])
+                    timing = cast(dict[str, object], stats["timings"])
+                    ann = cast(dict[str, object], timing["ann_delta"])
+                    assert timing["math_reused"] is True and ann["incremental"] is True
+                    async with runtime.database.write() as tx:
+                        third = await runtime.wave.accept_in(tx, derived)
+                        await runtime.wave.promote_in(tx, third.ref)
+                    runtime.wave.release_prepared(derived)
                     await runtime.wave.cleanup()
                     async with runtime.database.read() as tx:
                         candidate_vectors = await tx.connection.scalar(
@@ -387,7 +420,7 @@ def test_semantic_whole_hit_delivers_local_candidate(
                     assert candidate_vectors and concept_vectors
                     result = await runtime.wave.query(
                         WaveQuery(
-                            snapshot=second.ref.identifier, text="semantic question", mode="dense"
+                            snapshot=third.ref.identifier, text="semantic question", mode="dense"
                         )
                     )
                     assert result["hits"]
@@ -397,3 +430,71 @@ def test_semantic_whole_hit_delivers_local_candidate(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_publication_failure_and_cancellation_release_prepared_leases(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "failed-publication"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            await cognition.records.add_note("Lease cleanup observation.", remember=True)
+            original = runtime.wave.accept_in
+
+            async def interrupted(tx: object, prepared: object) -> object:
+                raise asyncio.CancelledError()
+
+            runtime.wave.accept_in = interrupted  # type: ignore[method-assign, assignment]
+            try:
+                with pytest.raises(asyncio.CancelledError):
+                    await cognition.retrieval.query(
+                        CognitiveQuery(text="observation", mode="lexical")
+                    )
+                assert not runtime.wave.snapshots._prepared_counts  # pyright: ignore[reportPrivateUsage]
+                with pytest.raises(asyncio.CancelledError):
+                    await runtime.wave.build(Path("docs/examples/wave/collection.json"))
+                assert not runtime.wave.snapshots._prepared_counts  # pyright: ignore[reportPrivateUsage]
+            finally:
+                runtime.wave.accept_in = original  # type: ignore[method-assign]
+            found = await cognition.retrieval.query(
+                CognitiveQuery(text="observation", mode="lexical")
+            )
+            assert found.groups
+
+    asyncio.run(scenario())
+
+
+def test_query_results_cannot_mutate_reused_snapshot(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "snapshot-isolation"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            await cognition.records.add_note(
+                "A distinctive isolationtoken body.", title="Original title", remember=True
+            )
+            initial = await cognition.retrieval.query(
+                CognitiveQuery(text="isolationtoken", mode="lexical")
+            )
+            request = WaveQuery(
+                snapshot=initial.context.snapshot_ref.identifier,
+                text="isolationtoken",
+                mode="lexical",
+            )
+            first = await runtime.wave.query(request)
+            hit = cast(list[dict[str, object]], first["hits"])[0]
+            cast(dict[str, object], hit["metadata"])["title"] = "corrupted"
+            again = await runtime.wave.query(request)
+            assert (
+                cast(
+                    dict[str, object], cast(list[dict[str, object]], again["hits"])[0]["metadata"]
+                )["title"]
+                == "Original title"
+            )
+            inspection = await runtime.wave.inspect(request.snapshot)
+            cast(dict[str, object], inspection["metadata"])["injected"] = True
+            assert "injected" not in cast(
+                dict[str, object], (await runtime.wave.inspect(request.snapshot))["metadata"]
+            )
+
+    asyncio.run(scenario())

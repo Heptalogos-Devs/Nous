@@ -39,6 +39,17 @@ if TYPE_CHECKING:
     from ..sources import SourceResolver
 
 
+class AdoptionValues(TypedDict):
+    title: str | None
+    purpose: str | None
+    author: str | None
+    viewpoint: str | None
+    sources: Sequence[SourceBinding]
+    times: CognitiveTimes
+    origin_result_id: str
+    body_artifact: ArtifactRef | None
+
+
 class RevisionValues(TypedDict):
     title: str | None
     title_source: TitleSource

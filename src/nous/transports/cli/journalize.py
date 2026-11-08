@@ -17,6 +17,7 @@ from nous.runtime.bootstrap import open_instance
 
 from . import cli, language_for, options, run_async
 from .cognition import after_write, emit_record, journal_cli, note_cli, read_body, source_requests
+from .input_files import input_bytes
 
 draft_cli = typer.Typer(help="Journal drafts", no_args_is_help=True)
 journal_cli.add_typer(draft_cli, name="draft")
@@ -168,7 +169,7 @@ def draft_adopt(
         else None
     )
     changes = (
-        SourceChanges.model_validate_json(sources.read_bytes()) if sources is not None else None
+        SourceChanges.model_validate_json(input_bytes(sources)) if sources is not None else None
     )
     if body is None and changes is not None:
         raise NousError(
@@ -213,12 +214,12 @@ def propose_edit(
     annotate: bool = False,
 ):
     selected = (
-        TypeAdapter(tuple[BlockRef | ContentSelection, ...]).validate_json(scopes.read_bytes())
+        TypeAdapter(tuple[BlockRef | ContentSelection, ...]).validate_json(input_bytes(scopes))
         if scopes is not None
         else None
     )
     mappings = (
-        TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
+        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
         if feedback_mappings
         else {}
     )

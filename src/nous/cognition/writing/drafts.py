@@ -105,7 +105,7 @@ class DraftStore:
         self, produced: ProducedTask, context: DraftContext, request_ref: ResultRef
     ) -> WritingOutcome:
         lock = self._request_locks.setdefault(request_ref.id, asyncio.Lock())
-        async with lock:
+        async with self.execution.keyed_operation("writing.save_draft", lock):
             existing = await self.find_request(request_ref)
             if existing is not None:
                 return WritingOutcome(

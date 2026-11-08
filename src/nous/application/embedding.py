@@ -27,6 +27,7 @@ from nous.content.contracts import (
     OutputContent,
     ResultRef,
 )
+from nous.content.input_access import current_input_access
 from nous.content.results import ResultStore
 from nous.models.contracts import EmbeddingResult
 from nous.models.embedding_store import EmbeddingSpaceRegistry, StoredVectorRow
@@ -93,6 +94,9 @@ class EmbeddingOperations:
                 value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
             else:
                 path = Path(item)
+                access = current_input_access.get()
+                if access is not None:
+                    path = await access.materialize(path)
                 if (await self.execution.blocking(path.stat)).st_size > limit:
                     raise NousError(
                         "content.too_large", "Input exceeds the configured text read limit"

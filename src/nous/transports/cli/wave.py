@@ -21,6 +21,7 @@ from nous.wave.contracts import (
 )
 
 from . import emit, options, run_async
+from .input_files import input_bytes
 
 wave_cli = typer.Typer(help="构建、检索和回读内容集合 / Wave retrieval", no_args_is_help=True)
 
@@ -42,7 +43,7 @@ def cleanup(
 
 
 def _context(path: Path | None) -> tuple[ContextFragment, ...]:
-    return TypeAdapter(tuple[ContextFragment, ...]).validate_json(path.read_bytes()) if path else ()
+    return TypeAdapter(tuple[ContextFragment, ...]).validate_json(input_bytes(path)) if path else ()
 
 
 def _hits(value: dict[str, object], explain: bool) -> None:
@@ -165,8 +166,8 @@ def query(
     request = WaveQuery(
         snapshot=snapshot,
         text=text,
-        vector=VectorRef.model_validate_json(vector_ref.read_bytes()) if vector_ref else None,
-        candidate_pool=CandidatePool.model_validate_json(candidate_pool.read_bytes())
+        vector=VectorRef.model_validate_json(input_bytes(vector_ref)) if vector_ref else None,
+        candidate_pool=CandidatePool.model_validate_json(input_bytes(candidate_pool))
         if candidate_pool
         else None,
         mode=mode,
@@ -174,11 +175,11 @@ def query(
         core_concepts=tuple(core or ()),
         cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
         thinking_stages=TypeAdapter(tuple[ThinkingStage, ...]).validate_json(
-            thinking_stages.read_bytes()
+            input_bytes(thinking_stages)
         )
         if thinking_stages
         else (),
-        candidate_filter=CandidateFilter.model_validate_json(candidate_filter.read_bytes())
+        candidate_filter=CandidateFilter.model_validate_json(input_bytes(candidate_filter))
         if candidate_filter
         else None,
         top_k=top_k,

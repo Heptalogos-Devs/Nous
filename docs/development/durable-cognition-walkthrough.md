@@ -25,7 +25,7 @@ nous query '文稿所讨论的问题'
 
 ## 持续宿主
 
-普通程序用 `async with open_instance(locator)` 取得可嵌入 Runtime，执行文稿和查询操作。需要持久维护时，从应用根入口调用同步 `run_host(locator, application)`，其中 `application(runtime)` 是异步函数，使用同一 Runtime 写作、读取、查询并运行后台维护。CLI `runtime run` 持续运行这一显式宿主。宿主持有应用循环和实例占有，其他进程的普通认知修改继续受实例锁限制。
+普通程序用 `async with open_instance(locator)` 取得可嵌入 Runtime，执行文稿和查询操作。需要持久维护时，从应用根入口调用同步 `run_host(locator, application)`，其中 `application(runtime)` 是异步函数，使用同一 Runtime 写作、读取、查询并运行后台维护。CLI `runtime run` 持续运行这一显式宿主。宿主持有应用循环和实例占有；普通本地 CLI 通过认证的回环通道借用宿主的业务操作，SDK 的独立 `open_instance` 仍受实例锁限制。
 
 另外一个终端可以 `job list/read/wait/cancel/resume/retry`，这些操作使用受限管理客户端，不再启动另一个业务 Runtime。wait 超时只结束等待。
 

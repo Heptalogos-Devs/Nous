@@ -1,0 +1,16 @@
+"""Optional transport-owned materialization of caller-provided file inputs."""
+
+from contextvars import ContextVar
+from pathlib import Path
+from typing import Protocol
+
+
+class InputAccess(Protocol):
+    async def materialize(self, path: Path) -> Path: ...
+    def materialize_sync(self, path: Path) -> Path: ...
+    async def resolve(self, path: Path) -> Path: ...
+    def resolve_sync(self, path: Path) -> Path: ...
+    def original(self, path: Path) -> Path: ...
+
+
+current_input_access: ContextVar[InputAccess | None] = ContextVar("nous_input_access", default=None)

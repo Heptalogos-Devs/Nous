@@ -410,6 +410,22 @@ async def open_instance(
     waits for operations before closing connections, storage and locks. Opening
     does not initialize a missing instance; call ``initialize_instance`` first.
     """
+    from .local_context import current_call
+
+    call = current_call.get()
+    if call is not None:
+        selected = InstanceLocator.resolve(locator, environment)
+        if (
+            selected.directory != call.locator.directory
+            or environment is not None
+            or overrides is not None
+        ):
+            raise NousError(
+                "instance.selection_conflict", "A local host request can only use its own instance"
+            )
+        yield call.runtime
+        return
+
     startup_id = str(uuid4())
     logs = LoggingSession(startup_id)
     runtime: Runtime | None = None
@@ -447,15 +463,24 @@ async def open_instance(
         connections = ModelConnections(selected.directory, settings, configuration.environment)
         stack.push_async_callback(connections.aclose)
         wave: WaveOperations | None = None
+        content: ContentStore | None = None
 
         async def close_execution() -> None:
             with (
                 observability.scope(descriptor.instance_id, startup_id),
                 operation("runtime.shutdown"),
             ):
-                await execution.drain(configuration.snapshot.values.runtime.shutdown_grace_seconds)
-                if wave is not None:
-                    wave.close()
+                try:
+                    await execution.drain(
+                        configuration.snapshot.values.runtime.shutdown_grace_seconds
+                    )
+                finally:
+                    try:
+                        if wave is not None:
+                            wave.close()
+                    finally:
+                        if content is not None:
+                            await content.aclose()
 
         stack.push_async_callback(execution.aclose)
         try:
@@ -501,6 +526,7 @@ async def open_instance(
                     paths.temp,
                     execution,
                     io_chunk_bytes=settings.content.io_chunk_bytes,
+                    reader_limit=settings.execution.max_blocking_workers,
                 )
                 clock = Clock()
                 artifacts = ArtifactStore(

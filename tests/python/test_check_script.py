@@ -3,6 +3,7 @@
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -310,3 +311,35 @@ def test_partial_tests_and_ci_profile(checkout: Path) -> None:
     assert marker(checkout, "rs-length") is None
     assert marker(checkout, "cargo-vcp") is None
     assert marker(checkout, "cargo-retrieval") is None
+
+
+def test_real_rustfmt_counts_only_selected_module(checkout: Path) -> None:
+    rustfmt = shutil.which("rustfmt")
+    if rustfmt is None:
+        pytest.skip("rustfmt is unavailable")
+    write_config(checkout)
+    config = checkout / "check.toml"
+    text = config.read_text(encoding="utf-8")
+    real = tomllib.loads((SCRIPT / "config/check.toml").read_text(encoding="utf-8"))
+    rust_command = real["length"]["rust"]["format"]
+    rust_command[0] = rustfmt
+    fake_command = command(
+        Path(sys.executable).as_posix(),
+        "-B",
+        (checkout / "tools/format_rs.py").as_posix(),
+        "{path}",
+    )
+    assert fake_command in text
+    text = text.replace(fake_command, command(*rust_command)).replace(
+        'input = "path"', 'input = "stdin"'
+    )
+    config.write_text(text, encoding="utf-8")
+    native = checkout / "native"
+    native.mkdir()
+    (native / "lib.rs").write_text("mod child;\npub fn marker() {}\n", encoding="utf-8")
+    (native / "child.rs").write_text(
+        "fn child() {\n" + "    let _ = 1;\n" * 800 + "}\n", encoding="utf-8"
+    )
+    result = invoke(checkout, "length", "native/lib.rs")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "native/lib.rs  2  通过" in result.stdout

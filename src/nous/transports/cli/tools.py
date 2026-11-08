@@ -15,11 +15,12 @@ from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
 from nous.configuration import Configuration
 from nous.content.contracts import ContentReadView, ProcessingResult, SourceSelection
-from nous.models.executor import PreparedGeneration
 from nous.models.prompts import PromptCatalog
+from nous.models.requests import PreparedGeneration
 from nous.runtime.bootstrap import Runtime, open_instance, task_catalog
 
 from . import emit, emit_content_view, options, run_async
+from .input_files import input_bytes
 from .wave import wave_cli
 
 tools_cli = typer.Typer(help="模型、Prompt、媒体与内容工具", no_args_is_help=True)
@@ -42,13 +43,13 @@ for group, name in (
 
 
 def _source(value: str) -> Path | str:
-    return value if identifier_type(value) == "art" else Path(value)
+    return value if identifier_type(value) == "art" else _client_path(value)
 
 
 def _schema(path: Path | None) -> dict[str, JsonValue] | None:
     if path is None:
         return None
-    return TypeAdapter(dict[str, JsonValue]).validate_json(path.read_bytes())
+    return TypeAdapter(dict[str, JsonValue]).validate_json(input_bytes(path))
 
 
 def _pages(value: str | None) -> tuple[int, ...]:
@@ -178,6 +179,7 @@ def model_run(
     without_audio: Annotated[bool, typer.Option()] = False,
 ) -> None:
     delivered = False
+    schema_value: dict[str, JsonValue] | None = None
 
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
@@ -210,7 +212,7 @@ def model_run(
                 runtime.configuration.snapshot,
                 question=question,
                 instructions=instructions,
-                schema=_schema(schema),
+                schema=schema_value,
                 document_mode=document_mode,
                 without_audio=without_audio,
                 per_batch=per_batch,
@@ -231,6 +233,7 @@ def model_run(
             }
 
     try:
+        schema_value = _schema(schema)
         value = run_async(run())
     except (NousError, OSError, ValueError) as error:
         if stream and options(ctx).json_mode:
@@ -259,6 +262,38 @@ def model_run(
             emit(ctx, value)
         else:
             _emit_results(ctx, value)
+
+
+@model_cli.command("recover")
+def model_recover(
+    ctx: typer.Context,
+    producer_key: Annotated[
+        str, typer.Option("--producer-key", help="失败结果中提供的模型响应恢复键")
+    ],
+    details: Annotated[bool, typer.Option("--details")] = False,
+) -> None:
+    """恢复并保存一个已经成功生成的模型结果。"""
+
+    async def run() -> dict[str, object]:
+        async with open_instance(options(ctx).locator) as runtime:
+            async with runtime.execution.operation("model.recover_output") as context:
+                result = await runtime.generation.recover_result(producer_key, context.settings)
+                return {
+                    "results": [
+                        await _result(
+                            runtime,
+                            result.ref.identifier,
+                            details=details or options(ctx).json_mode,
+                        )
+                    ],
+                    "coverage": result.coverage,
+                }
+
+    value = run_async(run())
+    if details:
+        emit(ctx, value)
+    else:
+        _emit_results(ctx, value)
 
 
 @prompt_cli.command("list")
@@ -357,6 +392,8 @@ def prompt_preview(
     task: Annotated[str | None, typer.Option("--task")] = None,
     per_batch: Annotated[bool, typer.Option("--per-batch")] = False,
 ) -> None:
+    schema_value = _schema(schema)
+
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
             return dict(
@@ -367,7 +404,7 @@ def prompt_preview(
                     texts=text or (),
                     question=question,
                     instructions=instructions,
-                    schema=_schema(schema),
+                    schema=schema_value,
                     task=task,
                     per_batch=per_batch,
                 )
@@ -418,7 +455,17 @@ def content_export(
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
             async with runtime.execution.operation("content.export"):
-                return {"artifact": ref, "output": str(await runtime.artifacts.export(ref, output))}
+                from nous.runtime.local_context import current_call
+
+                call = current_call.get()
+                if call is None:
+                    exported = await runtime.artifacts.export(ref, output)
+                else:
+                    blob = await runtime.artifacts.blob(ref)
+                    async with runtime.artifacts.borrow_local(ref) as source:
+                        await call.export_file(source, output, blob.digest, blob.byte_length)
+                    exported = output
+                return {"artifact": ref, "output": str(exported)}
 
     emit(ctx, run_async(run()))
 
@@ -431,7 +478,7 @@ def media_inspect(ctx: typer.Context, input: str) -> None:
                 artifact = (
                     await runtime.artifacts.get(input)
                     if identifier_type(input) == "art"
-                    else await runtime.artifacts.ingest(Path(input))
+                    else await runtime.artifacts.ingest(_client_path(input))
                 )
                 info = await runtime.media.preparer.inspect(artifact, context.settings.values.media)
                 return {"artifact": artifact.model_dump(mode="json"), "media": info}
@@ -459,6 +506,9 @@ def media_analyze(
     schema: Annotated[Path | None, typer.Option("--schema")] = None,
     details: Annotated[bool, typer.Option("--details")] = False,
 ) -> None:
+    selected = _selection(pages, start, end)
+    schema_value = _schema(schema)
+
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
             async with runtime.execution.operation("tools.media.analyze") as context:
@@ -466,7 +516,7 @@ def media_analyze(
                     _source(input),
                     strategy,
                     context.settings,
-                    selection=_selection(pages, start, end),
+                    selection=selected,
                     question=question,
                     instructions=instructions,
                     task=task,
@@ -474,7 +524,7 @@ def media_analyze(
                     document_mode=document_mode,
                     without_audio=without_audio,
                     description_result=description_result,
-                    schema=_schema(schema),
+                    schema=schema_value,
                 )
                 return {
                     "artifact": outcome.artifact.ref.identifier,
@@ -525,7 +575,9 @@ def embedding_probe(
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
-            result = await runtime.embedding.probe(model, input or (), text or ())
+            result = await runtime.embedding.probe(
+                model, [str(_source(item)) for item in input or ()], text or ()
+            )
             return {
                 "model": model,
                 "dimensions": result.dimensions,
@@ -548,7 +600,9 @@ def embedding_run(
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
-            result = await runtime.embedding.run(space, purpose, input or (), text or ())
+            result = await runtime.embedding.run(
+                space, purpose, [str(_source(item)) for item in input or ()], text or ()
+            )
             return result.model_dump(mode="json")
 
     value = run_async(run())
@@ -560,3 +614,11 @@ def embedding_run(
     typer.echo(f"{space}: {len(rows)} vectors, {definition['dimensions']} dimensions ({purpose})")
     for ref in cast(list[dict[str, str]], value["results"]):
         typer.echo(ref["identifier"])
+
+
+def _client_path(value: str) -> Path:
+    from nous.runtime.local_context import current_call
+
+    path = Path(value)
+    call = current_call.get()
+    return call.cwd / path if call is not None and not path.is_absolute() else path

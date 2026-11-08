@@ -1,10 +1,17 @@
 //! Immutable, reopenable Wave assets and the shared bounded native worker pool.
+mod delta;
+mod identity;
+mod math;
+mod validation;
+
 use crate::{CancellationToken, bundles::*, failure};
 use crate::{
-    IndexDocument, RetrievalIndex,
+    RetrievalIndex,
     vector::{VectorGeneration, VectorGenerationIdentity, VectorRecord, VectorSnapshot},
 };
 use anyhow::{Context, Result, ensure};
+use identity::StableIds;
+use math::{assemble, build_math};
 use nous_vcp::{
     artifact::{ArtifactInput, FileTag, build_artifact},
     assets::{CandidateData, FileData, MemoAssetInput, MemoAssets, RootFact},
@@ -15,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -60,16 +67,22 @@ pub struct GroupMeta {
     pub key: String,
     pub kind: String,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct MathDisk {
-    graph: NativeArtifact,
+    graph: Arc<NativeArtifact>,
     epa_json: String,
     signature: String,
     geometry: Value,
 }
 pub struct Frozen {
+    pub path: PathBuf,
+    math: Option<MathDisk>,
     pub input: Input,
     pub candidates: CandidateMeta,
+    ids: StableIds,
+    pub candidate_ids: Vec<i64>,
+    pub candidate_rows: HashMap<i64, u64>,
+    pub group_ranks: Arc<BTreeMap<u64, u64>>,
     pub concepts: ConceptMeta,
     pub facts: FactMeta,
     pub associations: AssociationMeta,
@@ -81,245 +94,6 @@ pub struct Frozen {
     pub negative_neighbors: BTreeMap<u64, BTreeSet<u64>>,
     pub negative_relations: BTreeMap<(u64, u64), Vec<usize>>,
     pub candidate_units: Option<Vec<Arc<[f32]>>>,
-}
-fn unique(values: &[String]) -> bool {
-    values.iter().all(|s| !s.trim().is_empty())
-        && values.iter().collect::<BTreeSet<_>>().len() == values.len()
-}
-impl Input {
-    fn validate(&self) -> Result<(CandidateMeta, ConceptMeta, FactMeta, AssociationMeta)> {
-        let native_options = self.options.get("native").unwrap_or(&self.options);
-        let build_config: nous_vcp::config::BuildConfig =
-            serde_json::from_value(native_options.clone())?;
-        build_config
-            .validate()
-            .map_err(|e| failure("wave.invalid_input", e))?;
-        let c: CandidateMeta = serde_json::from_str(&self.candidates.metadata_json)?;
-        let t: ConceptMeta = serde_json::from_str(&self.concepts.metadata_json)?;
-        let f: FactMeta = serde_json::from_str(&self.facts.metadata_json)?;
-        let a: AssociationMeta = serde_json::from_str(&self.associations.metadata_json)?;
-        for name in ["snapshot_id", "space_signature", "build_config_signature"] {
-            ensure!(
-                self.identity
-                    .get(name)
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| !s.is_empty()),
-                "Missing snapshot identity {name}"
-            );
-        }
-        let n = c.keys.len();
-        let m = t.keys.len();
-        let roots = f.root_keys.len();
-        let seq = f.sequence_keys.len();
-        let edges = a.keys.len();
-        ensure!(
-            unique(&c.keys)
-                && unique(&t.keys)
-                && unique(&f.root_keys)
-                && unique(&f.sequence_keys)
-                && unique(&a.keys),
-            "Keys must be unique and nonempty"
-        );
-        ensure!(
-            c.group_rows.len() == n
-                && unique(&c.group_keys)
-                && c.group_rows.iter().all(|r| *r < c.group_keys.len() as u64)
-                && c.documents.len() == n
-                && c.titles.len() == n
-                && self.candidates.texts.len() == n
-                && c.documents.iter().all(|d| !d.is_empty()),
-            "Candidate metadata/text length mismatch"
-        );
-        let mut group_documents = BTreeMap::new();
-        for (row, document) in c.documents.iter().enumerate() {
-            let owner = group_documents.entry(c.group_rows[row]).or_insert(document);
-            ensure!(
-                *owner == document,
-                "A candidate group must belong to one exact document"
-            );
-        }
-        ensure!(
-            group_documents.len() == c.group_keys.len(),
-            "Group table contains unused rows"
-        );
-        ensure!(
-            t.labels.len() == m
-                && (t.aliases.is_empty() || t.aliases.len() == m)
-                && f.root_checksums.len() == roots,
-            "Concept or source metadata length mismatch"
-        );
-        csr(
-            &self.candidates.membership_indptr,
-            &self.candidates.membership_indices,
-            n,
-            m,
-        )?;
-        let paths = self
-            .candidates
-            .path_step_indptr
-            .len()
-            .checked_sub(1)
-            .context("Missing path offsets")?;
-        csr(
-            &self.candidates.path_indptr,
-            &(0..paths as u64).collect::<Vec<_>>(),
-            n,
-            paths,
-        )?;
-        csr(
-            &self.candidates.path_step_indptr,
-            &self.candidates.path_indices,
-            paths,
-            m,
-        )?;
-        ensure!(
-            self.candidates
-                .path_indptr
-                .windows(2)
-                .all(|p| p[1] - p[0] <= 16),
-            "At most 16 paths per candidate"
-        );
-        csr(
-            &self.candidates.root_indptr,
-            &self.candidates.root_indices,
-            n,
-            roots,
-        )?;
-        ensure!(
-            self.candidates.path_positions.len() == self.candidates.path_indices.len()
-                && self.candidates.path_positions.iter().all(|p| *p > 0),
-            "Ordered candidate curve positions must be positive"
-        );
-        csr(&self.facts.indptr, &self.facts.indices, seq, m)?;
-        ensure!(
-            self.facts.positions.len() == self.facts.indices.len()
-                && self.facts.ordered.len() == seq
-                && self.facts.sequence_roots.len() == seq
-                && self.facts.sequence_roots.iter().all(|r| *r < roots as u64),
-            "Source sequence shape mismatch"
-        );
-        for row in 0..seq {
-            let positions = &self.facts.positions
-                [self.facts.indptr[row] as usize..self.facts.indptr[row + 1] as usize];
-            if self.facts.ordered[row] {
-                ensure!(
-                    positions.iter().all(|p| *p > 0) && positions.windows(2).all(|p| p[0] <= p[1]),
-                    "Ordered source positions must be positive and monotone"
-                );
-            }
-        }
-        if let Some(limit) = build_config.pair_work_limit {
-            let mut total = 0u128;
-            for (i, key) in f.sequence_keys.iter().enumerate() {
-                let n = (self.facts.indptr[i + 1] - self.facts.indptr[i]) as u128;
-                let work = n.saturating_mul(n.saturating_sub(1)) / 2;
-                total = total.saturating_add(work);
-                if total > u128::from(limit) {
-                    return Err(crate::Failure{code:"wave.pair_work_limit",message:format!("Occurrence pair work exceeds {limit} at source sequence {key}"),details:json!({"sequence":key,"sequence_pairs":work.to_string(),"total_pairs":total.to_string(),"limit":limit})}.into());
-                }
-            }
-        }
-        if let Some(v) = &self.candidates.vectors {
-            ensure!(v.rows == n, "Candidate matrix rows mismatch");
-        }
-        if let Some(v) = &self.concepts.vectors {
-            ensure!(v.rows == m, "Concept matrix rows mismatch");
-            if let Some(c) = &self.candidates.vectors {
-                ensure!(c.cols == v.cols, "Vector space dimensions mismatch");
-            }
-        }
-        for matrix in [&self.candidates.vectors, &self.concepts.vectors]
-            .into_iter()
-            .flatten()
-        {
-            ensure!(
-                matrix.cols > 0
-                    && matrix.rows.checked_mul(matrix.cols) == Some(matrix.values.len())
-                    && matrix.values.iter().all(|v| v.is_finite()),
-                "Invalid finite matrix layout"
-            );
-        }
-        for row in 0..n {
-            let members = slice(
-                &self.candidates.membership_indptr,
-                &self.candidates.membership_indices,
-                row,
-            );
-            for path in self.candidates.path_indptr[row] as usize
-                ..self.candidates.path_indptr[row + 1] as usize
-            {
-                let indices = slice(
-                    &self.candidates.path_step_indptr,
-                    &self.candidates.path_indices,
-                    path,
-                );
-                let positions = slice(
-                    &self.candidates.path_step_indptr,
-                    &self.candidates.path_positions,
-                    path,
-                );
-                ensure!(
-                    indices.iter().all(|i| members.contains(i))
-                        && positions.windows(2).all(|p| p[0] <= p[1]),
-                    "Path occurrences must have memberships and monotone positions"
-                );
-            }
-        }
-        let assoc = &self.associations;
-        ensure!(
-            a.relations.len() == edges
-                && assoc.edge_groups.len() == edges
-                && assoc
-                    .edge_groups
-                    .iter()
-                    .all(|i| *i < a.support_groups.len() as u64)
-                && assoc.sources.len() == edges
-                && assoc.targets.len() == edges
-                && assoc.directed.len() == edges
-                && assoc.strengths.len() == edges
-                && assoc.confidences.len() == edges
-                && assoc.polarities.len() == edges,
-            "Association shape mismatch"
-        );
-        ensure!(
-            assoc
-                .sources
-                .iter()
-                .chain(assoc.targets.iter())
-                .all(|i| *i < m as u64)
-                && assoc
-                    .strengths
-                    .iter()
-                    .chain(assoc.confidences.iter())
-                    .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
-                && assoc.polarities.iter().all(|v| [-1, 1].contains(v)),
-            "Association endpoint or quality invalid"
-        );
-        csr(
-            &assoc.group_root_indptr,
-            &assoc.group_root_indices,
-            a.support_groups.len(),
-            roots,
-        )?;
-        ensure!(
-            unique(
-                &a.support_groups
-                    .iter()
-                    .map(|g| g.key.clone())
-                    .collect::<Vec<_>>()
-            ) && a.support_groups.iter().enumerate().all(|(i, g)| matches!(
-                g.kind.as_str(),
-                "source" | "interpretation" | "hypothesis" | "imagination"
-            ) && (!matches!(
-                g.kind.as_str(),
-                "source" | "interpretation"
-            ) || assoc
-                .group_root_indptr[i]
-                < assoc.group_root_indptr[i + 1])),
-            "Invalid support group premises, keys or kind"
-        );
-        Ok((c, t, f, a))
-    }
 }
 pub fn unit(v: &[f32]) -> Result<Vec<f32>> {
     let norm = v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
@@ -334,435 +108,6 @@ pub fn unit(v: &[f32]) -> Result<Vec<f32>> {
 pub fn slice<'a, T>(ptr: &[u64], values: &'a [T], row: usize) -> &'a [T] {
     &values[ptr[row] as usize..ptr[row + 1] as usize]
 }
-fn build_math(
-    input: &Input,
-    concepts: &ConceptMeta,
-    cancel: &CancellationToken,
-) -> Result<Option<MathDisk>> {
-    let Some(vectors) = &input.concepts.vectors else {
-        return Ok(None);
-    };
-    if input.candidates.vectors.is_none() {
-        return Ok(None);
-    }
-    let mut rows = Vec::new();
-    for seq in 0..input.facts.sequence_roots.len() {
-        for cursor in input.facts.indptr[seq] as usize..input.facts.indptr[seq + 1] as usize {
-            rows.push(FileTag {
-                file_id: seq as i64 + 1,
-                tag_id: input.facts.indices[cursor] as i64 + 1,
-                position: if input.facts.ordered[seq] {
-                    input.facts.positions[cursor]
-                } else {
-                    0
-                },
-            });
-        }
-    }
-    let pool = concepts
-        .keys
-        .iter()
-        .enumerate()
-        .map(|(row, _)| Ok((row as i64 + 1, Arc::<[f32]>::from(unit(vectors.row(row))?))))
-        .collect::<Result<HashMap<_, _>>>()?;
-    let assoc = &input.associations;
-    let meta: AssociationMeta = serde_json::from_str(&assoc.metadata_json)?;
-    let association_options = &input.options["associations"];
-    let enabled = association_options
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let relation_weights = association_options
-        .get("relation_gains")
-        .and_then(Value::as_object);
-    let facts: FactMeta = serde_json::from_str(&input.facts.metadata_json)?;
-    let mut canonical_groups = BTreeMap::<(String, Vec<u64>), usize>::new();
-    let mut canonical_ids = Vec::new();
-    for (i, g) in meta.support_groups.iter().enumerate() {
-        let mut roots = slice(&assoc.group_root_indptr, &assoc.group_root_indices, i).to_vec();
-        roots.sort_unstable();
-        roots.dedup();
-        canonical_ids.push(*canonical_groups.entry((g.kind.clone(), roots)).or_insert(i));
-    }
-    let mut masses = BTreeMap::<(i64, i64, String, i64), f64>::new();
-    if enabled {
-        for i in 0..assoc.sources.len() {
-            if assoc.polarities[i] < 0 {
-                continue;
-            }
-            let relation = &meta.relations[i];
-            let gain = relation_weights
-                .and_then(|w| w.get(relation))
-                .and_then(Value::as_f64)
-                .unwrap_or_else(|| {
-                    if relation_weights.is_none()
-                        && matches!(relation.as_str(), "related" | "supports" | "sequence")
-                    {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                });
-            ensure!(
-                gain.is_finite() && gain >= 0.0,
-                "Association projection gain invalid"
-            );
-            let group = &meta.support_groups[assoc.edge_groups[i] as usize];
-            let interpretation_gain = association_options
-                .get("interpretation_gain")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            ensure!(
-                interpretation_gain.is_finite() && interpretation_gain >= 0.0,
-                "Invalid interpretation_gain"
-            );
-            let kind_gain = match group.kind.as_str() {
-                "source" => 1.0,
-                "interpretation" => interpretation_gain,
-                _ => 0.0,
-            };
-            let weight = gain * assoc.strengths[i] * assoc.confidences[i] * kind_gain;
-            let canonical = canonical_ids[assoc.edge_groups[i] as usize];
-            let group_id = facts.root_keys.len() as i64 + 1 + canonical as i64;
-            for (source, target) in [
-                (assoc.sources[i] as i64 + 1, assoc.targets[i] as i64 + 1),
-                (assoc.targets[i] as i64 + 1, assoc.sources[i] as i64 + 1),
-            ]
-            .into_iter()
-            .take(if assoc.directed[i] { 1 } else { 2 })
-            {
-                let mass = masses
-                    .entry((source, target, relation.clone(), group_id))
-                    .or_default();
-                *mass = mass.max(weight);
-            }
-        }
-    }
-    let additional_facts = masses
-        .into_iter()
-        .filter(|(_, mass)| *mass > 0.0)
-        .map(
-            |((source, target, _, root), mass)| nous_vcp::artifact::FactEdge {
-                source,
-                target,
-                root,
-                mass,
-            },
-        )
-        .collect::<Vec<_>>();
-    let edges = additional_facts
-        .iter()
-        .map(|e| (e.source, e.target, e.mass))
-        .collect::<Vec<_>>();
-    let native_options = input.options.get("native").unwrap_or(&input.options);
-    let build_config: nous_vcp::config::BuildConfig =
-        serde_json::from_value(native_options.clone())
-            .map_err(|e| failure("wave.invalid_input", e))?;
-    build_config
-        .validate()
-        .map_err(|e| failure("wave.invalid_input", e))?;
-    cancel.check()?;
-    let geometry = build_geometry(
-        GeometryInput {
-            dimension: vectors.cols,
-            model_sig: input.identity["space_signature"].as_str().unwrap().into(),
-            config: serde_json::to_value(&build_config.geometry)?,
-            tags: concepts
-                .keys
-                .iter()
-                .enumerate()
-                .map(|(row, _)| GeometryTag {
-                    id: row as i64 + 1,
-                    name: concepts.labels[row].clone(),
-                    vector_version: 1,
-                    vector: pool[&(row as i64 + 1)].to_vec(),
-                })
-                .collect(),
-            memberships: rows.clone(),
-            edges: if edges.is_empty() {
-                None
-            } else {
-                Some(edges.clone())
-            },
-            recorded_at_ms: 0,
-        },
-        Some(&|| cancel.is_cancelled()),
-    )
-    .map_err(|e| {
-        failure(
-            if cancel.is_cancelled() {
-                "wave.cancelled"
-            } else {
-                "wave.geometry_failed"
-            },
-            e,
-        )
-    })?;
-    cancel.check()?;
-    let config = serde_json::to_value(&build_config.artifact)?;
-    let built = build_artifact(
-        ArtifactInput {
-            dimension: vectors.cols,
-            model_sig: input.identity["space_signature"].as_str().unwrap().into(),
-            generation: input.identity["snapshot_id"].as_str().unwrap().into(),
-            geometry_sig: geometry.signature.clone(),
-            rows,
-            tag_vectors: pool,
-            anchor_gain: geometry.anchor_gain.clone(),
-            config: config.clone(),
-            source_roots: input
-                .facts
-                .sequence_roots
-                .iter()
-                .enumerate()
-                .map(|(seq, root)| (seq as i64 + 1, *root as i64 + 1))
-                .collect(),
-            additional_facts,
-        },
-        Some(&|| cancel.is_cancelled()),
-    )
-    .map_err(|e| {
-        failure(
-            if cancel.is_cancelled() {
-                "wave.cancelled"
-            } else {
-                "wave.artifact_failed"
-            },
-            e,
-        )
-    })?;
-    let mut graph = (*built.graph).clone();
-    let facts: FactMeta = serde_json::from_str(&input.facts.metadata_json)?;
-    for (i, g) in meta.support_groups.iter().enumerate() {
-        if canonical_ids[i] != i {
-            continue;
-        }
-        graph.support_groups.insert(
-            facts.root_keys.len() as i64 + 1 + i as i64,
-            nous_vcp::graph::SupportGroup {
-                required_roots: slice(&assoc.group_root_indptr, &assoc.group_root_indices, i)
-                    .iter()
-                    .map(|r| *r as i64 + 1)
-                    .collect(),
-                kind: g.kind.clone(),
-            },
-        );
-    }
-    let signature = format!(
-        "{:x}",
-        <sha2::Sha256 as sha2::Digest>::digest(rmp_serde::to_vec_named(&graph)?)
-    );
-    let epa_json = geometry.epa_cache_json.clone();
-    Ok(Some(MathDisk {
-        graph,
-        epa_json,
-        signature,
-        geometry: json!({"algorithm_version":geometry.algorithm_version,"signature":geometry.signature,"tag_count":geometry.tag_count,"computed_count":geometry.computed_count}),
-    }))
-}
-fn assemble(
-    input: &Input,
-    c: &CandidateMeta,
-    t: &ConceptMeta,
-    f: &FactMeta,
-    math: &MathDisk,
-) -> Result<MemoAssets> {
-    let dimension = input.concepts.vectors.as_ref().unwrap().cols;
-    let mut files = BTreeMap::new();
-    let mut roots = BTreeMap::<i64, RootFact>::new();
-    for (row, checksum) in f.root_checksums.iter().enumerate() {
-        roots.insert(
-            row as i64 + 1,
-            RootFact {
-                required_roots: vec![row as i64 + 1],
-                checksum: checksum.clone(),
-                tags: BTreeSet::new(),
-            },
-        );
-    }
-    for seq in 0..f.sequence_keys.len() {
-        let root = input.facts.sequence_roots[seq] as i64 + 1;
-        for tag in slice(&input.facts.indptr, &input.facts.indices, seq) {
-            roots.get_mut(&root).unwrap().tags.insert(*tag as i64 + 1);
-        }
-    }
-    for (root, fact) in &roots {
-        files.insert(
-            *root,
-            FileData {
-                diary_name: "source".into(),
-                tags: fact
-                    .tags
-                    .iter()
-                    .map(|tag| FileTag {
-                        file_id: *root,
-                        tag_id: *tag,
-                        position: 0,
-                    })
-                    .collect(),
-            },
-        );
-    }
-    // Explicit source groups retain their complete premises for strong-route witnesses.
-    // Interpretation groups never create an original-source witness.
-    let mut root_groups = roots
-        .iter()
-        .map(|(id, fact)| (fact.required_roots.clone(), *id))
-        .collect::<BTreeMap<_, _>>();
-    let assoc = &input.associations;
-    let metadata: AssociationMeta = serde_json::from_str(&assoc.metadata_json)?;
-    for i in 0..assoc.sources.len() {
-        let group_index = assoc.edge_groups[i] as usize;
-        let group = &metadata.support_groups[group_index];
-        if assoc.polarities[i] < 0 || group.kind != "source" {
-            continue;
-        }
-        let mut required = slice(
-            &assoc.group_root_indptr,
-            &assoc.group_root_indices,
-            group_index,
-        )
-        .iter()
-        .map(|r| *r as i64 + 1)
-        .collect::<Vec<_>>();
-        required.sort_unstable();
-        required.dedup();
-        if required.is_empty() {
-            continue;
-        }
-        let id = *root_groups
-            .entry(required.clone())
-            .or_insert(f.root_keys.len() as i64 + 1 + group_index as i64);
-        let checksum = required
-            .iter()
-            .map(|r| f.root_checksums[(*r - 1) as usize].as_str())
-            .collect::<Vec<_>>()
-            .join("+");
-        let fact = roots.entry(id).or_insert_with(|| RootFact {
-            required_roots: required,
-            checksum,
-            tags: BTreeSet::new(),
-        });
-        fact.tags.insert(assoc.sources[i] as i64 + 1);
-        fact.tags.insert(assoc.targets[i] as i64 + 1);
-    }
-    let docs = c
-        .documents
-        .iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .enumerate()
-        .map(|(i, key)| (key, i as i64 + 1))
-        .collect::<BTreeMap<_, _>>();
-    let mut candidates = BTreeMap::new();
-    let mut candidate_paths = BTreeMap::new();
-    let candidate_vectors = input
-        .candidates
-        .vectors
-        .as_ref()
-        .context("VCP requires candidate vectors")?;
-    for row in 0..c.keys.len() {
-        let file_id = f.root_keys.len() as i64 + row as i64 + 1;
-        let mut tags = Vec::new();
-        let mut ordered = BTreeSet::new();
-        let mut paths = Vec::new();
-        for path in input.candidates.path_indptr[row] as usize
-            ..input.candidates.path_indptr[row + 1] as usize
-        {
-            let mut steps = Vec::new();
-            for cursor in input.candidates.path_step_indptr[path] as usize
-                ..input.candidates.path_step_indptr[path + 1] as usize
-            {
-                steps.push(FileTag {
-                    file_id,
-                    tag_id: input.candidates.path_indices[cursor] as i64 + 1,
-                    position: input.candidates.path_positions[cursor],
-                });
-            }
-            paths.push(steps);
-        }
-        if let Some(first) = paths.first() {
-            for tag in first {
-                ordered.insert(tag.tag_id);
-                tags.push(tag.clone());
-            }
-        }
-        candidate_paths.insert(row as i64 + 1, paths);
-        for tag in slice(
-            &input.candidates.membership_indptr,
-            &input.candidates.membership_indices,
-            row,
-        ) {
-            let tag = *tag as i64 + 1;
-            if !ordered.contains(&tag) {
-                tags.push(FileTag {
-                    file_id,
-                    tag_id: tag,
-                    position: 0,
-                });
-            }
-        }
-        files.insert(
-            file_id,
-            FileData {
-                diary_name: c.documents[row].clone(),
-                tags,
-            },
-        );
-        candidates.insert(
-            row as i64 + 1,
-            CandidateData {
-                id: row as i64 + 1,
-                file_id,
-                document_id: docs[&c.documents[row]],
-                source_ids: slice(
-                    &input.candidates.root_indptr,
-                    &input.candidates.root_indices,
-                    row,
-                )
-                .iter()
-                .map(|r| *r as i64 + 1)
-                .collect(),
-                vector: Arc::from(unit(candidate_vectors.row(row))?),
-            },
-        );
-    }
-    MemoAssets::try_new(MemoAssetInput {
-        tag_aliases: t
-            .aliases
-            .iter()
-            .enumerate()
-            .map(|(i, aliases)| (i as i64 + 1, aliases.clone()))
-            .collect(),
-        root_facts: roots,
-        dimension,
-        signature: math.signature.clone(),
-        generation: input.identity["snapshot_id"].as_str().unwrap().into(),
-        graph: Arc::new(math.graph.clone()),
-        tag_vectors: t
-            .keys
-            .iter()
-            .enumerate()
-            .map(|(row, _)| {
-                Ok((
-                    row as i64 + 1,
-                    Arc::from(unit(input.concepts.vectors.as_ref().unwrap().row(row))?),
-                ))
-            })
-            .collect::<Result<_>>()?,
-        tag_names: t
-            .labels
-            .iter()
-            .enumerate()
-            .map(|(i, name)| (i as i64 + 1, name.clone()))
-            .collect(),
-        epa: nous_vcp::pipeline::decode_epa_basis(math.epa_json.clone(), dimension).map(Arc::new),
-        candidates,
-        candidate_paths,
-        files,
-    })
-    .map_err(|e| failure("wave.assets_invalid", e))
-}
 pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result<Frozen> {
     cancel.check()?;
     ensure!(
@@ -773,6 +118,7 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
         serde_json::from_slice(&std::fs::read(path.join("manifest.json"))?)?;
     for name in [
         "assets.msgpack",
+        "identities.msgpack",
         "math.msgpack",
         "timings.json",
         "lexical/meta.json",
@@ -805,6 +151,21 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
         }
     }
     let (c, t, f, a) = input.validate()?;
+    let ids: StableIds = rmp_serde::from_slice(&std::fs::read(path.join("identities.msgpack"))?)?;
+    ids.validate(&c)?;
+    let candidate_ids: Vec<i64> = c.keys.iter().map(|key| ids.candidates[key]).collect();
+    let candidate_rows = candidate_ids
+        .iter()
+        .enumerate()
+        .map(|(row, id)| (*id, row as u64))
+        .collect();
+    let group_ranks = Arc::new(
+        c.group_keys
+            .iter()
+            .enumerate()
+            .map(|(row, key)| (ids.groups[key], row as u64))
+            .collect(),
+    );
     let math: Option<MathDisk> = rmp_serde::from_slice(&std::fs::read(path.join("math.msgpack"))?)?;
     let assets = if let Some(math) = &math {
         Some(assemble(&input, &c, &t, &f, math)?)
@@ -814,7 +175,7 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
     let ann = if input.candidates.vectors.is_some() {
         Some(VectorGeneration::open(
             &path.join("vectors"),
-            &vector_snapshot(&input, &c, &t)?,
+            &vector_snapshot(&input, &c, &t, &ids)?,
         )?)
     } else {
         None
@@ -882,8 +243,14 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
             .transpose()?
     };
     Ok(Frozen {
+        path: path.to_path_buf(),
+        math,
         input,
         candidates: c,
+        ids,
+        candidate_ids,
+        candidate_rows,
+        group_ranks,
         concepts: t,
         facts: f,
         associations: a,
@@ -903,7 +270,12 @@ pub struct BuiltSnapshot {
     pub identity: Value,
     pub manifest: BTreeMap<String, String>,
 }
-pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Result<BuiltSnapshot> {
+pub fn build(
+    input: Input,
+    output_dir: &Path,
+    base: Option<&Frozen>,
+    token: &CancellationToken,
+) -> Result<BuiltSnapshot> {
     let (c, t, _, _) = input.validate().map_err(|e| {
         if e.is::<crate::Failure>() {
             e
@@ -917,43 +289,51 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
         !path.join("assets.msgpack").exists(),
         "Snapshot directory already built"
     );
+    let ids = StableIds::build(
+        &c,
+        base.filter(|old| delta::compatible(&input, old))
+            .map(|old| &old.ids),
+    )?;
     let started = std::time::Instant::now();
     let stage = std::time::Instant::now();
-    let math = build_math(&input, &t, token)?;
+    let reusable_math = base.filter(|old| {
+        delta::compatible(&input, old)
+            && input.concepts == old.input.concepts
+            && input.facts == old.input.facts
+            && input.associations == old.input.associations
+            && input.candidates.vectors.is_some() == old.input.candidates.vectors.is_some()
+    });
+    let math = if let Some(old) = reusable_math {
+        old.math.clone()
+    } else {
+        build_math(&input, &t, token)?
+    };
     let math_ms = stage.elapsed().as_secs_f64() * 1000.0;
     let stage = std::time::Instant::now();
-    let lexical = RetrievalIndex::open(path.join("lexical"))?;
-    lexical.rebuild(
-        &c.keys
-            .iter()
-            .enumerate()
-            .map(|(row, key)| IndexDocument {
-                id: key.clone(),
-                group_row: c.group_rows[row],
-                namespace_id: "snapshot".into(),
-                subject_id: "snapshot".into(),
-                commit_seq: 1,
-                text: input.candidates.texts[row].clone(),
-                title: c.titles[row].clone(),
-                deleted: false,
-            })
-            .collect::<Vec<_>>(),
-        1,
-    )?;
-    lexical.close()?;
-    // The build no longer needs the reader or its mapped segments. Release them
-    // before handing the completed component to the publication owner.
-    drop(lexical);
+    let lexical_delta = delta::build_lexical(&input, &c, &ids, &path.join("lexical"), base, token)?;
     let lexical_ms = stage.elapsed().as_secs_f64() * 1000.0;
     let stage = std::time::Instant::now();
     token.check()?;
+    let mut ann_delta = json!({"incremental": false});
     if input.candidates.vectors.is_some() {
-        VectorGeneration::create(
-            &path.join("vectors"),
-            vector_snapshot(&input, &c, &t)?,
-            Some(&|| token.is_cancelled()),
-        )
-        .map_err(|e| {
+        let next = vector_snapshot(&input, &c, &t, &ids)?;
+        let result = if let Some(old) = base
+            .filter(|old| delta::compatible(&input, old) && old.input.candidates.vectors.is_some())
+        {
+            let previous = vector_snapshot(&old.input, &old.candidates, &old.concepts, &old.ids)?;
+            VectorGeneration::create_incremental(
+                &path.join("vectors"),
+                next,
+                &old.path.join("vectors"),
+                &previous,
+                Some(&|| token.is_cancelled()),
+            )
+            .map(|(_, stats)| stats)
+        } else {
+            VectorGeneration::create(&path.join("vectors"), next, Some(&|| token.is_cancelled()))
+                .map(|_| json!({"incremental": false}))
+        };
+        ann_delta = result.map_err(|e| {
             if token.is_cancelled() {
                 failure("wave.cancelled", e)
             } else {
@@ -963,17 +343,22 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
     }
     token.check()?;
     let ann_ms = stage.elapsed().as_secs_f64() * 1000.0;
-    std::fs::write(path.join("math.msgpack"), rmp_serde::to_vec_named(&math)?)?;
-    std::fs::write(
-        path.join("assets.msgpack"),
-        rmp_serde::to_vec_named(&input)?,
+    write_synced(
+        &path.join("identities.msgpack"),
+        &rmp_serde::to_vec_named(&ids)?,
     )?;
-    std::fs::write(
-        path.join("timings.json"),
-        serde_json::to_vec(
-            &json!({"total_ms":started.elapsed().as_secs_f64()*1000.0,"geometry_artifact_ms":math_ms,"lexical_ms":lexical_ms,"ann_ms":ann_ms}),
+    write_synced(&path.join("math.msgpack"), &rmp_serde::to_vec_named(&math)?)?;
+    write_synced(
+        &path.join("assets.msgpack"),
+        &rmp_serde::to_vec_named(&input)?,
+    )?;
+    write_synced(
+        &path.join("timings.json"),
+        &serde_json::to_vec(
+            &json!({"total_ms":started.elapsed().as_secs_f64()*1000.0,"geometry_artifact_ms":math_ms,"math_reused":reusable_math.is_some(),"lexical_ms":lexical_ms,"lexical_delta":lexical_delta,"ann_ms":ann_ms,"ann_delta":ann_delta}),
         )?,
     )?;
+    sync_directory(&path.join("lexical"))?;
     let manifest = component_manifest(&path, token)?;
     let pending_manifest = path.join(format!(".manifest-{}.tmp", uuid::Uuid::new_v4()));
     {
@@ -983,10 +368,30 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
         file.sync_all()?;
     }
     std::fs::rename(&pending_manifest, path.join("manifest.json"))?;
+    sync_directory(&path)?;
+    if let Some(parent) = path.parent() {
+        sync_directory(parent)?;
+    }
     Ok(BuiltSnapshot {
         identity: input.identity.clone(),
         manifest,
     })
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(not(windows))]
+    std::fs::File::open(path)?.sync_all()?;
+    #[cfg(windows)]
+    let _ = path;
+    Ok(())
 }
 
 fn component_manifest(root: &Path, cancel: &CancellationToken) -> Result<BTreeMap<String, String>> {
@@ -1037,7 +442,12 @@ fn file_hash(path: &Path, cancel: &CancellationToken) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn vector_snapshot(input: &Input, c: &CandidateMeta, t: &ConceptMeta) -> Result<VectorSnapshot> {
+fn vector_snapshot(
+    input: &Input,
+    c: &CandidateMeta,
+    t: &ConceptMeta,
+    ids: &StableIds,
+) -> Result<VectorSnapshot> {
     let v = input
         .candidates
         .vectors
@@ -1059,7 +469,7 @@ fn vector_snapshot(input: &Input, c: &CandidateMeta, t: &ConceptMeta) -> Result<
             .iter()
             .enumerate()
             .map(|(row, key)| VectorRecord {
-                id: row as i64 + 1,
+                id: ids.candidates[key],
                 source_key: key.clone(),
                 vector: v.row(row).to_vec(),
             })

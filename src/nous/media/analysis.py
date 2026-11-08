@@ -309,7 +309,7 @@ class MediaAnalysis:
                         if ref not in {item.ref.identifier for item in (*descriptions, *final)}
                     ),
                 )
-            except (NousError, asyncio.CancelledError, TimeoutError) as exc:
+            except (NousError, OSError, asyncio.CancelledError, TimeoutError) as exc:
                 record_completed(completed)
                 if isinstance(exc, NousError):
                     report_outcome(

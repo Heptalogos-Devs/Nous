@@ -9,7 +9,7 @@ from sqlalchemy.dialects.sqlite import insert
 
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
-from nous.configuration.service import get_path
+from nous.configuration.values import get_path
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 

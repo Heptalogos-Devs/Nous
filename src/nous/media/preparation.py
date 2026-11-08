@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import codecs
-import hashlib
-import json
 import shutil
-import tempfile
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
-from weakref import WeakValueDictionary
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import JsonValue
@@ -27,11 +21,8 @@ from nous.content.contracts import (
     ArtifactRef,
     ContentSelection,
     InputGroup,
-    InputPart,
-    OriginSlice,
     OutputContent,
     OutputMapping,
-    SourceContext,
     SourceSelection,
 )
 from nous.content.results import ResultStore
@@ -39,6 +30,7 @@ from nous.content.text import TextView
 from nous.runtime.execution import ExecutionManager
 
 from .audiovisual import AudioVisual
+from .audiovisual_preparation import AudioVisualPreparation
 from .configuration import MediaConfig
 from .contracts import (
     MediaPlan,
@@ -49,113 +41,22 @@ from .contracts import (
     TextMapping,
     TextRepresentation,
 )
+from .derivatives import MediaDerivatives, preparation_results, track_completed
 from .documents import (
-    PageData,
-    extract_pdf_pages,
-    image_extension,
     inspect_image,
     inspect_pdf,
-    prepare_images,
-    prepare_pdf_pages,
-    transcode_image,
-    validate_image_selection,
 )
-
-_completed: ContextVar[list[str] | None] = ContextVar("media_preparation_results", default=None)
-
-
-def _track_completed(reference: str) -> None:
-    completed = _completed.get()
-    if completed is not None:
-        completed.append(reference)
-    from nous.common.operations import record_completed
-
-    record_completed(reference)
-
-
-def _validate_selection(kind: str, selection: SourceSelection) -> None:
-    """Reject coordinates that the selected media path cannot actually apply."""
-    supported = {
-        "text": {"start_line", "end_line", "start_byte", "end_byte"},
-        "image": {"frame", "crop", "start_ms", "end_ms"},
-        "pdf": {"pages"},
-        "audio": {"start_ms", "end_ms"},
-        "video": {"start_ms", "end_ms"},
-    }
-    if kind not in supported:
-        raise NousError(
-            "media.unsupported_format", "Unsupported media type", details={"kind": kind}
-        )
-    supplied = {
-        name
-        for name, value in selection.model_dump().items()
-        if value is not None and (name != "pages" or bool(value))
-    }
-    invalid = sorted(supplied - supported[kind])
-    if invalid:
-        raise NousError(
-            "media.invalid_selection",
-            "The selected media type does not support these coordinates",
-            details={"kind": kind, "fields": invalid},
-        )
-
-
-def _validate_selection_bounds(info: dict[str, JsonValue], selection: SourceSelection) -> None:
-    """Check selected coordinates against deterministic media inspection metadata."""
-    kind = str(info["kind"])
-    _validate_selection(kind, selection)
-    if kind == "pdf":
-        if any(page > int(cast(int, info["pages"])) for page in selection.pages):
-            raise NousError("media.invalid_selection", "PDF page selection exceeds the document")
-    elif kind in {"audio", "video"}:
-        duration = info.get("duration_ms")
-        start = selection.start_ms or 0
-        end = selection.end_ms if selection.end_ms is not None else duration
-        if (
-            start < 0
-            or end is not None
-            and (not isinstance(end, int) or end <= start)
-            or (isinstance(duration, int) and end is not None and end > duration)
-        ):
-            raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
-    elif kind == "image":
-        frames = int(cast(int, info["frames"]))
-        validate_image_selection(selection, frames)
-        if selection.crop is not None:
-            width, height = int(cast(int, info["width"])), int(cast(int, info["height"]))
-            if int(cast(int, info["orientation"])) in {5, 6, 7, 8}:
-                width, height = height, width
-            if selection.crop[2] > width or selection.crop[3] > height:
-                raise NousError("media.invalid_selection", "Pixel crop exceeds the image")
-        if frames > 1:
-            duration = int(cast(int, info["duration_ms"]))
-            if (selection.start_ms is not None and selection.start_ms >= duration) or (
-                selection.end_ms is not None and selection.end_ms > duration
-            ):
-                raise NousError(
-                    "media.invalid_selection", "Time selection exceeds the image duration"
-                )
-            if selection.frame is not None:
-                frame = cast(list[dict[str, int]], info["frame_times"])[selection.frame]
-                if (
-                    frame["start_ms"] + max(1, frame["duration_ms"]) <= (selection.start_ms or 0)
-                    or selection.end_ms is not None
-                    and frame["start_ms"] >= selection.end_ms
-                ):
-                    raise NousError(
-                        "media.invalid_selection",
-                        "Selected image frame and time interval do not overlap",
-                    )
-
-
-def _media_interval(info: dict[str, JsonValue], selection: SourceSelection) -> tuple[int, int]:
-    _validate_selection_bounds(info, selection)
-    end = selection.end_ms if selection.end_ms is not None else info.get("duration_ms")
-    if not isinstance(end, int):
-        raise NousError(
-            "media.duration_unknown", "Choose an end time for media with unknown duration"
-        )
-    return selection.start_ms or 0, end
+from .planning import (
+    audio_format,
+    image_format,
+    make_batch,
+    make_group,
+    media_interval,
+    split_sources,
+    validate_selection_bounds,
+    with_source_context,
+)
+from .visual_preparation import VisualPreparation
 
 
 class MediaPreparer:
@@ -168,10 +69,9 @@ class MediaPreparer:
         execution: ExecutionManager,
     ) -> None:
         self.artifacts, self.results, self.execution = artifacts, results, execution
-        # PDFium serializes its native work; keep one preparation owner per source
-        # so overlapping requests can reuse committed pages instead of rendering them again.
-        self._pdf_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
-        self._conversion_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+        self.derivatives = MediaDerivatives(artifacts, results)
+        self.visual = VisualPreparation(artifacts, results, execution, self.derivatives)
+        self.av = AudioVisualPreparation(artifacts, execution, self.derivatives)
 
     @staticmethod
     def capabilities(settings: MediaConfig) -> dict[str, JsonValue]:
@@ -218,13 +118,13 @@ class MediaPreparer:
         )
         original = await self.artifacts.get(source.artifact)
         info = await self.inspect(original, settings)
-        _validate_selection_bounds(info, source.selection)
+        validate_selection_bounds(info, source.selection)
         if info["kind"] == "text":
             view = await self.artifacts.text_view(source)
             return TextRepresentation(
                 original.ref,
                 view,
-                (self._group("S1", original.display_name, original, source.selection),),
+                (make_group("S1", original.display_name, original, source.selection),),
                 {"mode": "text", "selection": source.selection.model_dump(mode="json")},
                 mappings=(TextMapping(source, (source,)),),
             )
@@ -239,7 +139,7 @@ class MediaPreparer:
             "version": info["version"],
             "origin_mapping": "selected_originals",
         }
-        key = self._derivative_key(original, source.selection, "media.text-view", parameters)
+        key = self.derivatives.key(original, source.selection, "media.text-view", parameters)
         cached = await self.results.find_cached("media.text-view", key)
         if cached is None:
             plan = await self.prepare(
@@ -303,7 +203,7 @@ class MediaPreparer:
                 coverage=plan.coverage,
                 mappings=mappings,
             )
-        _track_completed(cached.ref.identifier)
+        track_completed(cached.ref.identifier)
         body = cached.outputs[0].artifact
         resolved_mappings = tuple(
             TextMapping(
@@ -356,7 +256,7 @@ class MediaPreparer:
         )
         for value, artifact in zip(normalized, originals, strict=True):
             selection = value.selection
-            _validate_selection_bounds(inspected[artifact.ref.id], selection)
+            validate_selection_bounds(inspected[artifact.ref.id], selection)
         return normalized
 
     async def _inspect_local(
@@ -393,159 +293,6 @@ class MediaPreparer:
             "byte_length": byte_length,
             "media_type": info.get("media_type", original.media_type),
         }
-
-    @staticmethod
-    def _derivative_key(
-        original: Artifact,
-        selection: SourceSelection,
-        operation: str,
-        parameters: dict[str, JsonValue],
-    ) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                {
-                    "artifact": original.ref.id,
-                    "source_media_type": original.media_type,
-                    "selection": selection.model_dump(mode="json"),
-                    "operation": operation,
-                    "parameters": parameters,
-                },
-                sort_keys=True,
-            ).encode()
-        ).hexdigest()
-
-    async def _cached_derivative(
-        self, operation: str, cache_key: str
-    ) -> dict[str, Artifact] | None:
-        cached = await self.results.find_cached(operation, cache_key)
-        if cached is not None:
-            _track_completed(cached.ref.identifier)
-            return {
-                output.name: await self.artifacts.get(output.artifact) for output in cached.outputs
-            }
-        return None
-
-    async def _derive(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        operation: str,
-        outputs: dict[str, OutputContent],
-        parameters: dict[str, JsonValue],
-    ) -> dict[str, Artifact]:
-        """Reuse derivatives for the same accepted source, selection and conversion parameters."""
-        cache_key = self._derivative_key(original, selection, operation, parameters)
-        cached = await self._cached_derivative(operation, cache_key)
-        if cached is not None:
-            return cached
-        result = await self.results.adopt(
-            operation=operation,
-            producer={"kind": "deterministic", **parameters},
-            inputs=(
-                InputGroup(
-                    key="S1",
-                    slot_key="S1",
-                    name=original.display_name,
-                    parts=(
-                        InputPart(
-                            content=ContentSelection(artifact=original.ref, selection=selection),
-                            source_media_type=original.media_type,
-                            media_type=original.media_type,
-                        ),
-                    ),
-                ),
-            ),
-            outputs=outputs,
-            parameters={
-                **parameters,
-                "cache_key": cache_key,
-                "representations": {name: {"kind": "prepared"} for name in outputs},
-            },
-            coverage={"selection": selection.model_dump(mode="json")},
-            mappings=tuple(
-                OutputMapping(
-                    output_name=name,
-                    selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
-                    relation="atomic",
-                    origins=(ContentSelection(artifact=original.ref, selection=selection),),
-                )
-                for name, output in outputs.items()
-                if output.data
-            ),
-        )
-        _track_completed(result.ref.identifier)
-        return {output.name: await self.artifacts.get(output.artifact) for output in result.outputs}
-
-    @staticmethod
-    def _group(
-        key: str,
-        name: str,
-        artifact: Artifact,
-        selection: SourceSelection | None = None,
-        *,
-        representation: str = "original",
-        origin: Artifact | None = None,
-        origin_selection: SourceSelection | None = None,
-        media_type: str | None = None,
-    ) -> InputGroup:
-        return InputGroup(
-            key=key,
-            slot_key="S1",
-            name=name,
-            parts=(
-                InputPart(
-                    content=ContentSelection(
-                        artifact=artifact.ref, selection=selection or SourceSelection()
-                    ),
-                    representation=representation,
-                    media_type=media_type or artifact.media_type,
-                    source_media_type=origin.media_type if origin else artifact.media_type,
-                    origins=(
-                        OriginSlice(
-                            origin=ContentSelection(
-                                artifact=origin.ref, selection=origin_selection or SourceSelection()
-                            ),
-                            transform_ref=artifact.producer_result_ref,
-                        ),
-                    )
-                    if origin is not None
-                    else (),
-                ),
-            ),
-        )
-
-    @staticmethod
-    def _batch(
-        original: Artifact,
-        sources: Sequence[PreparedSource],
-        selection: SourceSelection,
-        coverage: dict[str, JsonValue],
-    ) -> PreparedBatch:
-        # Plans keep references only; a consumer materializes one bounded batch when needed.
-        plans = tuple(
-            replace(
-                source,
-                text=None,
-                media=(),
-                group=source.group.model_copy(update={"key": source.key, "name": source.name})
-                if source.group
-                else None,
-                metadata={
-                    **source.metadata,
-                    "byte_length": source.metadata.get(
-                        "byte_length",
-                        len((source.text or "").encode("utf-8"))
-                        + sum(len(part.data) for part in source.media),
-                    ),
-                },
-            )
-            for source in sources
-        )
-        return PreparedBatch(
-            plans,
-            selection,
-            coverage,
-        )
 
     async def materialize(self, batch: PreparedBatch) -> PreparedBatch:
         """Materialize one planned batch's text and media for consumption.
@@ -588,7 +335,7 @@ class MediaPreparer:
         if batch.conversion is not None:
             recipe = batch.conversion
             completed: list[str] = []
-            token = _completed.set(completed)
+            token = preparation_results.set(completed)
             try:
                 converted = await self._prepare(
                     recipe.artifact,
@@ -623,7 +370,7 @@ class MediaPreparer:
                 error.details["completed_result_refs"] = list(dict.fromkeys(completed))
                 raise
             finally:
-                _completed.reset(token)
+                preparation_results.reset(token)
         sources: list[PreparedSource] = []
         for source in batch.sources:
             texts: list[str] = []
@@ -646,97 +393,6 @@ class MediaPreparer:
                 replace(source, text="\n".join(texts) if texts else None, media=tuple(media))
             )
         return replace(batch, sources=tuple(sources))
-
-    @staticmethod
-    def _split_sources(
-        sources: Sequence[PreparedSource], max_items: int, max_bytes: int
-    ) -> tuple[tuple[PreparedSource, ...], ...]:
-        batches: list[tuple[PreparedSource, ...]] = []
-        pending: list[PreparedSource] = []
-        byte_length = 0
-        for source in sources:
-            size = int(
-                cast(
-                    int,
-                    source.metadata.get(
-                        "byte_length",
-                        len((source.text or "").encode("utf-8"))
-                        + sum(len(part.data) for part in source.media),
-                    ),
-                )
-            )
-            if size > max_bytes:
-                raise NousError(
-                    "media.input_too_large",
-                    "A prepared source exceeds the inline byte limit",
-                    details={"source": source.key, "bytes": size, "max_bytes": max_bytes},
-                )
-            if pending and (len(pending) >= max_items or byte_length + size > max_bytes):
-                batches.append(tuple(pending))
-                pending, byte_length = [], 0
-            pending.append(source)
-            byte_length += size
-        if pending:
-            batches.append(tuple(pending))
-        return tuple(batches)
-
-    @staticmethod
-    def _with_source_context(plan: MediaPlan, info: dict[str, JsonValue]) -> MediaPlan:
-        """Keep known original extents with each exact representation sent to a model."""
-        kind = cast(str, info["kind"])
-
-        def number(value: JsonValue | None) -> int | None:
-            return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-        batches: list[PreparedBatch] = []
-        for batch in plan.batches:
-            sources: list[PreparedSource] = []
-            for source in batch.sources:
-                selections: list[SourceSelection] = []
-                if source.group is not None:
-                    for part in source.group.parts:
-                        selections.extend(
-                            origin.origin.selection
-                            for origin in part.origins
-                            if origin.origin.artifact == plan.artifact.ref
-                        )
-                        if part.content.artifact == plan.artifact.ref:
-                            selections.append(part.content.selection)
-                if not selections:
-                    selections.append(batch.selection)
-                actual = tuple(
-                    dict.fromkeys(
-                        plan.selection if item.is_whole and not plan.selection.is_whole else item
-                        for item in selections
-                    )
-                )
-                audio = plan.coverage.get("audio")
-                context = SourceContext.model_validate(
-                    {
-                        "kind": kind,
-                        "selections": actual,
-                        "duration_ms": number(info.get("duration_ms")),
-                        "page_count": number(info.get("pages")),
-                        "byte_length": number(info.get("byte_length")),
-                        "frame_count": number(info.get("frames")),
-                        "width": number(source.metadata.get("source_width", info.get("width"))),
-                        "height": number(source.metadata.get("source_height", info.get("height"))),
-                        "audio": audio
-                        if isinstance(audio, str)
-                        and audio in {"included", "excluded", "absent", "processed"}
-                        else None,
-                    }
-                )
-                sources.append(
-                    replace(
-                        source,
-                        group=source.group.model_copy(update={"context": context})
-                        if source.group
-                        else None,
-                    )
-                )
-            batches.append(replace(batch, sources=tuple(sources)))
-        return replace(plan, batches=tuple(batches))
 
     async def prepare(
         self,
@@ -772,15 +428,15 @@ class MediaPreparer:
         selected = selection or SourceSelection()
         info = facts if facts is not None else await self.inspect(original, settings)
         kind = str(info["kind"])
-        _validate_selection_bounds(info, selected)
+        validate_selection_bounds(info, selected)
         if kind == "text":
-            return self._with_source_context(await self._text(original, selected, settings), info)
+            return with_source_context(await self._text(original, selected, settings), info)
         mime = str(info["media_type"])
         # Actual identified MIME follows identity references through materialization.
         original = original.model_copy(update={"media_type": mime})
         if kind == "video" and any(value.startswith("video/") for value in requirements):
-            return self._with_source_context(
-                self._plan_native_video(
+            return with_source_context(
+                self.av.plan_native_video(
                     original, selected, settings, info, requirements, without_audio
                 ),
                 info,
@@ -807,12 +463,12 @@ class MediaPreparer:
             target = (
                 "application/pdf"
                 if document_mode == "auto" and "application/pdf" in requirements
-                else self._image_format(requirements, settings)
+                else image_format(requirements, settings)
                 if document_mode != "text"
                 else "text/plain"
             )
         elif kind in {"audio", "video"}:
-            start, end = _media_interval(info, selected)
+            start, end = media_interval(info, selected)
             span = max(1, round(settings.audio.max_seconds_per_request * 1000))
             if kind == "video":
                 span = min(
@@ -822,7 +478,7 @@ class MediaPreparer:
                 SourceSelection(start_ms=lower, end_ms=min(lower + span, end))
                 for lower in range(start, end, span)
             ]
-            target = self._image_format(requirements, settings) if kind == "video" else "audio/wav"
+            target = image_format(requirements, settings) if kind == "video" else "audio/wav"
         else:
             selections = [selected]
             if int(cast(int, info["frames"])) > 1 and selected.frame is None:
@@ -844,7 +500,7 @@ class MediaPreparer:
             target = (
                 mime
                 if mime in (requirements or ("image/png", "image/jpeg", "image/webp"))
-                else self._image_format(requirements, settings)
+                else image_format(requirements, settings)
             )
             if (
                 target == "image/jpeg"
@@ -891,7 +547,7 @@ class MediaPreparer:
                         part.source,
                         mime,
                         "audio",
-                        self._audio_format(requirements, settings),
+                        audio_format(requirements, settings),
                         {"operation": "audio", "sample_rate": 16000, "channels": 1},
                     ),
                 )
@@ -909,7 +565,7 @@ class MediaPreparer:
                 "selection": part_selection.model_dump(mode="json"),
             }
             batches.append(PreparedBatch((), part_selection, coverage, conversion=recipe))
-        return self._with_source_context(
+        return with_source_context(
             MediaPlan(
                 original,
                 selected,
@@ -921,40 +577,6 @@ class MediaPreparer:
                 },
             ),
             info,
-        )
-
-    @staticmethod
-    def _image_format(requirements: Sequence[str], settings: MediaConfig) -> str:
-        supported = {"image/png", "image/jpeg", "image/webp"}
-        available = [
-            mime
-            for mime in settings.image.formats
-            if mime in supported and (not requirements or mime in requirements)
-        ]
-        if not available:
-            raise NousError(
-                "media.format_unavailable",
-                "No supported image encoding is accepted by this route",
-                details={"wanted": list(requirements), "available": list(supported)},
-            )
-        return available[0]
-
-    @staticmethod
-    def _audio_format(requirements: Sequence[str], settings: MediaConfig) -> str:
-        available = [
-            mime
-            for mime in settings.audio.formats
-            if mime in {"audio/wav", "audio/mpeg", "audio/flac"}
-            and (not requirements or mime in requirements)
-        ]
-        if available:
-            return available[0]
-        if settings.audio.transcription_task:
-            return "audio/wav"
-        raise NousError(
-            "media.audio_capability_missing",
-            "Audio requires an accepted encoding or a configured transcription task",
-            details={"wanted": list(requirements), "available": list(settings.audio.formats)},
         )
 
     async def _prepare(
@@ -976,17 +598,19 @@ class MediaPreparer:
         original = original.model_copy(update={"media_type": str(info["media_type"])})
         async with self.artifacts.borrow_local(original.ref) as path:
             kind = cast(str, info["kind"])
-            _validate_selection_bounds(info, selected)
+            validate_selection_bounds(info, selected)
             if kind == "text":
                 plan = await self._text(original, selected, settings)
             elif kind == "image":
-                plan = await self._images(original, selected, settings, path, info, requirements)
+                plan = await self.visual.images(
+                    original, selected, settings, path, info, requirements
+                )
             elif kind == "pdf":
-                plan = await self._pdf(
+                plan = await self.visual.pdf(
                     original, selected, settings, path, info, requirements, document_mode
                 )
             else:
-                plan = await self._av(
+                plan = await self.av.prepare(
                     original,
                     selected,
                     settings,
@@ -995,7 +619,7 @@ class MediaPreparer:
                     requirements,
                     without_audio,
                 )
-            return self._with_source_context(plan, info)
+            return with_source_context(plan, info)
 
     async def _text(
         self, original: Artifact, selection: SourceSelection, settings: MediaConfig
@@ -1014,7 +638,7 @@ class MediaPreparer:
                 key=f"S1:C{index}",
                 name=original.display_name,
                 text=chunk.text,
-                group=self._group(
+                group=make_group(
                     f"S1:C{index}",
                     original.display_name,
                     original,
@@ -1034,7 +658,7 @@ class MediaPreparer:
         )
         if not sources:
             raise NousError("media.empty_selection", "The selected text has no readable body")
-        groups = self._split_sources(sources, len(sources), settings.max_inline_bytes)
+        groups = split_sources(sources, len(sources), settings.max_inline_bytes)
         batches: list[PreparedBatch] = []
         for group in groups:
             inputs = tuple(source.group for source in group if source.group is not None)
@@ -1043,7 +667,7 @@ class MediaPreparer:
                 end_byte=inputs[-1].parts[0].content.selection.end_byte,
             )
             batches.append(
-                self._batch(
+                make_batch(
                     original,
                     group,
                     actual,
@@ -1065,900 +689,3 @@ class MediaPreparer:
                 "batches": len(batches),
             },
         )
-
-    async def _images(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        requirements: Sequence[str],
-    ) -> MediaPlan:
-        validate_image_selection(selection, cast(int, info["frames"]))
-        mime = str(info["media_type"])
-        if (
-            info["frames"] == 1
-            and info["orientation"] == 1
-            and selection.crop is None
-            and max(cast(int, info["width"]), cast(int, info["height"])) <= settings.image.max_side
-            and mime in (requirements or ("image/png", "image/jpeg", "image/webp"))
-        ):
-            data = await self.artifacts.read_bytes(
-                original.ref, max_bytes=settings.max_inline_bytes
-            )
-            source = PreparedSource(
-                "S1",
-                original.display_name,
-                media=(BinaryContent(data=data, media_type=mime),),
-                group=self._group("S1", original.display_name, original, selection),
-                metadata={"representation": "original_image"},
-            )
-            coverage: dict[str, JsonValue] = {
-                "mode": "image",
-                "width": info["width"],
-                "height": info["height"],
-            }
-            return MediaPlan(
-                original,
-                selection,
-                (self._batch(original, (source,), selection, coverage),),
-                coverage,
-            )
-        target = self._image_format(requirements, settings)
-        parameters: dict[str, JsonValue] = {
-            "tool": "Pillow",
-            "version": info["version"],
-            "source_media_type": mime,
-            "target_media_type": target,
-            "max_side": settings.image.max_side,
-            "quality": settings.image.quality,
-            "jpeg_background": settings.image.jpeg_background,
-            "sample_interval_ms": settings.video.sample_interval_ms,
-        }
-        cache_key = self._derivative_key(original, selection, "media.prepare.image", parameters)
-        lock = self._conversion_locks.setdefault(cache_key, asyncio.Lock())
-        async with lock:
-            cached = await self.results.find_cached("media.prepare.image", cache_key)
-            if cached is not None:
-                _track_completed(cached.ref.identifier)
-                frame_info = cast(list[dict[str, JsonValue]], cached.parameters["frames"])
-                derivatives = {
-                    output.name: await self.artifacts.get(output.artifact)
-                    for output in cached.outputs
-                }
-            else:
-                await self.execution.blocking(
-                    self.artifacts.content.temporary.mkdir, parents=True, exist_ok=True
-                )
-                workspace = await self.execution.blocking(
-                    tempfile.TemporaryDirectory,
-                    prefix="images-",
-                    dir=self.artifacts.content.temporary,
-                )
-                try:
-                    frames = await self.execution.blocking(
-                        prepare_images,
-                        path,
-                        selection,
-                        settings.image.max_side,
-                        settings.video.sample_interval_ms,
-                        Path(workspace.name),
-                        target,
-                        settings.image.quality,
-                        settings.image.jpeg_background,
-                    )
-                    frame_info = [
-                        {"selection": frame.selection.model_dump(mode="json"), **frame.metadata}
-                        for frame in frames
-                    ]
-                    outputs = {
-                        f"image-{index}": OutputContent(
-                            data=await self.execution.blocking(frame.path.read_bytes),
-                            media_type=target,
-                            display_name=f"frame-{frame.metadata['frame']}.{image_extension(target)}",
-                        )
-                        for index, frame in enumerate(frames)
-                    }
-                    derived = await self.results.adopt(
-                        operation="media.prepare.image",
-                        producer={"kind": "deterministic", **parameters},
-                        inputs=tuple(
-                            self._group(
-                                f"S1:F{frame['frame']}",
-                                original.display_name,
-                                original,
-                                SourceSelection.model_validate(frame["selection"]),
-                            )
-                            for frame in frame_info
-                        ),
-                        outputs=outputs,
-                        parameters={
-                            **parameters,
-                            "cache_key": cache_key,
-                            "frames": frame_info,
-                            "representations": {
-                                f"image-{index}": {
-                                    "kind": "prepared",
-                                    "sources": [
-                                        ContentSelection(
-                                            artifact=original.ref, selection=frame.selection
-                                        ).model_dump(mode="json")
-                                    ],
-                                }
-                                for index, frame in enumerate(frames)
-                            },
-                        },
-                        coverage={"selection": selection.model_dump(mode="json")},
-                        mappings=tuple(
-                            OutputMapping(
-                                output_name=f"image-{index}",
-                                selection=SourceSelection(
-                                    start_byte=0, end_byte=len(outputs[f"image-{index}"].data)
-                                ),
-                                relation="atomic",
-                                origins=(
-                                    ContentSelection(
-                                        artifact=original.ref, selection=frame.selection
-                                    ),
-                                ),
-                            )
-                            for index, frame in enumerate(frames)
-                            if outputs[f"image-{index}"].data
-                        ),
-                    )
-                    _track_completed(derived.ref.identifier)
-                    derivatives = {
-                        output.name: await self.artifacts.get(output.artifact)
-                        for output in derived.outputs
-                    }
-                finally:
-                    await self.execution.blocking(workspace.cleanup)
-        sources: list[PreparedSource] = []
-        for index, frame in enumerate(frame_info):
-            artifact = derivatives[f"image-{index}"]
-            source_selection = SourceSelection.model_validate(frame["selection"])
-            sources.append(
-                PreparedSource(
-                    key=f"S1:F{frame['frame']}",
-                    name=original.display_name,
-                    group=self._group(
-                        f"S1:F{frame['frame']}",
-                        original.display_name,
-                        artifact,
-                        representation="normalized_image",
-                        origin=original,
-                        origin_selection=source_selection,
-                    ),
-                    metadata={
-                        **frame,
-                        "representation": "normalized_image",
-                        "byte_length": (await self.artifacts.blob(artifact.ref)).byte_length,
-                    },
-                )
-            )
-        groups = self._split_sources(
-            sources, settings.video.max_frames_per_request, settings.max_inline_bytes
-        )
-        mode = "sampled" if int(cast(int, info["frames"])) > 1 else "image"
-        batches = tuple(
-            self._batch(
-                original,
-                group,
-                selection,
-                {
-                    "mode": mode,
-                    "frames": [source.metadata for source in group],
-                },
-            )
-            for group in groups
-        )
-        return MediaPlan(
-            original,
-            selection,
-            batches,
-            {
-                "mode": mode,
-                "frames": [source.metadata for source in sources],
-                "batches": len(batches),
-            },
-        )
-
-    async def _pdf(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        requirements: Sequence[str],
-        mode: str,
-    ) -> MediaPlan:
-        if mode not in {"auto", "visual", "text"}:
-            raise NousError("media.invalid_mode", "Document mode must be auto, visual or text")
-        count = int(cast(int, info["pages"]))
-        pages = selection.pages or tuple(range(1, count + 1))
-        if any(page > count for page in pages):
-            raise NousError("media.invalid_selection", "PDF page selection exceeds the document")
-        if (
-            mode == "auto"
-            and "application/pdf" in requirements
-            and not selection.pages
-            and (await self.artifacts.blob(original.ref)).byte_length <= settings.max_inline_bytes
-        ):
-            data = await self.artifacts.read_bytes(
-                original.ref, max_bytes=settings.max_inline_bytes
-            )
-            source = PreparedSource(
-                "S1",
-                original.display_name,
-                media=(BinaryContent(data=data, media_type="application/pdf"),),
-                group=self._group("S1", original.display_name, original, selection),
-                metadata={"representation": "native_pdf"},
-            )
-            coverage: dict[str, JsonValue] = {"mode": "native_pdf", "pages": list(pages)}
-            return MediaPlan(
-                original,
-                selection,
-                (self._batch(original, (source,), selection, coverage),),
-                coverage,
-            )
-        visual = mode != "text"
-        if mode == "auto" and "application/pdf" in requirements:
-            return await self._native_pdf(original, selection, settings, path, info, pages)
-        if visual and requirements and not any(mime.startswith("image/") for mime in requirements):
-            raise NousError(
-                "media.vision_required",
-                "PDF visual preparation requires an image-capable model; choose text mode explicitly",
-            )
-        lock = self._pdf_locks.get(original.ref.id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._pdf_locks[original.ref.id] = lock
-        async with lock:
-            return await self._render_pdf(
-                original,
-                selection,
-                settings,
-                path,
-                info,
-                pages,
-                visual,
-                self._image_format(requirements, settings) if visual else "text/plain",
-            )
-
-    async def _native_pdf(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        pages: tuple[int, ...],
-    ) -> MediaPlan:
-        parameters: dict[str, JsonValue] = {
-            "tool": info["tool"],
-            "version": info["version"],
-            "target_media_type": "application/pdf",
-        }
-        selected = SourceSelection(pages=pages)
-        cached = await self._cached_derivative(
-            "media.prepare.document",
-            self._derivative_key(original, selected, "media.prepare.document", parameters),
-        )
-        data = (
-            await self.artifacts.read_bytes(cached["document"].ref)
-            if cached
-            else await self.execution.blocking(extract_pdf_pages, path, pages)
-        )
-        if len(data) > settings.max_inline_bytes:
-            if len(pages) == 1:
-                raise NousError(
-                    "media.input_too_large",
-                    "A native PDF page exceeds the request byte allowance",
-                    details={
-                        "page": pages[0],
-                        "bytes": len(data),
-                        "max_bytes": settings.max_inline_bytes,
-                    },
-                )
-            middle = len(pages) // 2
-            halves = [
-                await self._native_pdf(original, selection, settings, path, info, part)
-                for part in (pages[:middle], pages[middle:])
-            ]
-            return MediaPlan(
-                original,
-                selection,
-                tuple(batch for half in halves for batch in half.batches),
-                {"mode": "native_pdf", "pages": list(pages)},
-            )
-        derivatives = cached or await self._derive(
-            original,
-            selected,
-            "media.prepare.document",
-            {
-                "document": OutputContent(
-                    data=data, media_type="application/pdf", display_name="pages.pdf"
-                )
-            },
-            parameters,
-        )
-        source = PreparedSource(
-            f"S1:P{pages[0]}-{pages[-1]}",
-            original.display_name,
-            media=(BinaryContent(data=data, media_type="application/pdf"),),
-            group=self._group(
-                f"S1:P{pages[0]}-{pages[-1]}",
-                original.display_name,
-                derivatives["document"],
-                representation="original_document",
-                origin=original,
-                origin_selection=selected,
-            ),
-        )
-        coverage: dict[str, JsonValue] = {"mode": "native_pdf", "pages": list(pages)}
-        return MediaPlan(
-            original, selection, (self._batch(original, (source,), selected, coverage),), coverage
-        )
-
-    async def _render_pdf(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        pages: tuple[int, ...],
-        visual: bool,
-        target_mime: str,
-    ) -> MediaPlan:
-        """Read cached pages before rendering missing pages for this source."""
-        parameters: dict[str, JsonValue] = {
-            "tool": info["tool"],
-            "version": info["version"],
-            "render_dpi": settings.pdf.render_dpi,
-            "mode": "visual" if visual else "text_only",
-            "target_media_type": target_mime,
-            "quality": settings.image.quality,
-            "jpeg_background": settings.image.jpeg_background,
-        }
-        batches: list[PreparedBatch] = []
-        for offset in range(0, len(pages), settings.pdf.max_pages_per_request):
-            page_group = pages[offset : offset + settings.pdf.max_pages_per_request]
-            cached_pages: dict[int, dict[str, Artifact]] = {}
-            missing: list[int] = []
-            for number in dict.fromkeys(page_group):
-                page_selection = SourceSelection(pages=(number,))
-                key = self._derivative_key(
-                    original, page_selection, "media.prepare.pdf", parameters
-                )
-                cached = await self._cached_derivative("media.prepare.pdf", key)
-                if cached is None:
-                    missing.append(number)
-                else:
-                    cached_pages[number] = cached
-            rendered: dict[int, PageData] = {}
-            if missing:
-                rendered = {
-                    page.page: page
-                    for page in await self.execution.blocking(
-                        prepare_pdf_pages,
-                        path,
-                        tuple(missing),
-                        settings.pdf.render_dpi,
-                        visual,
-                        target_mime,
-                        settings.image.quality,
-                        settings.image.jpeg_background,
-                    )
-                }
-            sources: list[PreparedSource] = []
-            for number in page_group:
-                page_selection = SourceSelection(pages=(number,))
-                derivatives = cached_pages.get(number)
-                if derivatives is not None:
-                    if len(derivatives) != (2 if visual else 1):
-                        raise NousError("media.invalid_cache", "Cached PDF page is incomplete")
-                    text = await self.artifacts.read_text(
-                        derivatives["text"].ref, max_bytes=settings.max_inline_bytes
-                    )
-                    image = (
-                        await self.artifacts.read_bytes(
-                            derivatives["image"].ref, max_bytes=settings.max_inline_bytes
-                        )
-                        if visual
-                        else None
-                    )
-                    page = PageData(number, text, image)
-                else:
-                    page = rendered[number]
-                    content = {
-                        "text": OutputContent(
-                            data=page.text.encode("utf-8"),
-                            media_type="text/plain",
-                            display_name=f"page-{page.page}.txt",
-                        )
-                    }
-                    if page.image is not None:
-                        content["image"] = OutputContent(
-                            data=page.image,
-                            media_type=target_mime,
-                            display_name=f"page-{page.page}.{image_extension(target_mime)}",
-                        )
-                    derivatives = await self._derive(
-                        original, page_selection, "media.prepare.pdf", content, parameters
-                    )
-                    cached_pages[number] = derivatives
-                if not page.text.strip() and not visual:
-                    raise NousError(
-                        "media.page_requires_vision",
-                        "Selected PDF page has no extractable text",
-                        details={"page": page.page, "artifact": original.ref.identifier},
-                    )
-                # Text and page image retain their independent body references in the result graph.
-                sources.append(
-                    PreparedSource(
-                        key=f"S1:P{page.page}",
-                        name=f"{original.display_name} page {page.page}",
-                        text=page.text,
-                        media=(BinaryContent(data=page.image, media_type=target_mime),)
-                        if page.image is not None
-                        else (),
-                        group=InputGroup(
-                            key=f"S1:P{page.page}",
-                            slot_key="S1",
-                            name=f"{original.display_name} page {page.page}",
-                            parts=tuple(
-                                InputPart(
-                                    content=ContentSelection(artifact=derivative.ref),
-                                    media_type=derivative.media_type,
-                                    source_media_type="application/pdf",
-                                    representation="image"
-                                    if derivative.media_type.startswith("image/")
-                                    else "text",
-                                    origins=(
-                                        OriginSlice(
-                                            origin=ContentSelection(
-                                                artifact=original.ref, selection=page_selection
-                                            ),
-                                            transform_ref=derivative.producer_result_ref,
-                                        ),
-                                    ),
-                                )
-                                for derivative in derivatives.values()
-                            ),
-                        ),
-                        metadata={
-                            "representation": "page_image_and_text" if visual else "text_only",
-                            "page": page.page,
-                        },
-                    )
-                )
-            for group in self._split_sources(
-                sources, settings.pdf.max_pages_per_request, settings.max_inline_bytes
-            ):
-                actual = tuple(cast(int, source.metadata["page"]) for source in group)
-                batches.append(
-                    self._batch(
-                        original,
-                        group,
-                        SourceSelection(pages=actual),
-                        {
-                            "mode": "visual" if visual else "text_only",
-                            "pages": list(actual),
-                        },
-                    )
-                )
-        return MediaPlan(
-            original,
-            selection,
-            tuple(batches),
-            {
-                "mode": "visual" if visual else "text_only",
-                "pages": list(pages),
-                "batches": len(batches),
-            },
-        )
-
-    async def _audio_source(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        data: bytes,
-        settings: MediaConfig,
-        requirements: Sequence[str],
-        version: str,
-    ) -> PreparedSource:
-        target_mime = self._audio_format(requirements, settings)
-        extension = {"audio/wav": "wav", "audio/mpeg": "mp3", "audio/flac": "flac"}[target_mime]
-        derivatives = await self._derive(
-            original,
-            selection,
-            "media.prepare.audio",
-            {
-                "audio": OutputContent(
-                    data=data, media_type=target_mime, display_name=f"segment.{extension}"
-                ),
-            },
-            {
-                "tool": "FFmpeg",
-                "version": version,
-                "sample_rate": 16000,
-                "channels": 1,
-                "target_media_type": target_mime,
-            },
-        )
-        audio = derivatives["audio"]
-        key = f"S1:A{selection.start_ms}-{selection.end_ms}"
-        return PreparedSource(
-            key,
-            original.display_name,
-            media=(BinaryContent(data=data, media_type=target_mime),),
-            group=self._group(
-                key,
-                original.display_name,
-                audio,
-                representation="audio",
-                origin=original,
-                origin_selection=selection,
-            ),
-            metadata={"representation": "audio"},
-        )
-
-    def _plan_native_video(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        info: dict[str, JsonValue],
-        requirements: Sequence[str],
-        without_audio: bool,
-    ) -> MediaPlan:
-        start, end = _media_interval(info, selection)
-        direct = (
-            start == 0
-            and end == info["duration_ms"]
-            and original.media_type in requirements
-            and (not without_audio or not info["has_audio"])
-        )
-        if not direct and "video/mp4" not in requirements:
-            raise NousError(
-                "media.format_unavailable",
-                "Selected video intervals require an accepted MP4 representation",
-            )
-        coverage: dict[str, JsonValue] = {
-            "mode": "native_video",
-            "start_ms": start,
-            "end_ms": end,
-            "audio": "excluded"
-            if without_audio and info["has_audio"]
-            else "included"
-            if info["has_audio"]
-            else "absent",
-            "sampling": "provider",
-            "batches": 1,
-        }
-        if direct:
-            coverage["sent_duration_ms"] = int(cast(int, info["duration_ms"]))
-            size = int(cast(int, info["byte_length"]))
-            if size > settings.max_inline_bytes:
-                raise NousError(
-                    "media.input_too_large",
-                    "Native video exceeds the inline byte limit; select a shorter interval",
-                    details={"bytes": size, "max_bytes": settings.max_inline_bytes},
-                )
-            key = f"S1:V{start}-{end}"
-            source = PreparedSource(
-                key,
-                original.display_name,
-                group=self._group(
-                    key, original.display_name, original, representation="native_video"
-                ),
-                metadata={"representation": "native_video", "byte_length": size},
-            )
-            batch = self._batch(original, (source,), selection, coverage)
-        else:
-            recipe = PlannedConversion(
-                original,
-                selection,
-                tuple(requirements),
-                settings,
-                "auto",
-                without_audio,
-                (
-                    PlannedPart(
-                        ContentSelection(artifact=original.ref, selection=selection),
-                        original.media_type,
-                        "native_video",
-                        "video/mp4",
-                        {"operation": "video_interval"},
-                        info,
-                    ),
-                ),
-            )
-            batch = PreparedBatch((), selection, coverage, conversion=recipe)
-        return MediaPlan(original, selection, (batch,), coverage)
-
-    async def _native_video(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        requirements: Sequence[str],
-        without_audio: bool,
-    ) -> MediaPlan:
-        plan = self._plan_native_video(
-            original, selection, settings, info, requirements, without_audio
-        )
-        if plan.batches[0].conversion is None:
-            return plan
-        start, end = cast(int, plan.coverage["start_ms"]), cast(int, plan.coverage["end_ms"])
-        interval = SourceSelection(start_ms=start, end_ms=end)
-        av = AudioVisual(settings, self.execution)
-        parameters: dict[str, JsonValue] = {
-            "tool": "FFmpeg",
-            "version": await av.version(),
-            "without_audio": without_audio,
-            "target_media_type": "video/mp4",
-            "video_codec": "libx264",
-            "audio_codec": "aac" if info["has_audio"] and not without_audio else None,
-            "crf": 20,
-            "preset": "veryfast",
-        }
-        cache_key = self._derivative_key(original, interval, "media.prepare.video", parameters)
-        derivatives = await self._cached_derivative("media.prepare.video", cache_key)
-        if derivatives is None:
-            data = await av.video(path, start, end, without_audio=without_audio)
-            if len(data) > settings.max_inline_bytes:
-                raise NousError(
-                    "media.input_too_large",
-                    "Selected native video exceeds the inline byte limit",
-                    details={"bytes": len(data), "max_bytes": settings.max_inline_bytes},
-                )
-            derivatives = await self._derive(
-                original,
-                interval,
-                "media.prepare.video",
-                {
-                    "video": OutputContent(
-                        data=data, media_type="video/mp4", display_name="segment.mp4"
-                    ),
-                },
-                parameters,
-            )
-        artifact = derivatives["video"]
-        async with self.artifacts.borrow_local(artifact.ref) as prepared_path:
-            sent_info = await av.inspect(prepared_path)
-        coverage = {**plan.coverage, "sent_duration_ms": sent_info["duration_ms"]}
-        size = (await self.artifacts.blob(artifact.ref)).byte_length
-        key = f"S1:V{start}-{end}"
-        source = PreparedSource(
-            key,
-            original.display_name,
-            group=self._group(
-                key,
-                original.display_name,
-                artifact,
-                representation="native_video",
-                origin=original,
-                origin_selection=interval,
-            ),
-            metadata={"representation": "native_video", "byte_length": size},
-        )
-        batch = self._batch(original, (source,), interval, coverage)
-        return MediaPlan(original, selection, (batch,), coverage)
-
-    async def _av(
-        self,
-        original: Artifact,
-        selection: SourceSelection,
-        settings: MediaConfig,
-        path: Path,
-        info: dict[str, JsonValue],
-        requirements: Sequence[str],
-        without_audio: bool,
-    ) -> MediaPlan:
-        """Partition the interval, recording timed video samples and each batch's audio representation."""
-        av = AudioVisual(settings, self.execution)
-        start, end = _media_interval(info, selection)
-        is_video = info["kind"] == "video"
-        if is_video and any(value.startswith("video/") for value in requirements):
-            return await self._native_video(
-                original, selection, settings, path, info, requirements, without_audio
-            )
-        has_audio = bool(info["has_audio"])
-        streams = cast(list[dict[str, JsonValue]], info["streams"])
-        origin_ms = round(
-            float(
-                str(
-                    next(
-                        (
-                            stream.get("start_time", 0)
-                            for stream in streams
-                            if stream.get("codec_type") == "video"
-                        ),
-                        0,
-                    )
-                )
-            )
-            * 1000
-        )
-        times = await av.frame_times(path, start, end, origin_ms) if is_video else ()
-        selected_frames: list[tuple[int, int, int]] = []
-        next_sample = start
-        for index, actual in times:
-            if actual >= next_sample and actual < end:
-                selected_frames.append((index, next_sample, actual))
-                next_sample = actual + settings.video.sample_interval_ms
-        target_mime = self._image_format(requirements, settings) if is_video else "image/png"
-        frame_cache: dict[int, dict[str, Artifact]] = {}
-        frame_parameters: dict[int, dict[str, JsonValue]] = {}
-        for index, requested, actual in selected_frames:
-            frame_selection = SourceSelection(start_ms=actual, end_ms=min(actual + 1, end))
-            parameters: dict[str, JsonValue] = {
-                "tool": "FFmpeg",
-                "version": info["version"],
-                "source_media_type": info["media_type"],
-                "requested_time_ms": requested,
-                "actual_time_ms": actual,
-                "max_side": settings.image.max_side,
-                "target_media_type": target_mime,
-                "quality": settings.image.quality,
-                "jpeg_background": settings.image.jpeg_background,
-            }
-            frame_parameters[index] = parameters
-            cached = await self._cached_derivative(
-                "media.prepare.frame",
-                self._derivative_key(original, frame_selection, "media.prepare.frame", parameters),
-            )
-            if cached is not None:
-                frame_cache[index] = cached
-        async with av.frames(
-            path,
-            tuple(index for index, _, _ in selected_frames if index not in frame_cache),
-            settings.image.max_side,
-            self.artifacts.content.temporary,
-            start,
-        ) as frame_files:
-            span_ms = max(1, round(settings.audio.max_seconds_per_request * 1000))
-            if is_video:
-                span_ms = min(
-                    span_ms,
-                    settings.video.sample_interval_ms * settings.video.max_frames_per_request,
-                )
-            batches: list[PreparedBatch] = []
-            for lower in range(start, end, span_ms):
-                upper = min(lower + span_ms, end)
-                part_selection = SourceSelection(start_ms=lower, end_ms=upper)
-                sources: list[PreparedSource] = []
-                frame_coverage: list[JsonValue] = []
-                for index, requested, actual in selected_frames:
-                    if not lower <= actual < upper:
-                        continue
-                    cached = frame_cache.get(index)
-                    data = (
-                        await self.artifacts.read_bytes(cached["frame"].ref)
-                        if cached
-                        else await self.execution.blocking(frame_files[index].read_bytes)
-                    )
-                    if cached is None and target_mime != "image/png":
-                        data = await self.execution.blocking(
-                            transcode_image,
-                            data,
-                            target_mime,
-                            settings.image.quality,
-                            settings.image.jpeg_background,
-                        )
-                    frame_selection = SourceSelection(start_ms=actual, end_ms=min(actual + 1, end))
-                    derivatives = cached or await self._derive(
-                        original,
-                        frame_selection,
-                        "media.prepare.frame",
-                        {
-                            "frame": OutputContent(
-                                data=data,
-                                media_type=target_mime,
-                                display_name=f"frame-{actual}ms.{image_extension(target_mime)}",
-                            ),
-                        },
-                        frame_parameters[index],
-                    )
-                    sources.append(
-                        PreparedSource(
-                            f"S1:F{actual}",
-                            f"{original.display_name} at {actual} ms",
-                            media=(BinaryContent(data=data, media_type=target_mime),),
-                            group=self._group(
-                                f"S1:F{actual}",
-                                original.display_name,
-                                derivatives["frame"],
-                                representation="sampled_frame",
-                                origin=original,
-                                origin_selection=frame_selection,
-                            ),
-                            metadata={"representation": "sampled_frame", "actual_time_ms": actual},
-                        )
-                    )
-                    frame_coverage.append(
-                        {"requested_time_ms": requested, "actual_time_ms": actual}
-                    )
-                if has_audio and not without_audio:
-                    audio_parameters: dict[str, JsonValue] = {
-                        "tool": "FFmpeg",
-                        "version": str(info["version"]),
-                        "sample_rate": 16000,
-                        "channels": 1,
-                        "target_media_type": self._audio_format(requirements, settings),
-                    }
-                    audio_cached = await self._cached_derivative(
-                        "media.prepare.audio",
-                        self._derivative_key(
-                            original, part_selection, "media.prepare.audio", audio_parameters
-                        ),
-                    )
-                    data = (
-                        await self.artifacts.read_bytes(audio_cached["audio"].ref)
-                        if audio_cached
-                        else await av.audio(
-                            path, lower, upper, self._audio_format(requirements, settings)
-                        )
-                    )
-                    sources.append(
-                        await self._audio_source(
-                            original,
-                            part_selection,
-                            data,
-                            settings,
-                            requirements,
-                            str(info["version"]),
-                        )
-                    )
-                if not sources:
-                    continue
-                # A batch's audio is kept with all its frames; oversize requests fail explicitly.
-                total = sum(
-                    len((source.text or "").encode()) + sum(len(part.data) for part in source.media)
-                    for source in sources
-                )
-                if total > settings.max_inline_bytes:
-                    raise NousError(
-                        "media.input_too_large",
-                        "Audio/video batch exceeds the inline byte limit; reduce batch duration or image size",
-                    )
-                coverage: dict[str, JsonValue] = {
-                    "mode": "sampled" if is_video else "audio",
-                    "start_ms": lower,
-                    "end_ms": upper,
-                    "frames": frame_coverage,
-                    "audio": "excluded"
-                    if has_audio and without_audio
-                    else str(sources[-1].metadata.get("representation"))
-                    if has_audio
-                    else "absent",
-                }
-                batches.append(self._batch(original, sources, part_selection, coverage))
-            if not batches:
-                raise NousError("media.empty_selection", "No media was prepared for this selection")
-            return MediaPlan(
-                original,
-                selection,
-                tuple(batches),
-                {
-                    "mode": "sampled" if is_video else "audio",
-                    "start_ms": start,
-                    "end_ms": end,
-                    "frames": [
-                        {"requested_time_ms": requested, "actual_time_ms": actual}
-                        for _, requested, actual in selected_frames
-                    ],
-                    "audio": "excluded"
-                    if has_audio and without_audio
-                    else "processed"
-                    if has_audio
-                    else "absent",
-                    "batches": len(batches),
-                },
-            )

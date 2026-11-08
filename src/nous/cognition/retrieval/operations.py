@@ -214,13 +214,15 @@ class CognitiveRetrieval:
                     ),
                 )
                 publish_started = perf_counter()
-                async with self.database.write() as tx:
-                    descriptor = await self.wave.accept_in(tx, prepared)
-                    if (
-                        await self.scope.get_in(tx, ns.id)
-                    ).content_generation == captured.namespace.content_generation:
-                        await self.wave.promote_in(tx, descriptor.ref)
-                self.wave.release_prepared(prepared)
+                try:
+                    async with self.database.write() as tx:
+                        descriptor = await self.wave.accept_in(tx, prepared)
+                        if (
+                            await self.scope.get_in(tx, ns.id)
+                        ).content_generation == captured.namespace.content_generation:
+                            await self.wave.promote_in(tx, descriptor.ref)
+                finally:
+                    self.wave.release_prepared(prepared)
                 get_logger(__name__).info(
                     "wave.publish.completed",
                     extra={

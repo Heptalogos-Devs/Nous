@@ -6,7 +6,7 @@ import difflib
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Literal, Unpack
 
 import sqlalchemy as sa
 from pydantic_core import to_jsonable_python
@@ -21,7 +21,6 @@ from nous.common.operations import (
 from nous.content.citations import normalize_source_links
 from nous.content.contracts import ArtifactRef, ContentSelection
 from nous.content.edits import TextChange, prepare_text_edit
-from nous.temporal.values import CognitiveTimes
 
 from .. import schema
 from ..contracts import (
@@ -47,28 +46,16 @@ from .contracts import (
 )
 from .drafts import DraftStore
 from .reading import RecordReader, Target
-from .records import CreateMetadata, RevisionMetadata, WrittenRecords
+from .records import AdoptionValues, CreateMetadata, RevisionMetadata, WrittenRecords
+from .replay import replay_write
 
 if TYPE_CHECKING:
-    from nous.jobs.contracts import JobRef
-
     from ..annotation.operations import AnnotationOperations
     from ..feedback import FeedbackOperations
     from ..maintenance import MaintenanceOperations
     from ..maintenance.contracts import MaintenancePlan
     from ..maintenance.operations import EnqueuedMaintenance
     from ..retrieval.operations import CognitiveRetrieval
-
-
-class AdoptionValues(TypedDict):
-    title: str | None
-    purpose: str | None
-    author: str | None
-    viewpoint: str | None
-    sources: Sequence[SourceBinding]
-    times: CognitiveTimes
-    origin_result_id: str
-    body_artifact: ArtifactRef | None
 
 
 class RecordOperations:
@@ -442,96 +429,21 @@ class RecordOperations:
                     )
                 jobs = await self.maintenance.enqueue_in(tx, committed, preparation)
         if replayed is not None:
-            return await self._replayed(replayed, after)
+            return await replay_write(
+                replayed,
+                after,
+                self.database,
+                self.annotations,
+                self.maintenance,
+                self.retrieval,
+                self._link(),
+            )
         assert committed is not None
         return await self.finish_write(
             committed,
             preparation,
             self._link(),
             work=jobs,
-        )
-
-    async def _replayed(self, record: CommittedRecord, after: AfterWrite) -> RecordOutcome:
-        """Read current maintenance facts without repeating the committed write."""
-        annotation = StageOutcome(state="not_requested")
-        issues: list[OperationIssue] = []
-        jobs: list[JobRef] = []
-        if after.annotation != "skip":
-            async with self.database.read() as tx:
-                active = await self.annotations.read_many_in(tx, [record.revision_ref])
-            view = active.get(record.revision_ref.revision_id)
-            if view is not None:
-                annotation = StageOutcome(
-                    state="ready", ref=view.ref.identifier, generation=view.generation
-                )
-            else:
-                job = await self.maintenance.record_annotation_job(record.revision_ref)
-                if job is not None:
-                    jobs.append(job.ref)
-                if job is not None and job.status in {
-                    "ERROR",
-                    "CANCELLED",
-                    "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
-                }:
-                    issue = job.error or OperationIssue(
-                        "annotation", "job." + job.status.lower(), f"Job ended in {job.status}"
-                    )
-                    issues.append(issue)
-                    annotation = StageOutcome(state="failed", issue=issue, job=job.ref)
-                elif job is not None and job.status in {"ENQUEUED", "PENDING", "DELAYED"}:
-                    annotation = StageOutcome(state="pending", job=job.ref)
-                elif job is not None or after.annotation == "run":
-                    annotation = StageOutcome(state="pending")
-
-        requested = after.retrieval == "refresh" or after.retrieval_mode is not None
-        retrieval = StageOutcome(
-            state="pending" if record.in_recall or requested else "not_requested"
-        )
-        if record.in_recall or requested:
-            status = await self.retrieval.status(mode=after.retrieval_mode)
-            namespaces = cast(list[dict[str, object]], status["namespaces"])
-            current = next(
-                (value for value in namespaces if value["namespace_id"] == record.namespace.id),
-                None,
-            )
-            if current is not None:
-                covered = current["covered_generation"]
-                snapshot = current["snapshot"]
-                if isinstance(covered, int) and covered >= record.committed_generation:
-                    ref = cast(dict[str, object], snapshot) if isinstance(snapshot, dict) else {}
-                    if isinstance(ref.get("identifier"), str):
-                        retrieval = StageOutcome(
-                            state="ready", generation=covered, ref=cast(str, ref["identifier"])
-                        )
-            if requested:
-                job = await self.maintenance.record_refresh_job(record)
-                if job is not None:
-                    jobs.append(job.ref)
-                    if retrieval.state != "ready" and job.status in {
-                        "ERROR",
-                        "CANCELLED",
-                        "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
-                    }:
-                        issue = job.error or OperationIssue(
-                            "retrieval",
-                            "job." + job.status.lower(),
-                            f"Job ended in {job.status}",
-                        )
-                        issues.append(issue)
-                        retrieval = StageOutcome(state="failed", issue=issue, job=job.ref)
-                    elif retrieval.state != "ready" and job.status in {
-                        "ENQUEUED",
-                        "PENDING",
-                        "DELAYED",
-                    }:
-                        retrieval = StageOutcome(state="pending", job=job.ref)
-        return RecordOutcome(
-            record=record,
-            status="partial" if issues else "success",
-            annotation=annotation,
-            retrieval=retrieval,
-            operation=self._link(),
-            jobs=tuple(jobs),
         )
 
     async def replace(
@@ -600,7 +512,15 @@ class RecordOperations:
 
             existing = await replay()
             if existing is not None:
-                return await self._replayed(existing, after)
+                return await replay_write(
+                    existing,
+                    after,
+                    self.database,
+                    self.annotations,
+                    self.maintenance,
+                    self.retrieval,
+                    self._link(),
+                )
             try:
                 if source_requests is not None:
                     original = await self._target_base(target, expected)
@@ -632,7 +552,15 @@ class RecordOperations:
                 if error.code == "cognition.revision_conflict":
                     existing = await replay()
                     if existing is not None:
-                        return await self._replayed(existing, after)
+                        return await replay_write(
+                            existing,
+                            after,
+                            self.database,
+                            self.annotations,
+                            self.maintenance,
+                            self.retrieval,
+                            self._link(),
+                        )
                 raise
 
     async def apply(

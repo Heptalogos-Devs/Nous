@@ -3,90 +3,64 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import shutil
 from collections.abc import AsyncGenerator, Callable, Sequence
-from contextlib import asynccontextmanager
-from dataclasses import fields
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, cast
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
-import numpy as np
-import numpy.typing as npt
 import sqlalchemy as sa
-from pydantic import JsonValue, TypeAdapter
-from sqlalchemy.dialects.sqlite import insert
-from sqlalchemy.engine import RowMapping
+from pydantic import JsonValue
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
 from nous.common.identifier import new_identifier
 from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ArtifactRef, ContentSelection, InputSpec
+from nous.content.contracts import ContentSelection
 from nous.content.results import ResultStore
 from nous.media.preparation import MediaPreparer
 from nous.models.embeddings import resolved_space
 from nous.observability.instrumentation import get_logger
-from nous.runtime.execution import ExecutionManager
+from nous.runtime.execution import ExecutionManager, complete_cleanup
 from nous.runtime.paths import ResolvedPaths
-from nous.storage.database import Database, WriteTx
+from nous.storage.database import Database
 from nous.temporal.domains import TimeService
 
 from . import schema
-from .assets import (
-    CandidateMapping,
-    FrozenInputs,
-    SnapshotRow,
-    content_evidence,
-    freeze_inputs,
-    projection_inputs,
-)
+from .assets import freeze_inputs
 from .configuration import require_native_profiles
 from .contracts import (
-    CollectionManifest,
     CorpusView,
-    Document,
-    DocumentInput,
     PreparedSnapshot,
     ProjectionUnit,
     ResolvedBuildProfile,
-    SnapshotDescriptor,
-    SnapshotOwner,
     SnapshotRef,
 )
+from .importer import ManifestImporter
+from .keyed_locks import KeyedLocks
+from .manifests import (
+    content_signature,
+    encode_json,
+    manifest_references,
+    manifest_value,
+    restore_prepared,
+    write_shared,
+    write_units,
+)
+from .mapping import CandidateMapping, SnapshotRow
+from .native_inputs import bundles
+from .native_inputs import component_signature as native_component_signature
+from .projection import projection_inputs
+from .reading import SnapshotReader
+from .registry import SnapshotRegistry
 
 if TYPE_CHECKING:
     import nous_native
-
-
-def encode_json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _signature(value: object) -> str:
-    return hashlib.sha256(encode_json(value).encode("utf-8")).hexdigest()
-
-
-def _component_signature(frozen: FrozenInputs, profile: ResolvedBuildProfile) -> str:
-    """Hash every Native input, including its stable candidate-to-row layout."""
-    digest = hashlib.sha256(encode_json(profile.model_dump(mode="json")).encode())
-    for field in fields(frozen):
-        if field.name in {"preparation_stats", "mapping", "vector_mappings", "candidate_data"}:
-            continue
-        value = getattr(frozen, field.name)
-        digest.update(field.name.encode())
-        if isinstance(value, np.ndarray):
-            array = cast(npt.NDArray[np.generic], value)
-            digest.update(encode_json({"dtype": array.dtype.str, "shape": array.shape}).encode())
-            digest.update(array.tobytes(order="C"))
-        else:
-            digest.update(encode_json(value).encode())
-    return digest.hexdigest()
 
 
 def build_profile(settings: ConfigSnapshot) -> dict[str, object]:
@@ -107,7 +81,7 @@ def view_profile(
     build_config: dict[str, object] | None = None,
 ) -> str:
     definition = resolved_space(settings, space) if space else None
-    return _signature(
+    return content_signature(
         {
             "space": definition.model_dump(mode="json") if definition else None,
             "build": build_config if build_config is not None else build_profile(settings),
@@ -133,17 +107,31 @@ class WaveSnapshots:
     ) -> None:
         self.database, self.execution, self.paths = database, execution, paths
         self.instance_id, self.time, self.clock = instance_id, time, time.clock
+        self.registry = SnapshotRegistry(instance_id)
+        self.reader = SnapshotReader(database, instance_id, self.registry)
+        self.current = self.reader.current
+        self.describe = self.reader.describe
+        self.candidates = self.reader.candidates
+        self.resolve = self.reader.resolve
+        self.accept_in = self.registry.accept_in
+        self.promote_in = self.registry.promote_in
+        self.retain_in = self.registry.retain_in
+        self.release_in = self.registry.release_in
         self.artifacts, self.results, self.embedding, self.preparer = (
             artifacts,
             results,
             embedding,
             preparer,
         )
+        self.importer = ManifestImporter(artifacts, results, execution)
+        self.import_manifest = self.importer.import_manifest
         self._engine: nous_native.NativeEngine | None = None
-        self._build_locks: dict[str, asyncio.Lock] = {}
-        self._component_locks: dict[str, asyncio.Lock] = {}
-        self._unit_locks: dict[str, asyncio.Lock] = {}
+        self._build_locks = KeyedLocks()
+        self._component_locks = KeyedLocks()
+        self._unit_locks = KeyedLocks()
         self._cached_snapshot: tuple[str, nous_native.NativeSnapshot] | None = None
+        self._cached_mapping: tuple[str, SnapshotRow] | None = None
+        self._mapping_lock = asyncio.Lock()
         self._open_lock = asyncio.Lock()
         self._lifetime_lock = asyncio.Lock()
         self._borrowed: dict[str, int] = {}
@@ -173,6 +161,7 @@ class WaveSnapshots:
             self._engine.close()
             self._engine = None
         self._cached_snapshot = None
+        self._cached_mapping = None
 
     async def status(self) -> dict[str, object]:
         """Read registered scale and already-loaded capabilities without opening an engine."""
@@ -271,7 +260,7 @@ class WaveSnapshots:
                 for entry in await self.execution.blocking(self._entries, manifest_root):
                     if entry.name.startswith(".staging-"):
                         continue
-                    asset, _, _ = await self.execution.blocking(self._manifest_references, entry)
+                    asset, _, _ = await self.execution.blocking(manifest_references, entry)
                     if asset == location:
                         prepared = True
                         break
@@ -283,271 +272,6 @@ class WaveSnapshots:
                 )
             await self.execution.blocking(self._remove_owned, path, path.parent, path.name)
 
-    @staticmethod
-    def _manifest_references(path: Path) -> tuple[str, set[str], str]:
-        envelope = json.loads((path / "wave-manifest.json").read_text(encoding="utf-8"))
-        value = envelope["prepared"]
-        if envelope["digest"] != _signature(value):
-            raise NousError("wave.manifest_invalid", "Prepared manifest checksum differs")
-        return (
-            value["index_location"],
-            {item["signature"] for item in value["unit_refs"]},
-            value["graph_signature"],
-        )
-
-    @staticmethod
-    def _write_unit(root: Path, unit: ProjectionUnit) -> None:
-        data = unit.model_dump(mode="json", exclude={"signature", "candidate_rows"})
-        WaveSnapshots._write_shared(root, unit.signature, data, prefix="")
-
-    @staticmethod
-    def _write_shared(root: Path, signature: str, data: object, *, prefix: str) -> None:
-        if _signature(data) != signature:
-            raise NousError("wave.manifest_invalid", "Projection asset signature differs")
-        path = root / f"{prefix}{signature}.json"
-        if path.exists():
-            if _signature(json.loads(path.read_text(encoding="utf-8"))) != signature:
-                raise NousError("wave.manifest_invalid", "Stored projection asset differs")
-            return
-        staging = root / f".staging-{prefix}{signature}-{uuid4()}"
-        try:
-            staging.write_text(encode_json(data), encoding="utf-8")
-            os.replace(staging, path)
-        finally:
-            if staging.exists():
-                staging.unlink()
-
-    @staticmethod
-    def _manifest_value(prepared: PreparedSnapshot) -> dict[str, object]:
-        data = prepared.model_dump(
-            mode="json", exclude={"units", "graph_payload", "vector_mappings"}
-        )
-        view = data["view"]
-        documents = view.pop("documents")
-        candidates = view.pop("candidates")
-        evidence = view.pop("evidence")
-        data["source_documents"] = evidence["source_documents"]
-        data["sequence_documents"] = [item["document"] for item in view.pop("source_sequences")]
-        for name in ("concepts", "associations", "support_groups"):
-            view.pop(name)
-        layout = data["layout"]
-        for name in (
-            "name",
-            "owner",
-            "metadata",
-            "roots",
-            "concepts",
-            "associations",
-            "support_groups",
-        ):
-            layout.pop(name)
-        data["document_order"] = [item["key"] for item in documents]
-        data["candidate_order"] = [
-            item["key"] if item["kind"] == "exact" else item["group_key"] for item in candidates
-        ]
-        data["unit_refs"] = [
-            {"signature": unit.signature, "candidate_rows": list(unit.candidate_rows)}
-            for unit in prepared.units
-        ]
-        return data
-
-    @staticmethod
-    def _restore_prepared(path: Path, unit_root: Path) -> PreparedSnapshot:
-        envelope = json.loads((path / "wave-manifest.json").read_text(encoding="utf-8"))
-        data = envelope["prepared"]
-        if envelope["digest"] != _signature(data):
-            raise NousError("wave.manifest_invalid", "Prepared manifest checksum differs")
-        references = data.pop("unit_refs")
-        document_order = data.pop("document_order")
-        candidate_order = data.pop("candidate_order")
-        source_documents = data.pop("source_documents")
-        sequence_documents = data.pop("sequence_documents")
-        graph = json.loads(
-            (unit_root / f"graph-{data['graph_signature']}.json").read_text(encoding="utf-8")
-        )
-        if _signature(graph) != data["graph_signature"]:
-            raise NousError("wave.manifest_invalid", "Projection graph checksum differs")
-        units: list[ProjectionUnit] = []
-        documents: dict[str, object] = {}
-        candidates: dict[str, object] = {}
-        roots: dict[str, object] = {}
-        document_roots: dict[str, object] = {}
-        candidate_vectors: dict[str, dict[str, JsonValue]] = {}
-        candidate_rows: list[tuple[int, str]] = []
-        sequences: dict[str, list[dict[str, JsonValue]]] = {}
-        for reference in references:
-            signature = reference["signature"]
-            unit_data = json.loads((unit_root / f"{signature}.json").read_text(encoding="utf-8"))
-            if _signature(unit_data) != signature:
-                raise NousError("wave.manifest_invalid", "Projection unit checksum differs")
-            unit = ProjectionUnit.model_validate({**unit_data, **reference})
-            if _signature(unit.input_payload) != unit.input_signature:
-                raise NousError("wave.manifest_invalid", "Projection input signature differs")
-            units.append(unit)
-            for vector in unit.vector_mappings:
-                candidate_vectors[cast(str, vector["key"])] = vector
-            candidate_rows.extend(
-                (row, cast(str, candidate["key"]))
-                for row, candidate in zip(unit.candidate_rows, unit.candidates, strict=True)
-            )
-            roots.update(
-                TypeAdapter(dict[str, JsonValue]).validate_python(unit.input_payload["roots"])
-            )
-            document_roots.update(
-                TypeAdapter(dict[str, JsonValue]).validate_python(
-                    unit.input_payload["document_roots"]
-                )
-            )
-            for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(
-                unit.input_payload["documents"]
-            ):
-                documents[cast(str, item["key"])] = item
-            for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(
-                unit.input_payload["declarations"]
-            ):
-                key = item["key"] if item["kind"] == "exact" else item["group_key"]
-                candidates[cast(str, key)] = item
-            sequences[unit.document_key] = [
-                item
-                for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(
-                    unit.input_payload["sequences"]
-                )
-                if item["document"] == unit.document_key
-            ]
-        data["view"]["documents"] = [documents[key] for key in document_order]
-        data["view"]["candidates"] = [candidates[key] for key in candidate_order]
-        positions: dict[str, int] = {}
-        source_sequences: list[dict[str, JsonValue]] = []
-        for document in sequence_documents:
-            index = positions.get(document, 0)
-            source_sequences.append(sequences[document][index])
-            positions[document] = index + 1
-        data["view"]["source_sequences"] = source_sequences
-        data["view"].update(graph["view"])
-        data["view"]["evidence"] = {
-            "roots": roots,
-            "documents": document_roots,
-            "source_documents": source_documents,
-        }
-        data["layout"].update(
-            {
-                "name": data["view"]["name"],
-                "owner": data["view"]["owner"],
-                "metadata": data["view"]["metadata"],
-                "roots": roots,
-                **graph["layout"],
-            }
-        )
-        data["vector_mappings"] = [
-            candidate_vectors[key] for _, key in sorted(candidate_rows) if key in candidate_vectors
-        ] + graph["vector_mappings"]
-        data["graph_payload"] = graph
-        data["units"] = units
-        prepared = PreparedSnapshot.model_validate(data)
-        if (
-            _signature(
-                {
-                    "view": prepared.view.model_dump(mode="json"),
-                    "profile": prepared.profile.model_dump(mode="json"),
-                }
-            )
-            != prepared.build_signature
-        ):
-            raise NousError("wave.manifest_invalid", "Prepared input signature differs")
-        if (
-            prepared.identity.get("component_signature") != prepared.component_signature
-            or prepared.index_location != f"wave/components/{prepared.component_signature}"
-            or [row for row, _ in sorted(candidate_rows)] != list(range(len(candidate_rows)))
-        ):
-            raise NousError("wave.manifest_invalid", "Prepared component or row mapping differs")
-        return prepared
-
-    @staticmethod
-    def _bundles(
-        frozen: FrozenInputs,
-    ) -> tuple[
-        nous_native.Candidates,
-        nous_native.Concepts,
-        nous_native.SourceFacts,
-        nous_native.Associations,
-    ]:
-        import nous_native as native
-
-        return (
-            native.Candidates(
-                encode_json(frozen.candidate_metadata),
-                frozen.candidate_texts,
-                frozen.candidate_vectors,
-                frozen.membership_indptr,
-                frozen.membership_indices,
-                frozen.path_indptr,
-                frozen.path_step_indptr,
-                frozen.path_indices,
-                frozen.path_positions,
-                frozen.candidate_root_indptr,
-                frozen.candidate_root_indices,
-            ),
-            native.Concepts(encode_json(frozen.concept_metadata), frozen.concept_vectors),
-            native.SourceFacts(
-                encode_json(frozen.facts_metadata),
-                frozen.sequence_roots,
-                frozen.sequence_indptr,
-                frozen.sequence_indices,
-                frozen.sequence_positions,
-                frozen.sequence_ordered,
-            ),
-            native.Associations(
-                encode_json(frozen.association_metadata),
-                frozen.association_sources,
-                frozen.association_targets,
-                frozen.association_directed,
-                frozen.association_strengths,
-                frozen.association_confidences,
-                frozen.association_polarities,
-                frozen.association_edge_groups,
-                frozen.group_root_indptr,
-                frozen.group_root_indices,
-            ),
-        )
-
-    async def import_manifest(self, manifest_path: Path) -> CorpusView:
-        """Accept a file-based collection and freeze its document identities."""
-        path = await self.execution.blocking(manifest_path.resolve)
-        manifest_artifact = await self.artifacts.ingest(path)
-        manifest = CollectionManifest.model_validate_json(
-            await self.artifacts.read_text(manifest_artifact.ref)
-        )
-        documents: list[Document] = []
-        accepted: dict[str, ArtifactRef] = {}
-        for document in manifest.documents:
-            source = document.input
-            if source.file is not None:
-                file = Path(source.file)
-                file = file if file.is_absolute() else path.parent / file
-                spec = InputSpec(kind="file", path=str(file.resolve()))
-            elif source.text is not None:
-                spec = InputSpec(kind="text", text=source.text, display_name=document.key)
-            else:
-                assert source.artifact is not None
-                spec = InputSpec(kind="artifact", artifact=source.artifact)
-            artifact = await self.artifacts.accept(spec)
-            accepted[document.key] = artifact.ref
-            documents.append(
-                document.model_copy(
-                    update={
-                        "input": DocumentInput(
-                            artifact=artifact.ref.identifier, selector=source.selector
-                        )
-                    }
-                )
-            )
-        return CorpusView(
-            **manifest.model_dump(exclude={"documents"}),
-            documents=tuple(documents),
-            manifest_artifact=manifest_artifact.ref,
-            evidence=await content_evidence(documents, accepted, self.results),
-        )
-
     async def prepare_build(
         self,
         view: CorpusView,
@@ -555,7 +279,7 @@ class WaveSnapshots:
         *,
         build_key: str | None = None,
     ) -> PreparedSnapshot:
-        signature = _signature(
+        signature = content_signature(
             {"view": view.model_dump(mode="json"), "profile": profile.model_dump(mode="json")}
         )
         object_id = str(uuid5(UUID(self.instance_id), build_key or f"view:{signature}"))
@@ -579,7 +303,7 @@ class WaveSnapshots:
         await self.time.validate(document.times for document in view.documents)
         if view.space is not None and view.space != profile.space_id:
             raise NousError("wave.space_conflict", "Manifest and build select different spaces")
-        build_signature = _signature(
+        build_signature = content_signature(
             {
                 "view": view.model_dump(mode="json"),
                 "profile": profile.model_dump(mode="json"),
@@ -598,11 +322,11 @@ class WaveSnapshots:
         await self.execution.blocking(unit_root.mkdir, parents=True, exist_ok=True)
         staging_name = f".staging-{object_id}"
         staging, final = manifest_root / staging_name, manifest_root / object_id
-        async with self._build_locks.setdefault(key, asyncio.Lock()):
+        async with self._build_locks.hold(key):
             if await self.execution.blocking(final.exists):
 
                 def restore() -> PreparedSnapshot:
-                    restored = self._restore_prepared(final, unit_root)
+                    restored = restore_prepared(final, unit_root)
                     if restored.build_signature != build_signature or restored.build_key != key:
                         raise NousError(
                             "wave.build_key_conflict",
@@ -640,7 +364,7 @@ class WaveSnapshots:
                     self._remove_owned, staging, manifest_root, staging_name
                 )
             inputs = projection_inputs(view)
-            signatures = {key: _signature(value) for key, value in inputs.items()}
+            signatures = {key: content_signature(value) for key, value in inputs.items()}
             cached_by_signature: dict[str, list[dict[str, object]]] = {}
             signature_values = list(set(signatures.values()))
             async with self.database.read() as tx:
@@ -677,7 +401,7 @@ class WaveSnapshots:
                 view, profile.space_id, self.artifacts, self.embedding, self.preparer, cached
             )
             component_signature = await self.execution.blocking(
-                _component_signature, frozen, profile
+                native_component_signature, frozen, profile
             )
             index_location = f"wave/components/{component_signature}"
             async with self._lifetime_lock:
@@ -686,12 +410,12 @@ class WaveSnapshots:
                 "snapshot_id": str(
                     uuid5(UUID(self.instance_id), f"component:{component_signature}")
                 ),
-                "space_signature": _signature(
+                "space_signature": content_signature(
                     profile.space_definition.model_dump(mode="json")
                     if profile.space_definition
                     else None
                 ),
-                "build_config_signature": _signature(profile.build_config),
+                "build_config_signature": content_signature(profile.build_config),
                 "component_signature": component_signature,
             }
             engine = self.engine()
@@ -702,23 +426,40 @@ class WaveSnapshots:
             try:
                 await self.execution.blocking(staging.mkdir, parents=True, exist_ok=False)
                 component = component_root / component_signature
-                async with self._component_locks.setdefault(component_signature, asyncio.Lock()):
+                async with self._component_locks.hold(component_signature):
                     state = await self.execution.blocking(self._component_state, component)
                     if state == "incomplete":
                         await self._remove_incomplete_component(component, index_location)
                     reused_component = state == "complete"
                     started = perf_counter()
                     if not reused_component:
-                        built = await self.compute(
-                            lambda: engine.build(
-                                *self._bundles(frozen),
-                                encode_json(identity),
-                                str(component),
-                                options_json=encode_json(profile.build_config),
-                                cancel=token,
-                            ),
-                            token,
-                        )
+                        async with AsyncExitStack() as base_lease:
+                            previous = await self.reader.current(view.name)
+                            base = None
+                            if previous is not None and all(
+                                previous.identity.get(key) == identity[key]
+                                for key in ("space_signature", "build_config_signature")
+                            ):
+                                try:
+                                    base_row = await base_lease.enter_async_context(
+                                        self.pin(previous.ref)
+                                    )
+                                except NousError as error:
+                                    if error.code != "wave.snapshot_not_found":
+                                        raise
+                                else:
+                                    base, _ = await self.open(base_row)
+                            built = await self.compute(
+                                lambda: engine.build(
+                                    *bundles(frozen),
+                                    encode_json(identity),
+                                    str(component),
+                                    options_json=encode_json(profile.build_config),
+                                    base=base,
+                                    cancel=token,
+                                ),
+                                token,
+                            )
                         native_manifest = json.loads(built)["manifest"]
                     else:
                         native_manifest = json.loads(
@@ -796,7 +537,7 @@ class WaveSnapshots:
                         ProjectionUnit.model_validate(
                             {
                                 **unit_data,
-                                "signature": _signature(unit_data),
+                                "signature": content_signature(unit_data),
                                 "candidate_rows": [index for index, _ in selected],
                             }
                         )
@@ -833,7 +574,7 @@ class WaveSnapshots:
                         }
                     ),
                 }
-                graph_signature = _signature(graph_payload)
+                graph_signature = content_signature(graph_payload)
                 prepared = PreparedSnapshot.model_validate(
                     {
                         "ref": {
@@ -862,21 +603,22 @@ class WaveSnapshots:
                 async with self._lifetime_lock:
                     self._prepared_units[object_id] = {unit.signature for unit in prepared.units}
                     self._prepared_graphs[object_id] = prepared.graph_signature
-                async with self._unit_locks.setdefault(
-                    f"graph-{prepared.graph_signature}", asyncio.Lock()
-                ):
+                async with self._unit_locks.hold(f"graph-{prepared.graph_signature}"):
                     await self.execution.blocking(
-                        self._write_shared,
+                        write_shared,
                         unit_root,
                         prepared.graph_signature,
                         prepared.graph_payload,
                         prefix="graph-",
                     )
-                for unit in prepared.units:
-                    async with self._unit_locks.setdefault(unit.signature, asyncio.Lock()):
-                        await self.execution.blocking(self._write_unit, unit_root, unit)
-                value = self._manifest_value(prepared)
-                envelope = {"prepared": value, "digest": _signature(value)}
+                for offset in range(0, len(prepared.units), 64):
+                    batch = prepared.units[offset : offset + 64]
+                    async with AsyncExitStack() as unit_leases:
+                        for signature in sorted({unit.signature for unit in batch}):
+                            await unit_leases.enter_async_context(self._unit_locks.hold(signature))
+                        await self.execution.blocking(write_units, unit_root, batch)
+                value = manifest_value(prepared)
+                envelope = {"prepared": value, "digest": content_signature(value)}
                 await self.execution.blocking(
                     (staging / "wave-manifest.json").write_text,
                     encode_json(envelope),
@@ -900,243 +642,6 @@ class WaveSnapshots:
                     )
                 raise
 
-    async def accept_in(self, tx: WriteTx, prepared: PreparedSnapshot) -> SnapshotDescriptor:
-        """Register exactly the prepared files and their dependencies in the caller's transaction."""
-        if prepared.ref.instance_id != self.instance_id:
-            raise NousError(
-                "wave.instance_mismatch", "Prepared snapshot belongs to another instance"
-            )
-        previous = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.snapshots, schema.collections.c.name)
-                    .join(
-                        schema.collections,
-                        schema.snapshots.c.collection_id == schema.collections.c.id,
-                    )
-                    .where(schema.snapshots.c.id == prepared.ref.id)
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if previous is not None:
-            if (
-                previous["build_signature"] != prepared.build_signature
-                or previous["identifier"] != prepared.ref.identifier
-            ):
-                raise NousError(
-                    "wave.build_key_conflict", "Build key identifies a different captured view"
-                )
-            return self._descriptor(previous)
-        await tx.connection.execute(
-            insert(schema.collections)
-            .values(id=str(uuid4()), name=prepared.view.name)
-            .on_conflict_do_nothing(index_elements=[schema.collections.c.name])
-        )
-        collection_id = await tx.connection.scalar(
-            sa.select(schema.collections.c.id).where(
-                schema.collections.c.name == prepared.view.name
-            )
-        )
-        if collection_id is None:
-            raise NousError("wave.collection_unavailable", "Cannot create collection")
-        graph_layout = TypeAdapter(dict[str, JsonValue]).validate_python(
-            prepared.graph_payload["layout"]
-        )
-        await tx.connection.execute(
-            insert(schema.projection_graphs)
-            .values(
-                signature=prepared.graph_signature,
-                concepts=graph_layout["concepts"],
-                associations=graph_layout["associations"],
-                support_groups=graph_layout["support_groups"],
-            )
-            .on_conflict_do_nothing(index_elements=[schema.projection_graphs.c.signature])
-        )
-        graph_artifacts = TypeAdapter(list[str]).validate_python(
-            prepared.graph_payload["artifact_ids"]
-        )
-        if graph_artifacts:
-            await tx.connection.execute(
-                insert(schema.projection_graph_artifacts).on_conflict_do_nothing(),
-                [
-                    {"graph_signature": prepared.graph_signature, "artifact_id": ref}
-                    for ref in graph_artifacts
-                ],
-            )
-        graph_vectors = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
-            prepared.graph_payload["vector_mappings"]
-        )
-        if graph_vectors:
-            await tx.connection.execute(
-                insert(schema.projection_graph_vectors).on_conflict_do_nothing(),
-                [
-                    {
-                        "graph_signature": prepared.graph_signature,
-                        "key": vector["key"],
-                        "input": vector["input"],
-                        "result_id": vector["result_id"],
-                        "row_index": vector["row_index"],
-                    }
-                    for vector in graph_vectors
-                ],
-            )
-        await tx.connection.execute(
-            schema.snapshots.insert().values(
-                id=prepared.ref.id,
-                identifier=prepared.ref.identifier,
-                collection_id=collection_id,
-                manifest_artifact_id=prepared.view.manifest_artifact.id
-                if prepared.view.manifest_artifact
-                else None,
-                covered_generation=prepared.view.generation,
-                profile=prepared.view.profile,
-                space_id=prepared.profile.space_id,
-                space_definition=prepared.profile.space_definition.model_dump(mode="json")
-                if prepared.profile.space_definition
-                else None,
-                identity=prepared.identity,
-                index_location=prepared.index_location,
-                layout={
-                    key: value
-                    for key, value in prepared.layout.items()
-                    if key
-                    not in {
-                        "name",
-                        "owner",
-                        "metadata",
-                        "roots",
-                        "concepts",
-                        "associations",
-                        "support_groups",
-                    }
-                },
-                owner=prepared.view.owner.model_dump(mode="json"),
-                metadata=prepared.view.metadata,
-                build_key=prepared.build_key,
-                build_signature=prepared.build_signature,
-                component_signature=prepared.component_signature,
-                graph_signature=prepared.graph_signature,
-                build_summary=prepared.summary,
-                created_at=prepared.created_at,
-            )
-        )
-        if prepared.units:
-            await tx.connection.execute(
-                insert(schema.projection_units).on_conflict_do_nothing(
-                    index_elements=[schema.projection_units.c.signature]
-                ),
-                [
-                    {
-                        "signature": unit.signature,
-                        "input_signature": unit.input_signature,
-                        "document_key": unit.document_key,
-                        "document": unit.document,
-                        "roots": unit.input_payload["roots"],
-                        "candidates": unit.candidates,
-                        "candidate_data": unit.candidate_data,
-                    }
-                    for unit in prepared.units
-                ],
-            )
-            await tx.connection.execute(
-                schema.snapshot_members.insert(),
-                [
-                    {
-                        "snapshot_id": prepared.ref.id,
-                        "ordinal": ordinal,
-                        "unit_signature": unit.signature,
-                    }
-                    for ordinal, unit in enumerate(prepared.units)
-                ],
-            )
-            candidates = [
-                {
-                    "snapshot_id": prepared.ref.id,
-                    "key": candidate["key"],
-                    "unit_signature": unit.signature,
-                    "unit_index": index,
-                    "row_index": row,
-                }
-                for unit in prepared.units
-                for index, (candidate, row) in enumerate(
-                    zip(unit.candidates, unit.candidate_rows, strict=True)
-                )
-            ]
-            if candidates:
-                await tx.connection.execute(schema.snapshot_candidates.insert(), candidates)
-            unit_artifacts = [
-                {"unit_signature": unit.signature, "artifact_id": artifact_id}
-                for unit in prepared.units
-                for artifact_id in unit.artifact_ids
-            ]
-            if unit_artifacts:
-                await tx.connection.execute(
-                    insert(schema.projection_artifacts).on_conflict_do_nothing(), unit_artifacts
-                )
-            unit_vectors = [
-                {
-                    "unit_signature": unit.signature,
-                    "key": vector["key"],
-                    "input": vector["input"],
-                    "result_id": vector["result_id"],
-                    "row_index": vector["row_index"],
-                }
-                for unit in prepared.units
-                for vector in unit.vector_mappings
-            ]
-            if unit_vectors:
-                await tx.connection.execute(
-                    insert(schema.projection_vectors).on_conflict_do_nothing(), unit_vectors
-                )
-        if prepared.artifact_ids:
-            await tx.connection.execute(
-                schema.snapshot_artifacts.insert(),
-                [
-                    {"snapshot_id": prepared.ref.id, "artifact_id": ref}
-                    for ref in prepared.artifact_ids
-                ],
-            )
-        return SnapshotDescriptor(
-            ref=prepared.ref,
-            owner=prepared.view.owner,
-            collection=prepared.view.name,
-            captured_generation=prepared.view.generation,
-            profile_signature=prepared.view.profile,
-            space_id=prepared.profile.space_id,
-            space_signature=cast(str, prepared.identity["space_signature"]),
-            identity=prepared.identity,
-            metadata=prepared.view.metadata,
-        )
-
-    async def promote_in(self, tx: WriteTx, ref: SnapshotRef) -> None:
-        """Point the owning collection to an already accepted snapshot."""
-        if ref.instance_id != self.instance_id:
-            raise NousError("wave.instance_mismatch", "Snapshot belongs to another instance")
-        snapshot = (
-            (
-                await tx.connection.execute(
-                    sa.select(
-                        schema.snapshots.c.collection_id, schema.snapshots.c.identifier
-                    ).where(schema.snapshots.c.id == ref.id)
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if snapshot is None:
-            raise NousError("wave.snapshot_not_found", "Wave snapshot does not exist")
-        if snapshot["identifier"] != ref.identifier:
-            raise NousError(
-                "wave.snapshot_mismatch", "Snapshot reference differs from its identity"
-            )
-        await tx.connection.execute(
-            schema.collections.update()
-            .where(schema.collections.c.id == snapshot["collection_id"])
-            .values(current_snapshot_id=ref.id)
-        )
-
     def release_prepared(self, prepared: PreparedSnapshot) -> None:
         """Release temporary ownership after the caller commits or abandons the result."""
         ready = self._prepared_ready.get(prepared.ref.id, 0)
@@ -1156,249 +661,41 @@ class WaveSnapshots:
             self._prepared_units.pop(object_id, None)
             self._prepared_graphs.pop(object_id, None)
 
-    async def retain_in(
-        self, tx: WriteTx, ref: SnapshotRef, *, owner_kind: str, owner_id: str
-    ) -> None:
-        """Persist a formal owner's dependency on an exact snapshot."""
-        if ref.instance_id != self.instance_id or not owner_kind or not owner_id:
-            raise NousError("wave.invalid_reference", "Invalid snapshot retention reference")
-        identifier = await tx.connection.scalar(
-            sa.select(schema.snapshots.c.identifier).where(schema.snapshots.c.id == ref.id)
-        )
-        if identifier != ref.identifier:
-            raise NousError("wave.snapshot_not_found", "Snapshot is no longer available")
-        await tx.connection.execute(
-            insert(schema.snapshot_references)
-            .values(snapshot_id=ref.id, owner_kind=owner_kind, owner_id=owner_id)
-            .on_conflict_do_nothing()
-        )
-
-    async def release_in(self, tx: WriteTx, *, owner_kind: str, owner_id: str) -> None:
-        await tx.connection.execute(
-            schema.snapshot_references.delete().where(
-                schema.snapshot_references.c.owner_kind == owner_kind,
-                schema.snapshot_references.c.owner_id == owner_id,
-            )
-        )
-
-    def _descriptor(self, row: RowMapping) -> SnapshotDescriptor:
-        return SnapshotDescriptor(
-            ref=SnapshotRef(
-                instance_id=self.instance_id, id=row["id"], identifier=row["identifier"]
-            ),
-            owner=TypeAdapter(SnapshotOwner).validate_python(row["owner"]),
-            collection=row["name"],
-            captured_generation=row["covered_generation"],
-            profile_signature=row["profile"],
-            space_id=row["space_id"],
-            space_signature=row["identity"]["space_signature"],
-            identity=row["identity"],
-            metadata=row["metadata"],
-        )
-
-    async def _lookup(
-        self, ref: str | SnapshotRef, *, include_mapping: bool = False, current: bool = False
-    ) -> RowMapping | None:
-        exact = ref if isinstance(ref, SnapshotRef) else None
-        if exact is not None:
-            if exact.instance_id != self.instance_id:
-                raise NousError("wave.instance_mismatch", "Snapshot belongs to another instance")
-            ref = exact.id
-        columns = (
-            list(schema.snapshots.c)
-            if include_mapping
-            else [
-                schema.snapshots.c.id,
-                schema.snapshots.c.identifier,
-                schema.snapshots.c.owner,
-                schema.snapshots.c.metadata,
-                schema.snapshots.c.covered_generation,
-                schema.snapshots.c.profile,
-                schema.snapshots.c.space_id,
-                schema.snapshots.c.identity,
-            ]
-        )
-        query = sa.select(*columns, schema.collections.c.name).join(
-            schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id
-        )
-        condition = (
-            sa.and_(
-                schema.collections.c.name == ref,
-                schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
-            )
-            if current
-            else sa.or_(schema.snapshots.c.id == ref, schema.snapshots.c.identifier == ref)
-        )
-        async with self.database.read() as tx:
-            row = (await tx.connection.execute(query.where(condition))).mappings().one_or_none()
-            if row is None and exact is None and not current:
-                row = (
-                    (
-                        await tx.connection.execute(
-                            query.where(
-                                schema.collections.c.name == ref,
-                                schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
-                            )
-                        )
-                    )
-                    .mappings()
-                    .one_or_none()
-                )
-        if (
-            row is not None
-            and exact is not None
-            and (row["id"] != exact.id or row["identifier"] != exact.identifier)
-        ):
-            raise NousError(
-                "wave.snapshot_mismatch", "Snapshot reference differs from its identity"
-            )
-        return row
-
-    async def current(self, collection: str) -> SnapshotDescriptor | None:
-        row = await self._lookup(collection, current=True)
-        return self._descriptor(row) if row is not None else None
-
-    async def describe(self, ref: str | SnapshotRef) -> SnapshotDescriptor:
-        """Read only immutable identity, ownership and summary columns."""
-        row = await self._lookup(ref)
-        if row is None:
-            raise NousError(
-                "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": str(ref)}
-            )
-        return self._descriptor(row)
-
-    async def candidates(
-        self, ref: SnapshotRef, keys: Sequence[str]
-    ) -> dict[str, CandidateMapping]:
-        """Load only units containing the requested candidate keys, in bounded batches."""
-        result: dict[str, CandidateMapping] = {}
-        unique = list(dict.fromkeys(keys))
-        async with self.database.read() as tx:
-            positions: list[tuple[str, str, int]] = []
-            for offset in range(0, len(unique), 400):
-                rows = (
-                    await tx.connection.execute(
-                        sa.select(
-                            schema.snapshot_candidates.c.key,
-                            schema.snapshot_candidates.c.unit_signature,
-                            schema.snapshot_candidates.c.unit_index,
-                        ).where(
-                            schema.snapshot_candidates.c.snapshot_id == ref.id,
-                            schema.snapshot_candidates.c.key.in_(unique[offset : offset + 400]),
-                        )
-                    )
-                ).mappings()
-                for row in rows:
-                    positions.append((row["key"], row["unit_signature"], row["unit_index"]))
-            signatures = list({signature for _, signature, _ in positions})
-            units: dict[str, list[CandidateMapping]] = {}
-            for offset in range(0, len(signatures), 400):
-                rows = (
-                    await tx.connection.execute(
-                        sa.select(
-                            schema.projection_units.c.signature,
-                            schema.projection_units.c.candidates,
-                        ).where(
-                            schema.projection_units.c.signature.in_(
-                                signatures[offset : offset + 400]
-                            )
-                        )
-                    )
-                ).mappings()
-                for row in rows:
-                    units[row["signature"]] = row["candidates"]
-            for key, signature, index in positions:
-                result[key] = units[signature][index]
-        return result
-
-    async def resolve(self, ref: str | SnapshotRef) -> SnapshotRow:
-        row = await self._lookup(ref, include_mapping=True)
-        if row is None:
-            raise NousError(
-                "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": str(ref)}
-            )
-        async with self.database.read() as tx:
-            members = (
-                (
-                    await tx.connection.execute(
-                        sa.select(
-                            schema.projection_units.c.signature,
-                            schema.projection_units.c.document_key,
-                            schema.projection_units.c.document,
-                            schema.projection_units.c.roots,
-                            schema.projection_units.c.candidates,
-                        )
-                        .select_from(schema.snapshot_members.join(schema.projection_units))
-                        .where(schema.snapshot_members.c.snapshot_id == row["id"])
-                        .order_by(schema.snapshot_members.c.ordinal)
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            positions = (
-                (
-                    await tx.connection.execute(
-                        sa.select(
-                            schema.snapshot_candidates.c.unit_signature,
-                            schema.snapshot_candidates.c.unit_index,
-                            schema.snapshot_candidates.c.row_index,
-                        )
-                        .where(schema.snapshot_candidates.c.snapshot_id == row["id"])
-                        .order_by(schema.snapshot_candidates.c.row_index)
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            graph = (
-                (
-                    await tx.connection.execute(
-                        sa.select(
-                            schema.projection_graphs.c.concepts,
-                            schema.projection_graphs.c.associations,
-                            schema.projection_graphs.c.support_groups,
-                        ).where(schema.projection_graphs.c.signature == row["graph_signature"])
-                    )
-                )
-                .mappings()
-                .one()
-            )
-        documents = {member["document_key"]: member["document"] for member in members}
-        units = {member["signature"]: member["candidates"] for member in members}
-        roots = {key: refs for member in members for key, refs in member["roots"].items()}
-        candidates = [
-            units[position["unit_signature"]][position["unit_index"]] for position in positions
-        ]
-        value = dict(row)
-        value["mapping"] = {
-            **value.pop("layout"),
-            "name": value["name"],
-            "owner": value["owner"],
-            "metadata": value["metadata"],
-            "concepts": graph["concepts"],
-            "associations": graph["associations"],
-            "support_groups": graph["support_groups"],
-            "roots": roots,
-            "documents": documents,
-            "candidates": candidates,
-        }
-        return cast(SnapshotRow, value)
-
     @asynccontextmanager
     async def pin(self, ref: str | SnapshotRef) -> AsyncGenerator[SnapshotRow]:
         """Keep a snapshot registered while its caller uses its mapping or files."""
         async with self._lifetime_lock:
-            row = await self.resolve(ref)
-            object_id = row["id"]
+            identity = await self.reader.lookup(ref)
+            if identity is None:
+                raise NousError(
+                    "wave.snapshot_not_found",
+                    "Wave snapshot does not exist",
+                    details={"ref": str(ref)},
+                )
+            object_id = identity["id"]
             self._borrowed[object_id] = self._borrowed.get(object_id, 0) + 1
         try:
+            async with self._mapping_lock:
+                if self._cached_mapping is not None and self._cached_mapping[0] == object_id:
+                    row = self._cached_mapping[1]
+                else:
+                    exact = SnapshotRef(
+                        instance_id=self.instance_id,
+                        id=object_id,
+                        identifier=identity["identifier"],
+                    )
+                    row = await self.resolve(exact)
+                    self._cached_mapping = (object_id, row)
             yield row
         finally:
-            async with self._lifetime_lock:
-                self._borrowed[object_id] -= 1
-                if self._borrowed[object_id] == 0:
-                    del self._borrowed[object_id]
+
+            async def unpin() -> None:
+                async with self._lifetime_lock:
+                    self._borrowed[object_id] -= 1
+                    if self._borrowed[object_id] == 0:
+                        del self._borrowed[object_id]
+
+            await complete_cleanup(unpin())
 
     @asynccontextmanager
     async def borrow(
@@ -1440,120 +737,26 @@ class WaveSnapshots:
                     if path.name in registered or path.name.startswith(".staging-"):
                         continue
 
-                    asset, units, graph = await self.execution.blocking(
-                        self._manifest_references, path
-                    )
+                    asset, units, graph = await self.execution.blocking(manifest_references, path)
                     pending_assets.add(asset)
                     pending_units.update(units)
                     pending_graphs.add(graph)
             async with self.database.write() as tx:
-                rows = (
-                    (
-                        await tx.connection.execute(
-                            sa.select(
-                                schema.snapshots.c.id,
-                                schema.snapshots.c.identifier,
-                                schema.snapshots.c.index_location,
-                                schema.snapshots.c.collection_id,
-                                schema.collections.c.current_snapshot_id,
-                            )
-                            .join(schema.collections)
-                            .order_by(
-                                schema.snapshots.c.created_at.desc(), schema.snapshots.c.id.desc()
-                            )
-                        )
-                    )
-                    .mappings()
-                    .all()
+                selection = await self.registry.remove_unreferenced_in(
+                    tx,
+                    keep_recent=keep_recent,
+                    retain=retain,
+                    protected=set(self._borrowed) | set(self._prepared_counts),
+                    pending_assets=pending_assets,
                 )
-                by_id = {row["id"]: row for row in rows}
-                for ref in retain:
-                    if (
-                        ref.instance_id != self.instance_id
-                        or ref.id not in by_id
-                        or by_id[ref.id]["identifier"] != ref.identifier
-                    ):
-                        raise NousError(
-                            "wave.snapshot_not_found", "Retained snapshot does not exist"
-                        )
-                protected = (
-                    set(self._borrowed) | set(self._prepared_counts) | {ref.id for ref in retain}
-                )
-                protected.update(row["current_snapshot_id"] for row in rows)
-                protected.update(
-                    (
-                        await tx.connection.scalars(
-                            sa.select(schema.snapshot_references.c.snapshot_id)
-                        )
-                    ).all()
-                )
-                per_collection: dict[str, int] = {}
-                for row in rows:
-                    count = per_collection.get(row["collection_id"], 0)
-                    if count < keep_recent:
-                        protected.add(row["id"])
-                    per_collection[row["collection_id"]] = count + 1
-                obsolete = [row for row in rows if row["id"] not in protected]
-                ids = [row["id"] for row in obsolete]
-                unused_units: set[str] = set()
-                unused_graphs: set[str] = set()
-                if ids:
-                    for table in (
-                        schema.snapshot_candidates,
-                        schema.snapshot_members,
-                        schema.snapshot_artifacts,
-                    ):
-                        await tx.connection.execute(
-                            table.delete().where(table.c.snapshot_id.in_(ids))
-                        )
-                    await tx.connection.execute(
-                        schema.snapshots.delete().where(schema.snapshots.c.id.in_(ids))
-                    )
-                    unused = ~sa.exists().where(
-                        schema.snapshot_members.c.unit_signature
-                        == schema.projection_units.c.signature
-                    )
-                    unused_units = set(
-                        (
-                            await tx.connection.scalars(
-                                sa.select(schema.projection_units.c.signature).where(unused)
-                            )
-                        ).all()
-                    )
-                    if unused_units:
-                        for table in (schema.projection_vectors, schema.projection_artifacts):
-                            await tx.connection.execute(
-                                table.delete().where(table.c.unit_signature.in_(unused_units))
-                            )
-                    await tx.connection.execute(schema.projection_units.delete().where(unused))
-                    unused_graph = ~sa.exists().where(
-                        schema.snapshots.c.graph_signature == schema.projection_graphs.c.signature
-                    )
-                    unused_graphs = set(
-                        (
-                            await tx.connection.scalars(
-                                sa.select(schema.projection_graphs.c.signature).where(unused_graph)
-                            )
-                        ).all()
-                    )
-                    if unused_graphs:
-                        for table in (
-                            schema.projection_graph_vectors,
-                            schema.projection_graph_artifacts,
-                        ):
-                            await tx.connection.execute(
-                                table.delete().where(table.c.graph_signature.in_(unused_graphs))
-                            )
-                    await tx.connection.execute(
-                        schema.projection_graphs.delete().where(unused_graph)
-                    )
-                    removed = [(row["id"], row["identifier"]) for row in obsolete]
-                remaining_assets = {
-                    row["index_location"] for row in rows if row["id"] not in ids
-                } | pending_assets
-                removed_assets = {row["index_location"] for row in obsolete} - remaining_assets
-            if self._cached_snapshot and self._cached_snapshot[0] in {item[0] for item in removed}:
+            removed = selection.removed
+            remaining_assets, removed_assets = selection.remaining_assets, selection.removed_assets
+            unused_units, unused_graphs = selection.unused_units, selection.unused_graphs
+            removed_ids = {item[0] for item in removed}
+            if self._cached_snapshot and self._cached_snapshot[0] in removed_ids:
                 self._cached_snapshot = None
+            if self._cached_mapping and self._cached_mapping[0] in removed_ids:
+                self._cached_mapping = None
             for object_id, _ in removed:
                 await self.execution.blocking(
                     self._remove_owned, manifest_root / object_id, manifest_root, object_id

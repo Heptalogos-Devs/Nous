@@ -20,8 +20,8 @@ from nous.models.configuration import (
 )
 
 from ..contracts import GenerationResult, ReadingInput
-from ..executor import FrozenTask, UnavailableTask
 from ..prompts import PromptManifest, PromptResource
+from ..requests import FrozenTask, UnavailableTask
 
 if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot

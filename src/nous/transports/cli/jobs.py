@@ -242,7 +242,10 @@ def run_jobs(
     async def action(runtime: Runtime) -> int:
         return await runtime.jobs.wait_until_idle()
 
-    delayed = run_durable_host(options(ctx).locator, action)
+    from .local_control import serve_cli
+
+    locator = options(ctx).locator
+    delayed = run_durable_host(locator, action, service=lambda runtime: serve_cli(runtime, locator))
     emit(ctx, {"state": "idle", "delayed": delayed})
 
 
@@ -253,4 +256,7 @@ def run_host(ctx: typer.Context) -> None:
     async def action(runtime: Runtime) -> None:
         await asyncio.Event().wait()
 
-    run_durable_host(options(ctx).locator, action)
+    from .local_control import serve_cli
+
+    locator = options(ctx).locator
+    run_durable_host(locator, action, service=lambda runtime: serve_cli(runtime, locator))

@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from pathlib import Path
 
 from .bootstrap import Runtime, open_instance
@@ -15,6 +16,7 @@ def run_host[T](
     *,
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
+    service: Callable[[Runtime], AbstractAsyncContextManager[object]] | None = None,
 ) -> T:
     """Own the application loop, durable scheduler and their shutdown order."""
 
@@ -22,7 +24,10 @@ def run_host[T](
         async with open_instance(locator, environment=environment, overrides=overrides) as runtime:
             await runtime.job_runtime.start(runtime.maintenance)
             try:
-                return await application(runtime)
+                async with AsyncExitStack() as services:
+                    if service is not None:
+                        await services.enter_async_context(service(runtime))
+                    return await application(runtime)
             finally:
 
                 async def stop_host() -> None:

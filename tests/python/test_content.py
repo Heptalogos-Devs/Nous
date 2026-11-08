@@ -134,7 +134,7 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                         )
                     assert invalid.value.code == "media.invalid_selection"
             with patch(
-                "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
+                "nous.media.visual_preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
             ) as render:
                 prepared = await asyncio.gather(
                     *(
@@ -194,7 +194,7 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
         async with open_instance(instance, environment={}) as runtime:
             settings = runtime.configuration.snapshot.values.media
             with patch(
-                "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
+                "nous.media.visual_preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
             ) as render:
                 again = await runtime.media.preparer.prepare(
                     original.ref,

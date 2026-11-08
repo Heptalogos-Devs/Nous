@@ -17,7 +17,7 @@ from pydantic import JsonValue, TypeAdapter
 import nous.temporal.domains as time_domains
 from nous.common.errors import NousError
 from nous.configuration import Configuration
-from nous.configuration.service import get_path
+from nous.configuration.values import get_path
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.storage.database import WriteTx
 from nous.temporal.domains import TimeDomainDefinition

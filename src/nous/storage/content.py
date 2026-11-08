@@ -23,6 +23,7 @@ from nous.runtime.execution import ExecutionManager
 from .content_schema import blobs, references
 from .content_types import BlobRef
 from .database import ReadTx, WriteTx
+from .file_input import FileReaderPool
 
 
 @dataclass(frozen=True)
@@ -64,12 +65,14 @@ class ContentStore:
         execution: ExecutionManager,
         *,
         io_chunk_bytes: int = 1048576,
+        reader_limit: int = 4,
     ) -> None:
         self.root = root
         self.temporary = temporary / "content"
         self.execution = execution
         self.io_chunk_bytes = io_chunk_bytes
         self._publish_lock = asyncio.Lock()
+        self.file_readers = FileReaderPool(reader_limit)
 
     def path_for(self, blob: BlobRef) -> Path:
         return self.root / "objects" / blob.digest[:2] / blob.digest[2:]
@@ -193,16 +196,16 @@ class ContentStore:
         return await self.publish(await self.prepare((data,)))
 
     async def publish_file(self, path: Path) -> PublishedContent:
-        async def chunks() -> AsyncGenerator[bytes]:
-            with path.open("rb") as source:
-                while block := await self._file_work(source.read, self.io_chunk_bytes):
-                    yield block
+        async with self.execution.operation("content.publish_file"):
+            stream = self.file_readers.chunks(path, self.io_chunk_bytes)
+            try:
+                return await self.publish(await self.prepare(stream))
+            finally:
+                await stream.aclose()
 
-        stream = chunks()
-        try:
-            return await self.publish(await self.prepare(stream))
-        finally:
-            await stream.aclose()
+    async def aclose(self) -> None:
+        """Close bounded external-file readers after runtime operations drain."""
+        await self.file_readers.aclose()
 
     async def attach_in(
         self, tx: WriteTx, owner_ref: str, slot: str, published: PublishedContent

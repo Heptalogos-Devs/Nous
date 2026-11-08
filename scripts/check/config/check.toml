@@ -14,8 +14,8 @@ warn = 500
 reject = 600
 suffix = ".rs"
 roots = ["native"]
-input = "path"
-format = ["rustfmt", "--edition", "2024", "--emit", "stdout", "{path}"]
+input = "stdin"
+format = ["rustfmt", "--edition", "2024", "--emit", "stdout", "--config", "skip_children=true"]
 
 [format.python]
 argv = ["uv", "run", "--locked", "ruff", "format", "--check"]

@@ -15,6 +15,7 @@ nous tools model list
 nous tools model discover gateway
 nous tools model probe vision --input ./photo.png
 nous tools model run --task summarize --input ./notes.md --show-request
+nous tools model recover --producer-key "<失败时返回的响应键>"
 nous tools model run --task summarize --input ./A.md --input ./B.md --question "比较发布日期"
 nous tools model run --task describe-media --input ./long-video.mp4 --per-batch
 nous tools prompt preview summarize --input ./notes.md
@@ -36,7 +37,7 @@ nous tools embedding run --space chosen-text --purpose document --input ./notes.
 
 ## 返回、流与错误
 
-model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。结果 view/provenance 来自共同 owner。
+model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。结果 view/provenance 来自共同 owner。 模型已成功而本地发布失败时，可用错误详情中的 `producer_key` 调用 model recover；该命令恢复并保存单个模型结果，重复调用返回同一结果。媒体多阶段流程继续使用其阶段恢复入口。 转写完成而采用失败时，错误详情包含原始 `artifact`、`producer_key`、`model_succeeded` 和 `transcription_recovery_durable`。持久恢复标记为真时，以该 Artifact 和相同选项重试 media analyze，可在重开实例后继续采用已保存的转写；重新传入原文件会创建新的 Artifact，可能再次转写。若恢复记录本身未能持久保存，错误会明确说明进程退出后重试可能重新请求模型。
 
 保留当前 CLI 的取消/总超时/部分成功信息。文本流直接交付；JSON 流为 NDJSON delta/completed/failed；completed 必须在正式采用后发出，失败信息保留 partial_output_delivered 和已完成引用。不要将普通 dict 全量挤成不可读的默认产品文案。
 

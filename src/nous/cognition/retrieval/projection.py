@@ -216,6 +216,7 @@ class ProjectionBuilder:
         associations: list[Association] = []
         concepts: dict[str, Concept] = {}
         sequences: list[SourceSequence] = []
+        source_documents_set = set(evidence.source_documents)
         for object_id in captured.current:
             item = captured.records[object_id]
             if item.revision["purpose"] == "exploration" and not include_exploration:
@@ -238,7 +239,7 @@ class ProjectionBuilder:
                         for meaning in annotation.bindings.values()
                     }
                 )
-                if doc in evidence.source_documents:
+                if doc in source_documents_set:
                     sequences.extend(
                         SourceSequence(
                             document=doc,

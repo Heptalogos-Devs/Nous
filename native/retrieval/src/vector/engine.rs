@@ -46,7 +46,7 @@ pub(super) fn load_index(
             && header.quantization == ScalarKind::F32
             && !header.multi
             && header.count_present == records.len() as u64
-            && header.count_deleted == 0,
+            && header.count_deleted <= (records.len() as u64 / 2).max(512),
         "VECTOR_INDEX_FORMAT_MISMATCH: dimension, cosine/F32/unique format or record count changed"
     );
     let index = Index::new(&index_options(identity.dimension)).context("USearch initialization")?;

@@ -32,7 +32,7 @@ length  警告  1
 通过，警告 1
 ```
 
-有效行数是只读格式化之后的代码行。Python 用 `ruff format --stdin-filename` 从 stdout 读取，Rust 用 `rustfmt --edition 2024 --emit stdout`。这两个命令都不改写文件。空行、注释，以及模块、类、函数的文档字符串不计入。赋值用的多行字符串计入。Python 大于 800 警告、大于 900 拒绝；Rust 大于 500 警告、大于 600 拒绝。等于阈值仍然通过。
+有效行数是只读格式化之后的代码行。Python 用 `ruff format --stdin-filename` 从 stdout 读取，Rust 用 `rustfmt --edition 2024 --emit stdout --config skip_children=true` 从 stdin 读取单个文件，避免输出文件名或递归展开子模块。这两个命令都不改写文件。空行、注释，以及模块、类、函数的文档字符串不计入。赋值用的多行字符串计入。Python 大于 800 警告、大于 900 拒绝；Rust 大于 500 警告、大于 600 拒绝。等于阈值仍然通过。
 
 指定文件时，格式检查只接收这些路径。只有 Python 文件时不调用 rustfmt，只有 Rust 文件时不调用 ruff。
 

@@ -15,10 +15,11 @@ import typer
 from rich.console import Console
 from typer.exceptions import TyperException
 
+from nous.application.configuration import ConfigurationOperations
 from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import exception_context
 from nous.configuration import Configuration
-from nous.configuration.service import Object
+from nous.configuration.values import Object
 from nous.content.contracts import ContentReadView
 from nous.presentation import error_message, format_status, render_error, select_language, translate
 from nous.runtime.instance import (
@@ -83,7 +84,10 @@ def options(ctx: typer.Context) -> Options:
 def run_async[T](action: Awaitable[T]) -> T:
     """Translate cancellation after owners have released their actual workers and resources."""
     try:
-        return asyncio.run(action)
+        from nous.runtime.local_context import current_call
+
+        call = current_call.get()
+        return call.run(action) if call is not None else asyncio.run(action)
     except (asyncio.CancelledError, KeyboardInterrupt, TimeoutError) as error:
         details = exception_context(error)
         cancelled = isinstance(error, (asyncio.CancelledError, KeyboardInterrupt))
@@ -153,8 +157,9 @@ async def offline_change(
     argument: Mapping[str, object] | str,
 ) -> Object:
     from nous.application.configuration import open_configuration_operations
+    from nous.runtime.local_context import current_call
 
-    async with open_configuration_operations(options(ctx).locator) as service:
+    async def apply(service: ConfigurationOperations) -> Object:
         if operation == "update":
             assert isinstance(argument, Mapping)
             return await service.update(argument)
@@ -162,6 +167,12 @@ async def offline_change(
         if operation == "unset":
             return await service.unset(argument)
         return await service.remove_resource(argument)
+
+    call = current_call.get()
+    if call is not None:
+        return await apply(call.runtime.configuration)
+    async with open_configuration_operations(options(ctx).locator) as service:
+        return await apply(service)
 
 
 @cli.command("init")
@@ -290,7 +301,9 @@ def config_set(
         raise NousError("configuration.value_required", "Provide a value, --null, or --value-file")
     parsed: object
     if value_file is not None:
-        parsed = json.loads(value_file.read_text(encoding="utf-8"))
+        from .input_files import input_text
+
+        parsed = json.loads(input_text(value_file))
     elif null:
         parsed = None
     else:
@@ -330,8 +343,15 @@ def config_schema(
     if output is None:
         emit(ctx, schema)
     else:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        from nous.runtime.local_context import current_call
+
+        text = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
+        call = current_call.get()
+        if call is not None:
+            call.write_text_sync(output, text)
+        else:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(text, encoding="utf-8")
         emit(ctx, {"file": str(output), "state": "saved"})
 
 
@@ -561,13 +581,19 @@ cli.add_typer(tools_cli, name="tools")
 cli.add_typer(job_cli, name="job")
 
 
-def main() -> None:
+def main(*, args: list[str] | None = None, forwarded: bool = False) -> None:
     _current.set(None)
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
     try:
-        exit_code = cli(standalone_mode=False)
+        if not forwarded:
+            from .local_control import try_forward
+
+            status = try_forward(cli, args if args is not None else sys.argv[1:])
+            if status is not None:
+                raise SystemExit(status)
+        exit_code = cli(args=args, standalone_mode=False)
         if isinstance(exit_code, int):
             raise SystemExit(exit_code)
     except (Exception, KeyboardInterrupt) as error:
@@ -613,7 +639,9 @@ def main() -> None:
             Console(stderr=True).print_exception(show_locals=False)
         language = language_for(selected)
         result["message"] = error_message(failure, language)
-        if (selected and selected.json_mode) or (selected is None and "--json" in sys.argv):
+        if (selected and selected.json_mode) or (
+            selected is None and "--json" in (args if args is not None else sys.argv)
+        ):
             typer.echo(json.dumps({"error": result}, ensure_ascii=False))
         else:
             Console(stderr=True).print(render_error(failure, language), markup=False)

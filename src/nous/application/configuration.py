@@ -14,7 +14,7 @@ from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
 from nous.configuration import ConfigSnapshot, Configuration
-from nous.configuration.service import Object, get_path, normalize_patch, set_path
+from nous.configuration.values import Object, get_path, normalize_patch, set_path
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import resolved_space
 from nous.observability.assembly import LoggingSession

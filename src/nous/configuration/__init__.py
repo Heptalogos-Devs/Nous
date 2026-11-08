@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .definitions import NousConfig as NousConfig
-    from .service import ConfigSnapshot as ConfigSnapshot
     from .service import Configuration as Configuration
-    from .service import FrozenValues as FrozenValues
+    from .values import ConfigSnapshot as ConfigSnapshot
+    from .values import FrozenValues as FrozenValues
 
 __all__ = ["ConfigSnapshot", "Configuration", "FrozenValues", "NousConfig"]
 
@@ -16,8 +16,12 @@ def __getattr__(name: str) -> object:
         from .definitions import NousConfig
 
         return NousConfig
-    if name in {"ConfigSnapshot", "Configuration", "FrozenValues"}:
-        from . import service
+    if name == "Configuration":
+        from .service import Configuration
 
-        return getattr(service, name)
+        return Configuration
+    if name in {"ConfigSnapshot", "FrozenValues"}:
+        from . import values
+
+        return getattr(values, name)
     raise AttributeError(name)

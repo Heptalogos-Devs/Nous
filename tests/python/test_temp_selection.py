@@ -103,14 +103,17 @@ def test_selected_cleanup_does_not_follow_links(checkout: Path, tmp_path: Path) 
         assert retained.read_text(encoding="utf-8") == "keep"
 
 
-def test_selected_cleanup_preserves_path_used_by_another_process(checkout: Path) -> None:
+@pytest.mark.parametrize("prefix", ["", "-I"])
+def test_selected_cleanup_preserves_path_used_by_another_process(
+    checkout: Path, prefix: str
+) -> None:
     held = write(checkout, "work/held/file.txt", "keep")
     child = subprocess.Popen(
         [
             sys.executable,
             "-c",
             "import time; print('ready', flush=True); time.sleep(60)",
-            str(held),
+            prefix + str(held),
         ],
         cwd=checkout,
         stdout=subprocess.PIPE,
@@ -123,6 +126,33 @@ def test_selected_cleanup_preserves_path_used_by_another_process(checkout: Path)
         result = invoke(checkout, "clean", "work/held", "--apply")
         assert result.returncode != 0
         assert f"进程 {child.pid}" in result.stdout and held.exists()
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+        child.stdout.close()
+
+
+def test_selected_cleanup_does_not_confuse_sibling_prefix(checkout: Path) -> None:
+    unused = write(checkout, "cache/unused.txt", "remove")
+    sibling = write(checkout, "cache-other/used.txt", "keep")
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; print('ready', flush=True); time.sleep(60)",
+            str(sibling),
+        ],
+        cwd=checkout,
+        stdout=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    assert child.stdout is not None
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        result = invoke(checkout, "clean", "cache", "--apply")
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert not unused.exists() and sibling.exists()
     finally:
         child.terminate()
         child.wait(timeout=10)
