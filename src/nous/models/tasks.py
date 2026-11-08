@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Literal, cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.common.errors import NousError
-from nous.content.contracts import Artifact, InputGroup, OutputContent, SourceSelection
+from nous.content.contracts import (
+    Artifact,
+    InputGroup,
+    OutputContent,
+    SourceSelection,
+    is_text_media_type,
+)
 from nous.media.contracts import MediaPlan, PreparedSource
 
 from .contracts import ReadingInput
@@ -301,10 +307,7 @@ class TaskDefinition:
                     )
                 for part in source.group.parts:
                     artifact = await artifacts.get(part.content.artifact)
-                    if (
-                        artifact.media_type.startswith("text/")
-                        or artifact.media_type == "application/json"
-                    ):
+                    if is_text_media_type(artifact.media_type):
                         excerpts.append(
                             {
                                 "key": key,

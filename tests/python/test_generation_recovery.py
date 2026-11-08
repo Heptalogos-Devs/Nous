@@ -181,12 +181,13 @@ def test_language_response_survives_interpretation_failure_and_reopen(tmp_path: 
                         )
                     }
                 )
-                same = await runtime.generation.produce(
-                    GenerationRequest(frozen_ref, renamed),
-                    snapshot=snapshot,
-                    computation_key="workflow:stable:compute",
-                )
-                assert same.outputs["output"] == produced.outputs["output"]
+                with pytest.raises(NousError) as renamed_conflict:
+                    await runtime.generation.produce(
+                        GenerationRequest(frozen_ref, renamed),
+                        snapshot=snapshot,
+                        computation_key="workflow:stable:compute",
+                    )
+                assert renamed_conflict.value.code == "content.producer_conflict"
                 first, second = await asyncio.gather(
                     *(
                         runtime.generation.produce(
@@ -654,7 +655,7 @@ async def run():
     async with open_instance(sys.argv[1], environment={}, overrides={"database.busy_timeout_ms": 30}) as runtime:
         original = runtime.results.adopt
         async def busy(*args, **kwargs):
-            if kwargs.get("operation") == "asr":
+            if kwargs.get("operation") == "model.transcription_response":
                 with sqlite3.connect(runtime.database.path) as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     return await original(*args, **kwargs)
@@ -688,19 +689,37 @@ asyncio.run(run())
         async def retry_after_crash() -> None:
             from unittest.mock import patch
 
-            from nous.content.contracts import ArtifactRef
+            from nous.content.contracts import ArtifactRef, InputSpec
             from nous.runtime.bootstrap import open_instance
 
             async with open_instance(instance, environment={}) as runtime:
                 journal = runtime.generation.transcription.journal
-                with patch.object(journal, "discard", side_effect=OSError("cleanup unavailable")):
+                with (
+                    patch.object(journal, "discard", side_effect=OSError("cleanup unavailable")),
+                    patch.object(
+                        runtime.generation.transcription,
+                        "_transcription_for_route",
+                        side_effect=AssertionError("provider lookup"),
+                    ),
+                ):
                     outcome = await runtime.media.analyze(
                         ArtifactRef.model_validate_json(saved_ref),
                         "description_only",
                         runtime.configuration.snapshot,
                         description_task="describe",
                     )
+                    renamed = await runtime.media.analyze(
+                        InputSpec(
+                            kind="artifact",
+                            artifact=ArtifactRef.model_validate_json(saved_ref),
+                            display_name="Renamed audio",
+                        ),
+                        "description_only",
+                        runtime.configuration.snapshot,
+                        description_task="describe",
+                    )
                 assert outcome.batches
+                assert renamed.batches
                 assert list(journal.root.glob("*.json"))
             async with open_instance(instance, environment={}) as runtime:
                 outcome = await runtime.media.analyze(

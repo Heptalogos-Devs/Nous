@@ -37,6 +37,8 @@ TaskDefinition 提供输入准备、输出校验和输出解释。普通语言�
 
 正文标注值由 content.annotations 提供，供任务和 cognition/Wave 共用；模型提案与正式 Concept binding 分开。块校验由共同标注值负责。
 
+前台标注冻结正文、候选意义和采用选择；失败时可用返回的请求引用执行 `journal annotation recover`。后台标注继续使用持久工作保存的计划。
+
 ## 完整计算与采用
 
 GenerationOperations.produce 完成当前共同 prepare/route/execute/validate/outputs，返回 ProducedTask（实际输入、结果、参数、出处及有名输出），本身不持有业务事务。公共 run 通过 ResultStore 保存它；Journalize 复用同一 produce，并将处理结果与草稿描述一起采用。它不是第二个模型执行器。

@@ -1,6 +1,6 @@
 //! Immutable lexical indexes over caller-owned frozen candidate rows.
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::Path,
     sync::{Arc, Mutex, RwLock},
 };
@@ -16,10 +16,8 @@ use tantivy::{
 };
 mod grouped;
 pub(crate) mod live;
-mod scoped;
 mod search;
 mod text;
-pub use text::match_score;
 use text::{analyzer, schema, tokenize};
 #[cfg(windows)]
 mod windows_directory;
@@ -63,7 +61,6 @@ pub struct SearchPage {
 struct CommitPayload {
     through_commit_seq: i64,
     generation: String,
-    scopes: BTreeMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -85,7 +82,6 @@ struct Inner {
     writer: Mutex<Option<IndexWriter>>,
     fields: Fields,
     coverage: RwLock<IndexCoverage>,
-    scopes: RwLock<BTreeMap<String, String>>,
     live_stats: Option<Arc<live::LiveStats>>,
 }
 
@@ -127,7 +123,6 @@ impl RetrievalIndex {
                 let payload = CommitPayload {
                     through_commit_seq: 0,
                     generation: uuid::Uuid::new_v4().to_string(),
-                    scopes: BTreeMap::new(),
                 };
                 let mut commit = writer.prepare_commit()?;
                 commit.set_payload(&serde_json::to_string(&payload)?);
@@ -155,7 +150,6 @@ impl RetrievalIndex {
                 writer: Mutex::new(Some(writer)),
                 fields,
                 coverage: RwLock::new(coverage),
-                scopes: RwLock::new(payload.scopes),
                 live_stats,
             }),
         })
@@ -245,7 +239,6 @@ impl RetrievalIndex {
         let payload = CommitPayload {
             through_commit_seq,
             generation: generation.clone(),
-            scopes: BTreeMap::new(),
         };
         let result: Result<()> = (|| {
             if rebuild {
@@ -291,11 +284,6 @@ impl RetrievalIndex {
             .coverage
             .write()
             .map_err(|_| anyhow::anyhow!("lexical coverage lock poisoned"))? = coverage.clone();
-        self.inner
-            .scopes
-            .write()
-            .map_err(|_| anyhow::anyhow!("lexical scope lock poisoned"))?
-            .clear();
         Ok(coverage)
     }
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import sqlalchemy as sa
 
@@ -16,9 +17,10 @@ def test_incremental_revision_deletion_and_borrowed_snapshot(tmp_path: Path) -> 
         await initialize_instance(instance, environment={})
         async with open_instance(instance, environment={}) as runtime:
             cognition = await runtime.cognition()
-            first = (await cognition.records.add_note("alpha shared prior", remember=True)).record
-            second = (await cognition.records.add_note("beta retired shared", remember=True)).record
+            first = (await cognition.records.add_note("alpha retired shared", remember=True)).record
+            second = (await cognition.records.add_note("beta shared prior", remember=True)).record
             await cognition.records.add_note("gamma shared unchanged", remember=True)
+            fourth = (await cognition.records.add_note("theta original", remember=True)).record
             baseline = await cognition.retrieval.query(
                 CognitiveQuery(text="shared", mode="lexical")
             )
@@ -28,25 +30,41 @@ def test_incremental_revision_deletion_and_borrowed_snapshot(tmp_path: Path) -> 
                 async def read_old() -> None:
                     for _ in range(4):
                         result = await cognition.retrieval.query(
-                            CognitiveQuery(text="beta", mode="lexical", snapshot=old_ref.identifier)
+                            CognitiveQuery(
+                                text="alpha", mode="lexical", snapshot=old_ref.identifier
+                            )
                         )
                         assert any(
-                            "beta retired" in p.snippet for g in result.groups for p in g.passages
+                            "alpha retired" in p.snippet for g in result.groups for p in g.passages
                         )
                         await asyncio.sleep(0)
 
                 async def advance() -> None:
+                    await cognition.records.archive(first.ref, expected=first.revision_ref)
                     await cognition.records.replace(
-                        first.ref, "delta shared revised", expected=first.revision_ref
+                        second.ref,
+                        "beta shared prior",
+                        expected=second.revision_ref,
+                        title="deltaheading",
                     )
-                    await cognition.records.archive(second.ref, expected=second.revision_ref)
+                    await cognition.records.replace(
+                        fourth.ref, "delta shared revised", expected=fourth.revision_ref
+                    )
                     fresh = await cognition.retrieval.query(
                         CognitiveQuery(text="shared", mode="lexical")
                     )
                     bodies = [p.snippet for group in fresh.groups for p in group.passages]
                     assert any("delta" in body for body in bodies)
-                    assert not any(
-                        "beta retired" in body or "alpha shared prior" in body for body in bodies
+                    assert any("beta shared prior" in body for body in bodies)
+                    assert any("gamma shared unchanged" in body for body in bodies)
+                    assert not any("alpha retired" in body for body in bodies)
+                    title = await cognition.retrieval.query(
+                        CognitiveQuery(text="deltaheading", mode="lexical")
+                    )
+                    assert any(
+                        "title" in passage.matched_fields
+                        for group in title.groups
+                        for passage in group.passages
                     )
                     async with runtime.database.read() as tx:
                         summary = (
@@ -57,12 +75,14 @@ def test_incremental_revision_deletion_and_borrowed_snapshot(tmp_path: Path) -> 
                             )
                         ).scalar_one()
                     changes = summary["statistics"]["timings"]["lexical_delta"]
-                    assert changes["incremental"] is True and changes["changed"] >= 2
+                    assert changes["incremental"] is True and changes["changed"] == 5
                     await runtime.wave.cleanup()
                     assert (await runtime.wave.describe(old_ref)).ref == old_ref
 
                 await asyncio.gather(read_old(), advance())
-            await runtime.wave.cleanup()
+            assert old_ref.identifier in cast(
+                list[str], (await runtime.wave.cleanup())["snapshots"]
+            )
 
     asyncio.run(scenario())
 
@@ -175,11 +195,12 @@ def test_cancelled_incremental_build_keeps_base_borrowed_until_worker_exits(tmp_
                 release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            assert not snapshots._borrowed  # pyright: ignore[reportPrivateUsage]
-            assert not snapshots._prepared_counts  # pyright: ignore[reportPrivateUsage]
             snapshots._engine = real  # pyright: ignore[reportPrivateUsage]
             result = await cognition.retrieval.query(CognitiveQuery(text="pending", mode="lexical"))
             assert result.groups
+            assert old_ref.identifier in cast(
+                list[str], (await runtime.wave.cleanup())["snapshots"]
+            )
 
     asyncio.run(scenario())
 
@@ -187,10 +208,10 @@ def test_cancelled_incremental_build_keeps_base_borrowed_until_worker_exits(tmp_
 def test_keyed_build_locks_release_waiters_and_entries() -> None:
     import pytest
 
-    from nous.wave.keyed_locks import KeyedLocks
+    from nous.common.keyed_locks import KeyedLocks
 
     async def scenario() -> None:
-        pool = KeyedLocks()
+        pool = KeyedLocks[str]()
         waiting = asyncio.Event()
 
         async def blocked() -> None:
@@ -207,6 +228,116 @@ def test_keyed_build_locks_release_waiters_and_entries() -> None:
                 await task
             assert len(pool._entries) == 1  # pyright: ignore[reportPrivateUsage]
         assert not pool._entries  # pyright: ignore[reportPrivateUsage]
+
+    asyncio.run(scenario())
+
+
+def test_missing_snapshot_query_during_rebuild_does_not_deadlock(tmp_path: Path) -> None:
+    import shutil
+    import threading
+
+    import pytest
+
+    from nous.common.errors import NousError
+    from nous.wave.contracts import WaveQuery
+
+    async def scenario() -> None:
+        instance = tmp_path / "missing-component"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            async with runtime.execution.operation("test.wave"):
+                view = await runtime.wave.snapshots.import_manifest(
+                    Path("docs/examples/wave/collection.json")
+                )
+                profile = runtime.wave.resolve_build_profile(None)
+                async with runtime.wave.prepare_build(view, profile, build_key="first") as first:
+                    async with runtime.database.write() as tx:
+                        first_ref = (await runtime.wave.accept_in(tx, first)).ref
+                        await runtime.wave.promote_in(tx, first_ref)
+                row = await runtime.wave.snapshots.resolve(first_ref)
+                component = runtime.paths.resolve_owned("index", row["index_location"])
+                changed = view.model_copy(
+                    update={
+                        "documents": (
+                            view.documents[0].model_copy(update={"title": "Changed"}),
+                            *view.documents[1:],
+                        )
+                    }
+                )
+                async with runtime.wave.prepare_build(
+                    changed, profile, build_key="second"
+                ) as second:
+                    async with runtime.database.write() as tx:
+                        descriptor = await runtime.wave.accept_in(tx, second)
+                        await runtime.wave.promote_in(tx, descriptor.ref)
+        shutil.rmtree(component)
+
+        async with open_instance(instance, environment={}) as runtime:
+            snapshots = runtime.wave.snapshots
+            real = snapshots.engine()
+            original_current = snapshots.reader.current
+            base_selected, continue_build = asyncio.Event(), asyncio.Event()
+            query_entered, continue_query = threading.Event(), threading.Event()
+
+            async def current(name: str):
+                result = await original_current(name)
+                base_selected.set()
+                await continue_build.wait()
+                return result
+
+            class PausedEngine:
+                def open(self, path: str, *args: object, **kwargs: object):
+                    if Path(path) == component:
+                        query_entered.set()
+                        if not continue_query.wait(10):
+                            raise TimeoutError("query did not resume")
+                    return real.open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+                def build(self, *args: object, **kwargs: object):
+                    return real.build(*args, **kwargs)  # type: ignore[arg-type]
+
+                def close(self) -> None:
+                    real.close()
+
+            snapshots.reader.current = current  # type: ignore[method-assign]
+            snapshots._engine = PausedEngine()  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
+
+            async def rebuild() -> None:
+                async with runtime.wave.prepare_build(
+                    view, profile, build_key="rebuild"
+                ) as prepared:
+                    async with runtime.database.write() as tx:
+                        await runtime.wave.accept_in(tx, prepared)
+
+            build_task = asyncio.create_task(rebuild())
+            query_task: asyncio.Task[dict[str, object]] | None = None
+            try:
+                await asyncio.wait_for(base_selected.wait(), 10)
+                query_task = asyncio.create_task(
+                    runtime.wave.query(
+                        WaveQuery(snapshot=first_ref.identifier, text="资源", mode="lexical")
+                    )
+                )
+                assert await asyncio.to_thread(query_entered.wait, 5)
+                continue_build.set()
+                continue_query.set()
+                with pytest.raises(NousError) as failure:
+                    await asyncio.wait_for(query_task, 10)
+                assert failure.value.code == "wave.snapshot_invalid"
+                await asyncio.wait_for(build_task, 15)
+                answer = await runtime.wave.query(
+                    WaveQuery(snapshot=first_ref.identifier, text="资源", mode="lexical")
+                )
+                assert answer["hits"]
+            finally:
+                continue_build.set()
+                continue_query.set()
+                for task in (build_task, query_task):
+                    if task is not None and not task.done():
+                        task.cancel()
+                await asyncio.gather(build_task, return_exceptions=True)
+                if query_task is not None:
+                    await asyncio.gather(query_task, return_exceptions=True)
 
     asyncio.run(scenario())
 

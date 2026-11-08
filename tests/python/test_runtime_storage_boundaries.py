@@ -17,6 +17,110 @@ from nous.observability.instrumentation import active_providers, get_logger
 from nous.runtime.bootstrap import Runtime, initialize_instance, open_instance
 
 
+def test_cancellation_during_content_creation_releases_temporary_file(tmp_path: Path) -> None:
+    from nous.storage import content
+
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance, environment={})
+        created, release = threading.Event(), threading.Event()
+        files: list[Path] = []
+        original = content.tempfile.mkstemp
+
+        def delayed(*, dir: Path, suffix: str) -> tuple[int, str]:
+            descriptor, name = original(dir=dir, suffix=suffix)
+            files.append(Path(name))
+            created.set()
+            assert release.wait(10)
+            return descriptor, name
+
+        async with open_instance(instance, environment={}) as runtime:
+            with patch("nous.storage.content.tempfile.mkstemp", new=delayed):
+                task = asyncio.create_task(runtime.artifacts.ingest("content"))
+                try:
+                    assert await asyncio.wait_for(asyncio.to_thread(created.wait), 10)
+                    task.cancel()
+                finally:
+                    release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert len(files) == 1 and not files[0].exists()
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_frame_workspace_creation_removes_directory(tmp_path: Path) -> None:
+    import sys
+    import tempfile
+
+    from nous.media.audiovisual import AudioVisual
+
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance, environment={})
+        created, release = threading.Event(), threading.Event()
+        directories: list[Path] = []
+        original = tempfile.TemporaryDirectory
+
+        def delayed(*, prefix: str, dir: Path) -> tempfile.TemporaryDirectory[str]:
+            directory = original(prefix=prefix, dir=dir)
+            directories.append(Path(directory.name))
+            created.set()
+            assert release.wait(10)
+            return directory
+
+        async with open_instance(instance, environment={}) as runtime:
+            settings = runtime.configuration.snapshot.values.media.model_copy(
+                update={"ffmpeg_path": sys.executable, "ffprobe_path": sys.executable}
+            )
+            media = AudioVisual(settings, runtime.execution)
+
+            async def read_frames() -> None:
+                async with media.frames(tmp_path / "video", (0,), 64, tmp_path / "frames"):
+                    pass
+
+            with patch("nous.media.audiovisual.tempfile.TemporaryDirectory", new=delayed):
+                task = asyncio.create_task(read_frames())
+                try:
+                    assert await asyncio.wait_for(asyncio.to_thread(created.wait), 10)
+                    task.cancel()
+                finally:
+                    release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert len(directories) == 1 and not directories[0].exists()
+
+    asyncio.run(scenario())
+
+
+def test_spawn_captures_new_configuration_outside_parent_request(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            async with runtime.execution.request():
+                original = runtime.execution.snapshot
+                await runtime.configuration.update({"logging.level": "DEBUG"})
+                current = runtime.configuration.snapshot
+                assert current.version > original.version
+
+                async def capture() -> int:
+                    return runtime.execution.snapshot.version
+
+                task = runtime.execution.spawn("background.check", capture)
+                assert await task == current.version
+
+                async def durable_capture() -> int:
+                    async with runtime.execution.durable():
+                        async with runtime.execution.operation("durable.check") as durable:
+                            return durable.settings.version
+
+                assert await asyncio.create_task(durable_capture()) == current.version
+                assert runtime.execution.snapshot.version == original.version
+
+    asyncio.run(scenario())
+
+
 def test_instance_logs_follow_operations_in_existing_workers_and_interleaved_close(
     tmp_path: Path,
 ) -> None:

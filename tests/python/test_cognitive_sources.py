@@ -16,9 +16,17 @@ from nous.application.configuration import open_configuration_operations
 from nous.cognition import SourceRequest
 from nous.cognition.contracts import SourceBinding
 from nous.cognition.retrieval.contracts import CognitiveQuery
+from nous.cognition.sources import SourceResolver
 from nous.cognition.writing.contracts import SourceChanges
 from nous.common.errors import NousError
-from nous.content.contracts import ContentSelection, SourceSelection
+from nous.content.contracts import (
+    ArtifactRef,
+    ContentSelection,
+    InputGroup,
+    InputPart,
+    OriginSlice,
+    SourceSelection,
+)
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.wave.contracts import WaveQuery
 
@@ -162,6 +170,44 @@ def test_media_selections_are_checked_before_formal_writes(tmp_path: Path) -> No
                 source.selections[0]
                 for source in (await cognition.records.read(saved.record.revision_ref)).sources
             ] == valid
+
+    asyncio.run(scenario())
+
+
+def test_transformed_media_uses_its_declared_original_selection(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "media-origin"
+        await initialize_instance(instance, environment={})
+        source_path = tmp_path / "original.png"
+        derivative_path = tmp_path / "normalized.png"
+        Image.new("RGB", (20, 20), "white").save(source_path)
+        Image.new("RGB", (10, 10), "white").save(derivative_path)
+
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            source: ArtifactRef = (await runtime.artifacts.ingest(source_path)).ref
+            derivative: ArtifactRef = (await runtime.artifacts.ingest(derivative_path)).ref
+            selected = ContentSelection(artifact=source)
+            resolver = SourceResolver(runtime.record_reader, runtime.media.preparer)
+            prepared = await resolver.prepare(cognition.namespace, [SourceRequest(target=selected)])
+            consumed = InputGroup(
+                key="S1:I0",
+                slot_key="S1",
+                name="normalized.png",
+                role="source",
+                parts=(
+                    InputPart(
+                        content=ContentSelection(artifact=derivative),
+                        representation="normalized_image",
+                        media_type="image/png",
+                        origins=(OriginSlice(origin=selected),),
+                    ),
+                ),
+            )
+
+            bindings = await resolver.actual_bindings((consumed,), prepared)
+
+            assert bindings[0].selections == (selected,)
 
     asyncio.run(scenario())
 

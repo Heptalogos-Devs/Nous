@@ -18,9 +18,10 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     InputPart,
-    InputSpec,
     OutputContent,
     ResultRef,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
 )
 from nous.content.edits import ReplaceSelection, prepare_text_edit
@@ -90,20 +91,6 @@ class WritingOperations:
             reject_journals=reject_journals,
         )
 
-    @staticmethod
-    def _inputs(sources: PreparedSources) -> list[InputSpec]:
-        return [
-            InputSpec(
-                kind="artifact",
-                artifact=item.artifact,
-                selection=item.selection,
-                slot_key=source.slot_key,
-                role=source.role,
-            )
-            for source in sources.selected_inputs.sources
-            for item in source.selections
-        ]
-
     async def _base(self, base: str | RecordRevisionRef, *, journal_only: bool) -> RecordView:
         if isinstance(base, str) and "@" not in base:
             raise NousError("input.expected_required", "An exact revision with @N is required")
@@ -130,7 +117,7 @@ class WritingOperations:
         self,
         task: str,
         contract: str,
-        inputs: Sequence[InputSpec],
+        inputs: SelectedInputs,
         context: DraftContext,
         adoption: Literal["draft", "save"],
         after: AfterWrite,
@@ -478,7 +465,7 @@ class WritingOperations:
             return await self._start(
                 task,
                 "journal-draft",
-                self._inputs(prepared),
+                prepared.selected_inputs,
                 context,
                 policy,
                 after,
@@ -557,12 +544,11 @@ class WritingOperations:
             targets = {f"T{index}": selected for index, selected in enumerate(chosen, 1)}
             bounds = [view.selection_bounds(selected) for selected in chosen]
             inputs = [
-                InputSpec(
-                    kind="artifact",
-                    artifact=selected.artifact,
-                    selection=selected.selection,
+                SelectedSource(
+                    selections=(selected,),
                     slot_key=key,
                     role="edit_target",
+                    display_name=original.title,
                 )
                 for key, selected in targets.items()
             ]
@@ -570,19 +556,18 @@ class WritingOperations:
                 low, high = view.selection_bounds(block.selection)
                 if not any(low < end and start < high for start, end in bounds):
                     inputs.append(
-                        InputSpec(
-                            kind="artifact",
-                            artifact=block.selection.artifact,
-                            selection=block.selection.selection,
+                        SelectedSource(
+                            selections=(block.selection,),
                             slot_key=f"CTX{index}",
                             role="context",
+                            display_name=original.title,
                         )
                     )
             prepared = await self._freeze(
                 sources, prefix="N", reserved=[source.key for source in original.sources]
             )
             ns, selected = prepared.namespace, prepared.bindings
-            inputs.extend(self._inputs(prepared))
+            inputs.extend(prepared.selected_inputs.sources)
             task = self.execution.snapshot.values.cognition.edit.task
             instructions = (
                 f"Editable target slots: {', '.join(targets)}. CTX sources are read-only.\n"
@@ -612,7 +597,7 @@ class WritingOperations:
             return await self._start(
                 task,
                 "journal-edit",
-                inputs,
+                SelectedInputs(sources=tuple(inputs), facts=prepared.selected_inputs.facts),
                 context,
                 adoption,
                 after,
@@ -660,13 +645,13 @@ class WritingOperations:
             )
             ns, selected = prepared.namespace, prepared.bindings
             inputs = [
-                InputSpec(
-                    kind="artifact",
-                    artifact=original.body_artifact,
+                SelectedSource(
+                    selections=(original.body_selection,),
                     slot_key="BASE",
                     role="revision_base",
+                    display_name=original.title,
                 ),
-                *self._inputs(prepared),
+                *prepared.selected_inputs.sources,
             ]
             task = self.execution.snapshot.values.cognition.rewrite.task
             context = DraftContext(
@@ -689,7 +674,7 @@ class WritingOperations:
             return await self._start(
                 task,
                 "journal-rewrite",
-                inputs,
+                SelectedInputs(sources=tuple(inputs), facts=prepared.selected_inputs.facts),
                 context,
                 adoption,
                 after,
@@ -766,7 +751,7 @@ class WritingOperations:
             return await self._start(
                 task,
                 "journal-reflect",
-                self._inputs(prepared),
+                prepared.selected_inputs,
                 context,
                 adoption,
                 after,

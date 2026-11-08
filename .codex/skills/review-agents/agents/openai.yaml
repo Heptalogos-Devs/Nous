@@ -1,0 +1,5 @@
+interface:
+  display_name: "审查 Agent 文档"
+  short_description: "审查用于治理 Agent 的有关文档"
+policy:
+  allow_implicit_invocation: false

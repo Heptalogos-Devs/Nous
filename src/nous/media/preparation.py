@@ -24,6 +24,7 @@ from nous.content.contracts import (
     OutputContent,
     OutputMapping,
     SourceSelection,
+    is_text_media_type,
 )
 from nous.content.results import ResultStore
 from nous.content.text import TextView
@@ -108,6 +109,16 @@ class MediaPreparer:
         finally:
             await iterator.aclose()
 
+    @staticmethod
+    def text_view_parameters(info: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """Describe the extraction semantics used to cache a PDF text view."""
+        return {
+            "source_media_type": "application/pdf",
+            "tool": info["tool"],
+            "version": info["version"],
+            "origin_mapping": "selected_originals",
+        }
+
     async def text_view(
         self, content: ContentSelection | ArtifactRef | str, *, settings: MediaConfig
     ) -> TextRepresentation:
@@ -133,12 +144,7 @@ class MediaPreparer:
                 "media.text_representation_missing",
                 "This material requires explicit transcription or language interpretation to obtain text",
             )
-        parameters: dict[str, JsonValue] = {
-            "source_media_type": "application/pdf",
-            "tool": info["tool"],
-            "version": info["version"],
-            "origin_mapping": "selected_originals",
-        }
+        parameters = self.text_view_parameters(info)
         key = self.derivatives.key(original, source.selection, "media.text-view", parameters)
         cached = await self.results.find_cached("media.text-view", key)
         if cached is None:
@@ -281,9 +287,7 @@ class MediaPreparer:
                 else:
                     mime = (
                         original.media_type
-                        if original.media_type.startswith("text/")
-                        or original.media_type
-                        in {"application/json", "application/xml", "application/xhtml+xml"}
+                        if is_text_media_type(original.media_type)
                         else "text/plain"
                     )
                     info = {"kind": "text", "encoding": "utf-8", "media_type": mime}
@@ -380,7 +384,7 @@ class MediaPreparer:
             for part in source.group.parts:
                 artifact = await self.artifacts.get(part.content.artifact)
                 mime = part.media_type or artifact.media_type
-                if mime.startswith("text/") or mime == "application/json":
+                if is_text_media_type(mime):
                     texts.append(await self.artifacts.read_selection(part.content))
                 else:
                     media.append(

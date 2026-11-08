@@ -23,7 +23,7 @@ from nous.content.contracts import (
 from nous.content.results import PreparedOutputs
 
 from ..contracts import GenerationResult, ReadingInput
-from ..input import InputPlan, RequestGroup
+from ..input import InputPlan
 from ..requests import FrozenTask
 from .computation import FrozenLanguageTask
 
@@ -38,14 +38,9 @@ def schema_request_value(schema: dict[str, JsonValue] | None) -> str | None:
 @dataclass(frozen=True)
 class PreparedRun:
     artifacts: tuple[Artifact, ...]
-    batches: tuple[RequestGroup, ...]
-    coverage: dict[str, JsonValue]
     frozen: FrozenTask
-    question: str = ""
-    instructions: str = ""
-    schema: dict[str, JsonValue] | None = None
+    input_plan: InputPlan
     preparations: tuple[str, ...] = ()
-    input_plan: InputPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +78,7 @@ class GenerationRequest:
     dependencies: tuple[ArtifactRef | ResultRef, ...] = ()
     document_mode: str = "auto"
     without_audio: bool = False
+    context: tuple[InputGroup, ...] = ()
 
     def capture(self) -> GenerationRequest:
         """Detach the request from caller-owned values before an operation waits."""
@@ -103,6 +99,11 @@ class GenerationRequest:
                     "dependencies": [ref.model_dump(mode="json") for ref in self.dependencies],
                     "document_mode": self.document_mode,
                     "without_audio": self.without_audio,
+                    **(
+                        {"context": [group.model_dump(mode="json") for group in self.context]}
+                        if self.context
+                        else {}
+                    ),
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -122,7 +123,6 @@ class PreparedProduction:
     parameters: dict[str, JsonValue]
     coverage: dict[str, JsonValue]
     producer_key: str | None
-    completed_stage_refs: tuple[str, ...]
     dependencies: tuple[ArtifactRef | ResultRef, ...]
     mappings: tuple[OutputMapping, ...]
 
@@ -141,8 +141,6 @@ class PendingResponse:
     selected_inputs: SelectedInputs | None
     dependencies: tuple[ArtifactRef | ResultRef, ...]
     interpretation_contract: dict[str, JsonValue]
-    requested_inputs: tuple[InputGroup, ...] | None = None
-    requested_coverage: dict[str, JsonValue] | None = None
 
 
 @dataclass(frozen=True)

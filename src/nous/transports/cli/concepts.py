@@ -6,16 +6,15 @@ from typing import Annotated, cast
 
 import typer
 
+from nous.application.inputs import InputParameter
 from nous.cognition.concept_contracts import AnnotationProposalView, AnnotationView, ConceptView
 from nous.cognition.concepts import ConceptTarget
 from nous.common.errors import NousError
-from nous.content.annotations import AnnotationProposal
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 
-from . import cli, language_for, options, run_async
+from . import application_action, cli, language_for, options
 from .cognition import journal_cli, note_cli
-from .input_files import input_text
+from .input_files import json_parameter
 
 concept_cli = typer.Typer(help="Concept meanings", no_args_is_help=True)
 annotation_cli = typer.Typer(help="Annotations", no_args_is_help=True)
@@ -43,22 +42,23 @@ def concept_add(
     alias: Annotated[list[str] | None, typer.Option("--alias")] = None,
     author: str | None = None,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).concepts.create(
-                namespace, label, description, alias or (), author=author
-            )
-
-    emit_concept(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "concepts.create",
+        namespace,
+        label,
+        description,
+        alias or (),
+        author=author,
+        scope=namespace,
+    )
+    emit_concept(ctx, cast(ConceptView, result))
 
 
 @concept_cli.command("read")
 def concept_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).concepts.read(ref, namespace)
-
-    emit_concept(ctx, run_async(run()))
+    result = application_action(ctx, "concepts.read", ref, namespace, scope=namespace)
+    emit_concept(ctx, cast(ConceptView, result))
 
 
 @concept_cli.command("find")
@@ -69,13 +69,12 @@ def concept_find(
     limit: int = 20,
     offset: int = 0,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).concepts.find(
-                namespace, text, offset=offset, limit=limit
-            )
-
-    result = run_async(run())
+    result = cast(
+        tuple[ConceptView, ...],
+        application_action(
+            ctx, "concepts.find", namespace, text, offset=offset, limit=limit, scope=namespace
+        ),
+    )
     if options(ctx).json_mode:
         typer.echo(
             json.dumps(
@@ -114,13 +113,19 @@ def concept_revise(
     elif expected.isdecimal():
         expected = ref.split("@")[0] + "@" + expected
 
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).concepts.revise(
-                ref, expected, label, description, alias or (), namespace=namespace, author=author
-            )
-
-    emit_concept(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "concepts.revise",
+        ref,
+        expected,
+        label,
+        description,
+        alias or (),
+        namespace=namespace,
+        author=author,
+        scope=namespace,
+    )
+    emit_concept(ctx, cast(ConceptView, result))
 
 
 def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | AnnotationView):
@@ -191,40 +196,36 @@ def annotate(
                 "input.invalid_candidate", 'Use distinct --known-concept "C1=con(...)@N" entries'
             )
         candidates[key] = target
-    supplied: dict[str, ConceptTarget | None] | None = None
-    if bindings is not None:
-        raw: object = json.loads(input_text(bindings))
-        if not isinstance(raw, dict) or any(
-            not isinstance(key, str) or (value is not None and not isinstance(value, str))
-            for key, value in cast(dict[object, object], raw).items()
-        ):
-            raise NousError(
-                "input.invalid_bindings",
-                "Bindings must map local Concept keys to exact refs or null for new",
-            )
-        supplied = cast(dict[str, ConceptTarget | None], raw)
-    manual = AnnotationProposal.model_validate_json(input_text(proposal)) if proposal else None
-
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            if background:
-                return await runtime.maintenance.request_annotation(
-                    ref, namespace=cognition.namespace.id, task=task, refresh=refresh
-                )
-            return await cognition.annotations.annotate(
-                ref,
-                namespace=namespace,
-                proposal=manual,
-                proposal_result=proposal_result,
-                known_concepts=candidates if known_concept is not None else None,
-                bindings=supplied,
-                draft_only=draft_only,
-                task=task,
-                activate_for_current=not historical,
-            )
-
-    result = run_async(run())
+    if background:
+        result = application_action(
+            ctx,
+            "maintenance.request_annotation",
+            ref,
+            namespace=namespace,
+            task=task,
+            refresh=refresh,
+        )
+    else:
+        parameters: list[InputParameter] = []
+        if bindings is not None:
+            parameters.append(json_parameter("bindings", bindings))
+        if proposal is not None:
+            parameters.append(json_parameter("proposal", proposal))
+        result = application_action(
+            ctx,
+            "annotations.from_input",
+            ref,
+            scope=namespace,
+            namespace=namespace,
+            proposal=None,
+            proposal_result=proposal_result,
+            known_concepts=candidates if known_concept is not None else None,
+            bindings=None,
+            draft_only=draft_only,
+            task=task,
+            activate_for_current=not historical,
+            input_parameters=parameters,
+        )
     if background:
         from nous.jobs.contracts import JobRef
 
@@ -243,19 +244,17 @@ def annotate(
 
 @annotation_cli.command("read")
 def annotation_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).annotations.read(
-                ref, namespace=namespace
-            )
-
-    emit_annotation(ctx, run_async(run()))
+    result = application_action(ctx, "annotations.read", ref, scope=namespace, namespace=namespace)
+    emit_annotation(ctx, cast(AnnotationView, result))
 
 
 @annotation_cli.command("proposal")
 def proposal_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).annotations.read_proposal(ref)
+    result = application_action(ctx, "annotations.read_proposal", ref, scope=namespace)
+    emit_annotation(ctx, cast(AnnotationProposalView, result))
 
-    emit_annotation(ctx, run_async(run()))
+
+@annotation_cli.command("recover")
+def annotation_recover(ctx: typer.Context, ref: str, namespace: str | None = None):
+    result = application_action(ctx, "annotations.recover", ref, scope=namespace)
+    emit_annotation(ctx, cast(AnnotationProposalView | AnnotationView, result))

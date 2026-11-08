@@ -118,10 +118,10 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
         serde_json::from_slice(&std::fs::read(path.join("manifest.json"))?)?;
     for name in [
         "assets.msgpack",
-        "identities.msgpack",
         "math.msgpack",
         "timings.json",
         "lexical/meta.json",
+        "identities.msgpack",
     ] {
         ensure!(
             manifest.contains_key(name),

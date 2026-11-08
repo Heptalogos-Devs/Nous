@@ -25,7 +25,6 @@ class _Dependency(BaseModel):
 class _SavedResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal[1] = 1
     producer_key: str
     identity: str
     generated: dict[str, JsonValue]
@@ -34,8 +33,6 @@ class _SavedResponse(BaseModel):
     selected_inputs: SelectedInputs | None
     dependencies: tuple[_Dependency, ...]
     interpretation_contract: dict[str, JsonValue]
-    requested_inputs: tuple[InputGroup, ...] | None
-    requested_coverage: dict[str, JsonValue] | None
 
     @classmethod
     def capture(cls, pending: PendingResponse) -> _SavedResponse:
@@ -54,8 +51,6 @@ class _SavedResponse(BaseModel):
                 for ref in pending.dependencies
             ),
             interpretation_contract=pending.interpretation_contract,
-            requested_inputs=pending.requested_inputs,
-            requested_coverage=pending.requested_coverage,
         )
 
     def pending(self) -> PendingResponse:
@@ -79,8 +74,6 @@ class _SavedResponse(BaseModel):
             selected_inputs=self.selected_inputs,
             dependencies=dependencies,
             interpretation_contract=self.interpretation_contract,
-            requested_inputs=self.requested_inputs,
-            requested_coverage=self.requested_coverage,
         )
 
 

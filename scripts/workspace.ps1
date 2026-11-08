@@ -1,5 +1,5 @@
-# Dot-source this file: . ./scripts/workspace.ps1
-param([ValidateSet('init', 'status')][string]$Action = 'init')
+# Dot-source this file: . ./scripts/workspace.ps1 env
+param([ValidateSet('env', 'init', 'status')][string]$Action = 'init')
 $nousRepoRoot = Split-Path -Parent $PSScriptRoot
 $nousTempRoot = Join-Path $nousRepoRoot 'temp'
 $nousEnvPaths = @{
@@ -24,6 +24,7 @@ foreach ($nousBin in @($nousPythonScripts, (Join-Path $nousTempRoot 'tools/zvec-
 }
 $env:ZVEC_GREP_HOME = Join-Path $nousTempRoot 'tools/zvec-grep/runtime'
 $env:ZVEC_GREP_MODEL_CACHE = Join-Path $nousTempRoot 'tools/zvec-grep/models'
+if ($Action -eq 'env') { return }
 $nousUv = Get-Command uv -CommandType Application -ErrorAction Stop | Select-Object -First 1
 & $nousUv.Source run --no-project --with tomlkit python -B (Join-Path $PSScriptRoot 'workspace.py') $Action
 if ($LASTEXITCODE -ne 0) { throw '工作区初始化失败。' }

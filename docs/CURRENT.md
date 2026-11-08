@@ -22,7 +22,7 @@ Embedding 的 run、ensure、probe 和临时查询使用同一个批次执行器
 
 Wave 使用 Rust retrieval 的 Engine、冻结快照、观测、完整 CandidatePool、召回与读出；PyO3 负责数组、detach 和对象边界。VCP 数值基准为 `d5c019e`，具名 DTSC 保留。稀疏图、长出现序列、多路径和明确支持组均有实际消费；查询可使用临时编码或已采用的显式 VectorRef。
 
-文稿投影、来源、候选向量和概念关系按签名共享为不可变单元，快照清单引用同源资产及行布局，重开验证物理索引摘要。耗时准备与事务接纳／当前提升分开；查询借用和正式引用保护资产，CLI 提供显式清理。标题进入独立词项字段与语义投影，交付选择查询相关的精确原文范围。
+文稿投影、来源、候选向量和概念关系在数据库中按签名共享；未采用快照与其引用同事务持久化，重开验证组件并可重放准备。耗时准备与事务接纳／当前提升分开；查询借用和正式引用保护资产，CLI 提供显式清理。标题进入独立词项字段与语义投影，交付选择查询相关的精确原文范围。
 
 默认 Namespace 可直接保存 Note 和 Journal。`open_instance` 持有一个 Runtime，`runtime.cognition(namespace)` 提供绑定该域的程序内操作。正文、精确来源与不可变版本支持读取、局部精确编辑、全文替换、差异、历史、归档和恢复；并发修改按基准版本检查。Note 默认不参与长期召回，可显式设为 remember。手写记录、修订和 lexical 查询无需模型。
 
@@ -44,4 +44,4 @@ AfterWrite 由维护 owner 形成类型化计划，前台直接执行领域能�
 
 ## 后续范围
 
-任意历史知情视图、查询期时间门控、完整 Native 增量尚未接入；输入变化后的词项、ANN、VCP 组件仍按完整算法构建，完整签名相同时复用，精确旧快照和修订保持可读。下一条使用链为 WorkContext、Steward 与情境性反馈，见[后续认知发展](plans/cognitive-use-next.md)。HTTP/MCP、远程 SDK、完整 NousQL 以及 Ego、Social、Episode 等按各自真实能力推进。本轮实现与使用入口见[架构重构计划](plans/architecture-rework.md)及[操作说明](development/durable-cognition-walkthrough.md)。
+任意历史知情视图、查询期时间门控和完整 Native 增量尚未接入。普通文稿增删改在可复用基代时按稳定候选身份增量更新词项和 ANN 索引；VCP 数值资产仍按实际依赖重建，精确旧快照和修订保持可读。下一条使用链为 WorkContext、Steward 与情境性反馈，见[后续认知发展](plans/cognitive-use-next.md)。HTTP/MCP、远程 SDK、完整 NousQL 以及 Ego、Social、Episode 等按各自真实能力推进。本轮实现与使用入口见[架构重构计划](plans/architecture-rework.md)及[操作说明](development/durable-cognition-walkthrough.md)。

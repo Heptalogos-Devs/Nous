@@ -13,7 +13,6 @@ from model_support import configure_models, model_server
 from nous.content.contracts import OutputContent, SourceSelection
 from nous.media.derivatives import MediaDerivatives
 from nous.models.generation import GenerationRequest
-from nous.models.requests import PreparedGeneration
 from nous.runtime.bootstrap import open_instance
 
 
@@ -57,7 +56,7 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-@pytest.mark.parametrize("api", ["prepared", "produce", "run"])
+@pytest.mark.parametrize("api", ["produce", "run"])
 def test_nested_and_direct_same_key_do_not_invert_single_admission(
     tmp_path: Path, api: str
 ) -> None:
@@ -75,19 +74,10 @@ def test_nested_and_direct_same_key_do_not_invert_single_admission(
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("same-key source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
                 request = GenerationRequest("read", selected)
                 admitted, release = asyncio.Event(), asyncio.Event()
 
                 async def call() -> object:
-                    if api == "prepared":
-                        return await runtime.generation.produce_prepared(
-                            prepared, producer_key="shared"
-                        )
                     if api == "produce":
                         return await runtime.generation.produce(
                             request, computation_key="shared", snapshot=snapshot
@@ -123,7 +113,7 @@ def test_nested_and_direct_same_key_do_not_invert_single_admission(
         asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("api", ["prepared", "produce", "run"])
+@pytest.mark.parametrize("api", ["produce", "run"])
 def test_waiters_timeout_or_cancel_without_stalling_leader_or_other_keys(
     tmp_path: Path, api: str
 ) -> None:
@@ -144,35 +134,21 @@ def test_waiters_timeout_or_cancel_without_stalling_leader_or_other_keys(
                 source = await runtime.artifacts.ingest("timeout source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
 
-                async def prepare(question: str) -> PreparedGeneration:
-                    plan = await runtime.generation.prepare_input(
-                        "read", selected, snapshot, question=question
-                    )
-                    result = await runtime.generation.prepare_group(
-                        plan.frozen, plan.batches[0], snapshot, question=question
-                    )
-                    assert isinstance(result, PreparedGeneration)
-                    return result
+                slow = GenerationRequest("read", selected, question="HOLD_REQUEST")
+                fast = GenerationRequest("read", selected, question="fast request")
 
-                slow, fast = await prepare("HOLD_REQUEST"), await prepare("fast request")
-
-                async def call(prepared: PreparedGeneration, key: str) -> object:
-                    if api == "prepared":
-                        return await runtime.generation.produce_prepared(prepared, producer_key=key)
-                    request = GenerationRequest(
-                        "read", selected, question=prepared.compiled.reading.question
-                    )
+                async def call(request: GenerationRequest, key: str) -> object:
                     if api == "produce":
                         return await runtime.generation.produce(
                             request, computation_key=key, snapshot=snapshot
                         )
                     return await runtime.generation.run(request, snapshot, computation_key=key)
 
-                async def long_call(prepared: PreparedGeneration, key: str) -> object:
+                async def long_call(request: GenerationRequest, key: str) -> object:
                     async with runtime.execution.operation(
                         "long", snapshot, deadline=asyncio.get_running_loop().time() + 10
                     ):
-                        return await call(prepared, key)
+                        return await call(request, key)
 
                 leader = asyncio.create_task(long_call(slow, "shared"))
                 followers: list[asyncio.Task[object]] = []
@@ -277,20 +253,14 @@ def test_key_wait_and_execution_share_one_deadline(tmp_path: Path) -> None:
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("deadline source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input(
-                    "read", selected, snapshot, question="HOLD_REQUEST"
-                )
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot, question="HOLD_REQUEST"
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected, question="HOLD_REQUEST")
                 lock = asyncio.Lock()
                 runtime.generation._computation_locks["budget"] = lock  # pyright: ignore[reportPrivateUsage]
                 started = time.monotonic()
                 await lock.acquire()
                 held_by_test = True
                 task = asyncio.create_task(
-                    runtime.generation.produce_prepared(prepared, producer_key="budget")
+                    runtime.generation.produce(request, computation_key="budget", snapshot=snapshot)
                 )
                 try:
                     await asyncio.sleep(0.4)
@@ -338,21 +308,19 @@ def test_shutdown_cancels_key_waiter_and_waits_for_owned_work(tmp_path: Path) ->
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("shutdown source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input(
-                    "read", selected, snapshot, question="HOLD_REQUEST"
-                )
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot, question="HOLD_REQUEST"
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected, question="HOLD_REQUEST")
                 leader = asyncio.create_task(
-                    runtime.generation.produce_prepared(prepared, producer_key="shutdown")
+                    runtime.generation.produce(
+                        request, computation_key="shutdown", snapshot=snapshot
+                    )
                 )
                 follower = None
                 try:
                     assert await asyncio.to_thread(_Handler.slow_entered.wait, 5)
                     follower = asyncio.create_task(
-                        runtime.generation.produce_prepared(prepared, producer_key="shutdown")
+                        runtime.generation.produce(
+                            request, computation_key="shutdown", snapshot=snapshot
+                        )
                     )
                     await asyncio.sleep(0.1)
                     assert not follower.done()
@@ -450,13 +418,6 @@ def test_recovery_waiter_times_out_without_holding_a_slot(tmp_path: Path, kind: 
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("recover source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input(
-                    "read", selected, snapshot, question="HOLD_REQUEST"
-                )
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot, question="HOLD_REQUEST"
-                )
-                assert isinstance(prepared, PreparedGeneration)
                 request = GenerationRequest("read", selected, question="HOLD_REQUEST")
 
                 async def produce() -> object:
@@ -464,8 +425,8 @@ def test_recovery_waiter_times_out_without_holding_a_slot(tmp_path: Path, kind: 
                         "long", snapshot, deadline=asyncio.get_running_loop().time() + 10
                     ):
                         if kind == "resume_response":
-                            return await runtime.generation.produce_prepared(
-                                prepared, producer_key="recover"
+                            return await runtime.generation.produce(
+                                request, computation_key="recover", snapshot=snapshot
                             )
                         return await runtime.generation.run(
                             request, snapshot, computation_key="recover"
@@ -518,11 +479,7 @@ def test_cancelled_leader_keeps_key_until_successful_response_is_durable(tmp_pat
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("journal source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected)
                 files = runtime.generation.responses.journal.files
                 original = files._save  # pyright: ignore[reportPrivateUsage]
                 entered, release = threading.Event(), threading.Event()
@@ -534,14 +491,18 @@ def test_cancelled_leader_keeps_key_until_successful_response_is_durable(tmp_pat
 
                 with patch.object(files, "_save", side_effect=delayed):
                     leader = asyncio.create_task(
-                        runtime.generation.produce_prepared(prepared, producer_key="journal")
+                        runtime.generation.produce(
+                            request, computation_key="journal", snapshot=snapshot
+                        )
                     )
                     follower = None
                     try:
                         assert await asyncio.to_thread(entered.wait, 5)
                         leader.cancel()
                         follower = asyncio.create_task(
-                            runtime.generation.produce_prepared(prepared, producer_key="journal")
+                            runtime.generation.produce(
+                                request, computation_key="journal", snapshot=snapshot
+                            )
                         )
                         await asyncio.sleep(0.1)
                         assert not leader.done() and not follower.done()
@@ -559,8 +520,6 @@ def test_cancelled_leader_keeps_key_until_successful_response_is_durable(tmp_pat
 
 
 def test_nested_snapshot_conflict_is_rejected_before_key_wait(tmp_path: Path) -> None:
-    from dataclasses import replace
-
     from nous.common.errors import NousError
 
     instance = tmp_path / "instance"
@@ -572,21 +531,17 @@ def test_nested_snapshot_conflict_is_rejected_before_key_wait(tmp_path: Path) ->
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("snapshot source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected)
                 async with runtime.execution.operation("parent", snapshot):
                     await runtime.configuration.update({"logging.level": "INFO"})
-                    changed = replace(prepared, snapshot=runtime.configuration.snapshot)
+                    changed = runtime.configuration.snapshot
                     lock = asyncio.Lock()
                     runtime.generation._computation_locks["snapshot"] = lock  # pyright: ignore[reportPrivateUsage]
                     async with lock:
                         with pytest.raises(NousError) as failure:
                             await asyncio.wait_for(
-                                runtime.generation.produce_prepared(
-                                    changed, producer_key="snapshot"
+                                runtime.generation.produce(
+                                    request, computation_key="snapshot", snapshot=changed
                                 ),
                                 timeout=1,
                             )
@@ -675,11 +630,7 @@ def test_timeout_during_response_journal_preserves_success_for_next_waiter(tmp_p
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("timeout journal source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected)
                 files = runtime.generation.responses.journal.files
                 original = files._save  # pyright: ignore[reportPrivateUsage]
                 entered, release = threading.Event(), threading.Event()
@@ -693,14 +644,14 @@ def test_timeout_during_response_journal_preserves_success_for_next_waiter(tmp_p
                     async with runtime.execution.operation(
                         "long", snapshot, deadline=asyncio.get_running_loop().time() + 5
                     ):
-                        return await runtime.generation.produce_prepared(
-                            prepared, producer_key="timeout-journal"
+                        return await runtime.generation.produce(
+                            request, computation_key="timeout-journal", snapshot=snapshot
                         )
 
                 with patch.object(files, "_save", side_effect=delayed):
                     leader = asyncio.create_task(
-                        runtime.generation.produce_prepared(
-                            prepared, producer_key="timeout-journal"
+                        runtime.generation.produce(
+                            request, computation_key="timeout-journal", snapshot=snapshot
                         )
                     )
                     next_call = None

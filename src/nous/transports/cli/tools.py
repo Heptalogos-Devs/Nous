@@ -9,18 +9,15 @@ from typing import Annotated, Literal, cast
 
 import click
 import typer
-from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
-from nous.configuration import Configuration
-from nous.content.contracts import ContentReadView, ProcessingResult, SourceSelection
+from nous.content.contracts import ContentReadView, InputSpec, SourceSelection, TextInput
 from nous.models.prompts import PromptCatalog
-from nous.models.requests import PreparedGeneration
-from nous.runtime.bootstrap import Runtime, open_instance, task_catalog
+from nous.runtime.bootstrap import task_catalog
 
-from . import emit, emit_content_view, options, run_async
-from .input_files import input_bytes
+from . import application_action, emit, emit_content_view, options
+from .input_files import json_parameter
 from .wave import wave_cli
 
 tools_cli = typer.Typer(help="模型、Prompt、媒体与内容工具", no_args_is_help=True)
@@ -42,14 +39,20 @@ for group, name in (
     tools_cli.add_typer(group, name=name)
 
 
-def _source(value: str) -> Path | str:
-    return value if identifier_type(value) == "art" else _client_path(value)
+def _input(value: str) -> InputSpec:
+    return (
+        InputSpec(kind="artifact", artifact=value)
+        if identifier_type(value) == "art"
+        else InputSpec(kind="file", path=value)
+    )
 
 
-def _schema(path: Path | None) -> dict[str, JsonValue] | None:
-    if path is None:
-        return None
-    return TypeAdapter(dict[str, JsonValue]).validate_json(input_bytes(path))
+def _text_input(value: str) -> TextInput:
+    return (
+        TextInput(kind="artifact", artifact=value)
+        if identifier_type(value) == "art"
+        else TextInput(kind="file", path=value)
+    )
 
 
 def _pages(value: str | None) -> tuple[int, ...]:
@@ -84,12 +87,6 @@ def _selection(pages: str | None, start: float | None, end: float | None) -> Sou
     )
 
 
-async def _result(
-    runtime: Runtime, identifier: str, *, sources: bool = True, details: bool = False
-) -> dict[str, object]:
-    return await runtime.results.read_view(identifier, sources=sources, details=details)
-
-
 def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
     """Present named bodies and readable references; machine output keeps the complete value."""
     if options(ctx).json_mode:
@@ -114,22 +111,12 @@ def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
 
 @model_cli.command("list")
 def model_list(ctx: typer.Context) -> None:
-    settings = Configuration(options(ctx).locator.config_file).snapshot.values
-    emit(
-        ctx,
-        {"models": {key: value.model_dump(mode="json") for key, value in settings.models.items()}},
-    )
+    emit(ctx, cast(dict[str, object], application_action(ctx, "configuration.inspect", "models")))
 
 
 @model_cli.command("discover")
 def model_discover(ctx: typer.Context, provider: str) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("model.discover") as context:
-                names = await runtime.models.discover(provider, context.settings)
-                return {"provider": provider, "models": names}
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "tools.model_discover", provider)))
 
 
 @model_cli.command("probe")
@@ -140,19 +127,7 @@ def model_probe(
         Path | None, typer.Option("--input", help="用于检查的真实媒体或文字文件")
     ] = None,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            outcome = await runtime.generation.probe(model, input, runtime.configuration.snapshot)
-            return {
-                "model": model,
-                "checked": "supplied_input" if input else "text",
-                "results": [
-                    await _result(runtime, result.ref.identifier) for result in outcome.results
-                ],
-                "coverage": outcome.coverage,
-            }
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "tools.model_probe", model, input)))
 
 
 @model_cli.command("run")
@@ -179,62 +154,48 @@ def model_run(
     without_audio: Annotated[bool, typer.Option()] = False,
 ) -> None:
     delivered = False
-    schema_value: dict[str, JsonValue] | None = None
 
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
+    def event(name: str, value: object) -> None:
+        nonlocal delivered
+        if name == "prepared":
+            typer.echo(json.dumps(value, ensure_ascii=False), err=True)
+        elif name == "delta" and isinstance(value, str):
+            delivered = True
+            if options(ctx).json_mode:
+                typer.echo(json.dumps({"event": "delta", "text": value}, ensure_ascii=False))
+            else:
+                typer.echo(value, nl=False)
+        elif name == "completed" and isinstance(value, str):
+            if options(ctx).json_mode:
+                typer.echo(json.dumps({"event": "completed", "result": value}, ensure_ascii=False))
+            else:
+                typer.echo(f"\n结果 / Result: {value}", err=True)
+        else:
+            raise ValueError("Unexpected model event")
 
-            def show(prepared: PreparedGeneration) -> None:
-                typer.echo(json.dumps(prepared.to_dict(), ensure_ascii=False), err=True)
-
-            def delta(value: str) -> None:
-                nonlocal delivered
-                delivered = True
-                if options(ctx).json_mode:
-                    typer.echo(json.dumps({"event": "delta", "text": value}, ensure_ascii=False))
-                else:
-                    typer.echo(value, nl=False)
-
-            def completed(result: ProcessingResult) -> None:
-                if options(ctx).json_mode:
-                    typer.echo(
-                        json.dumps(
-                            {"event": "completed", "result": result.ref.identifier},
-                            ensure_ascii=False,
-                        )
-                    )
-                else:
-                    typer.echo(f"\n结果 / Result: {result.ref.identifier}", err=True)
-
-            outcome = await runtime.generation.run_input(
+    try:
+        value = cast(
+            dict[str, object],
+            application_action(
+                ctx,
+                "tools.model_run",
                 task,
-                [_source(item) for item in input or ()],
-                runtime.configuration.snapshot,
-                question=question,
-                instructions=instructions,
-                schema=schema_value,
+                [_input(item) for item in input or ()],
+                text or (),
+                question,
+                instructions,
+                scope=None,
+                schema=None,
                 document_mode=document_mode,
                 without_audio=without_audio,
                 per_batch=per_batch,
-                texts=text or (),
-                on_prepared=show if show_request else None,
-                on_delta=delta if stream else None,
-                on_completed=completed if stream else None,
-            )
-            return {
-                "artifacts": [a.ref.identifier for a in outcome.artifacts],
-                "results": [
-                    await _result(
-                        runtime, result.ref.identifier, details=details or options(ctx).json_mode
-                    )
-                    for result in outcome.results
-                ],
-                "coverage": outcome.coverage,
-            }
-
-    try:
-        schema_value = _schema(schema)
-        value = run_async(run())
+                details=details or options(ctx).json_mode,
+                stream=stream,
+                show_request=show_request,
+                on_event=event if stream or show_request else None,
+                input_parameters=(json_parameter("schema", schema),) if schema else (),
+            ),
+        )
     except (NousError, OSError, ValueError) as error:
         if stream and options(ctx).json_mode:
             failure = (
@@ -274,22 +235,12 @@ def model_recover(
 ) -> None:
     """恢复并保存一个已经成功生成的模型结果。"""
 
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("model.recover_output") as context:
-                result = await runtime.generation.recover_result(producer_key, context.settings)
-                return {
-                    "results": [
-                        await _result(
-                            runtime,
-                            result.ref.identifier,
-                            details=details or options(ctx).json_mode,
-                        )
-                    ],
-                    "coverage": result.coverage,
-                }
-
-    value = run_async(run())
+    value = cast(
+        dict[str, object],
+        application_action(
+            ctx, "tools.model_recover", producer_key, details or options(ctx).json_mode
+        ),
+    )
     if details:
         emit(ctx, value)
     else:
@@ -323,14 +274,8 @@ def prompt_describe(
     prompt: str,
     task: Annotated[str | None, typer.Option("--task")] = None,
 ) -> None:
-    selected = options(ctx)
-    snapshot = Configuration(selected.locator.config_file).snapshot
-    emit(
-        ctx,
-        PromptCatalog(selected.locator.directory, task_catalog())
-        .describe(prompt, task_assignment=task, snapshot=snapshot)
-        .to_dict(),
-    )
+    result = application_action(ctx, "configuration.inspect", "prompt", prompt, task=task)
+    emit(ctx, cast(dict[str, object], result))
 
 
 @prompt_cli.command("diff")
@@ -363,11 +308,9 @@ def prompt_edit(
     if from_dir is not None:
         target = catalog.import_directory(prompt, from_dir)
     else:
-        target = catalog.editable_directory(
-            prompt, snapshot=Configuration(options(ctx).locator.config_file).snapshot
-        )
-        resource = catalog.get(prompt)
-        for filename in ("CONTEXT.md", "prompt.toml", *resource.templates):
+        prepared = cast(dict[str, object], application_action(ctx, "prompt.prepare_edit", prompt))
+        target = Path(str(prepared["directory"]))
+        for filename in ("CONTEXT.md", "prompt.toml", *cast(list[str], prepared["templates"])):
             click.edit(filename=str(target / filename))
     emit(ctx, {"directory": str(target), **catalog.validate(prompt)})
 
@@ -376,7 +319,7 @@ def prompt_edit(
 def prompt_import(ctx: typer.Context, prompt: str, source: Path) -> None:
     catalog = PromptCatalog(options(ctx).locator.directory, task_catalog())
     target = catalog.import_directory(prompt, source)
-    catalog.write_context(prompt, snapshot=Configuration(options(ctx).locator.config_file).snapshot)
+    application_action(ctx, "prompt.write_context", prompt)
     emit(ctx, {"directory": str(target), **catalog.validate(prompt)})
 
 
@@ -392,98 +335,44 @@ def prompt_preview(
     task: Annotated[str | None, typer.Option("--task")] = None,
     per_batch: Annotated[bool, typer.Option("--per-batch")] = False,
 ) -> None:
-    schema_value = _schema(schema)
-
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return dict(
-                await runtime.generation.preview(
-                    prompt,
-                    [_source(item) for item in input or ()],
-                    runtime.configuration.snapshot,
-                    texts=text or (),
-                    question=question,
-                    instructions=instructions,
-                    schema=schema_value,
-                    task=task,
-                    per_batch=per_batch,
-                )
-            )
-
-    emit(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "tools.prompt_preview",
+        prompt,
+        [_input(item) for item in input or ()],
+        text or (),
+        question,
+        instructions,
+        schema=None,
+        task=task,
+        per_batch=per_batch,
+        input_parameters=(json_parameter("schema", schema),) if schema else (),
+    )
+    emit(ctx, cast(dict[str, object], result))
 
 
 @content_cli.command("add")
 def content_add(ctx: typer.Context, input: Path) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("content.add"):
-                return (await runtime.artifacts.ingest(input)).model_dump(mode="json")
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "tools.content_add", input)))
 
 
 @content_cli.command("read")
 def content_read(ctx: typer.Context, ref: str) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("content.read"):
-                artifact = await runtime.artifacts.get(ref)
-                blob = await runtime.artifacts.blob(ref)
-                value: dict[str, object] = {
-                    "artifact": artifact.model_dump(mode="json"),
-                    "content": blob.model_dump(mode="json"),
-                }
-                if (
-                    artifact.media_type.startswith("text/")
-                    or artifact.media_type == "application/json"
-                ):
-                    value["text"] = await runtime.artifacts.read_text(ref)
-                else:
-                    value["export_hint"] = (
-                        f'nous tools content export "{artifact.ref.identifier}" --output PATH'
-                    )
-                return value
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "tools.content_read", ref)))
 
 
 @content_cli.command("export")
 def content_export(
     ctx: typer.Context, ref: str, output: Annotated[Path, typer.Option("--output")]
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("content.export"):
-                from nous.runtime.local_context import current_call
-
-                call = current_call.get()
-                if call is None:
-                    exported = await runtime.artifacts.export(ref, output)
-                else:
-                    blob = await runtime.artifacts.blob(ref)
-                    async with runtime.artifacts.borrow_local(ref) as source:
-                        await call.export_file(source, output, blob.digest, blob.byte_length)
-                    exported = output
-                return {"artifact": ref, "output": str(exported)}
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "tools.content_export", ref, output)))
 
 
 @media_cli.command("inspect")
 def media_inspect(ctx: typer.Context, input: str) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("media.inspect") as context:
-                artifact = (
-                    await runtime.artifacts.get(input)
-                    if identifier_type(input) == "art"
-                    else await runtime.artifacts.ingest(_client_path(input))
-                )
-                info = await runtime.media.preparer.inspect(artifact, context.settings.values.media)
-                return {"artifact": artifact.model_dump(mode="json"), "media": info}
-
-    emit(ctx, run_async(run()))
+    emit(
+        ctx, cast(dict[str, object], application_action(ctx, "tools.media_inspect", _input(input)))
+    )
 
 
 @media_cli.command("analyze")
@@ -507,38 +396,40 @@ def media_analyze(
     details: Annotated[bool, typer.Option("--details")] = False,
 ) -> None:
     selected = _selection(pages, start, end)
-    schema_value = _schema(schema)
+    value = cast(
+        dict[str, object],
+        application_action(
+            ctx,
+            "tools.media_analyze",
+            _input(input),
+            strategy,
+            selection=selected,
+            question=question,
+            instructions=instructions,
+            task=task,
+            description_task=description_task,
+            document_mode=document_mode,
+            without_audio=without_audio,
+            description_result=description_result,
+            schema=None,
+            details=details or options(ctx).json_mode,
+            input_parameters=(json_parameter("schema", schema),) if schema else (),
+        ),
+    )
+    if details:
+        emit(ctx, value)
+    else:
+        _emit_results(ctx, value)
 
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("tools.media.analyze") as context:
-                outcome = await runtime.media.analyze(
-                    _source(input),
-                    strategy,
-                    context.settings,
-                    selection=selected,
-                    question=question,
-                    instructions=instructions,
-                    task=task,
-                    description_task=description_task,
-                    document_mode=document_mode,
-                    without_audio=without_audio,
-                    description_result=description_result,
-                    schema=schema_value,
-                )
-                return {
-                    "artifact": outcome.artifact.ref.identifier,
-                    "coverage": outcome.coverage,
-                    "descriptions": [item.ref.identifier for item in outcome.descriptions],
-                    "results": [
-                        await _result(
-                            runtime, item.ref.identifier, details=details or options(ctx).json_mode
-                        )
-                        for item in outcome.batches
-                    ],
-                }
 
-    value = run_async(run())
+@media_cli.command("recover")
+def media_recover(
+    ctx: typer.Context, ref: str, details: Annotated[bool, typer.Option()] = False
+) -> None:
+    value = cast(
+        dict[str, object],
+        application_action(ctx, "tools.media_recover", ref, details or options(ctx).json_mode),
+    )
     if details:
         emit(ctx, value)
     else:
@@ -552,14 +443,12 @@ def result_read(
     sources: Annotated[bool, typer.Option()] = False,
     details: Annotated[bool, typer.Option()] = False,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("result.read"):
-                return await _result(
-                    runtime, ref, sources=sources, details=details or options(ctx).json_mode
-                )
-
-    value = run_async(run())
+    value = cast(
+        dict[str, object],
+        application_action(
+            ctx, "tools.result_read", ref, sources, details or options(ctx).json_mode
+        ),
+    )
     if details:
         emit(ctx, value)
     else:
@@ -573,20 +462,12 @@ def embedding_probe(
     input: Annotated[list[str] | None, typer.Option("--input")] = None,
     text: Annotated[list[str] | None, typer.Option("--text")] = None,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            result = await runtime.embedding.probe(
-                model, [str(_source(item)) for item in input or ()], text or ()
-            )
-            return {
-                "model": model,
-                "dimensions": result.dimensions,
-                "inputs": len(result.vectors),
-                "producer": result.producer,
-                "usage": result.usage,
-            }
-
-    emit(ctx, run_async(run()))
+    sources = [
+        *(_text_input(item) for item in input or ()),
+        *(TextInput(kind="text", text=item) for item in text or ()),
+    ]
+    value = application_action(ctx, "tools.embedding_probe", model, sources)
+    emit(ctx, cast(dict[str, object], value))
 
 
 @embedding_cli.command("run")
@@ -598,14 +479,14 @@ def embedding_run(
     text: Annotated[list[str] | None, typer.Option("--text")] = None,
     details: Annotated[bool, typer.Option("--details")] = False,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            result = await runtime.embedding.run(
-                space, purpose, [str(_source(item)) for item in input or ()], text or ()
-            )
-            return result.model_dump(mode="json")
-
-    value = run_async(run())
+    sources = [
+        *(_text_input(item) for item in input or ()),
+        *(TextInput(kind="text", text=item) for item in text or ()),
+    ]
+    value = cast(
+        dict[str, object],
+        application_action(ctx, "tools.embedding_run", space, purpose, sources),
+    )
     if options(ctx).json_mode or details:
         emit(ctx, value)
         return
@@ -614,11 +495,3 @@ def embedding_run(
     typer.echo(f"{space}: {len(rows)} vectors, {definition['dimensions']} dimensions ({purpose})")
     for ref in cast(list[dict[str, str]], value["results"]):
         typer.echo(ref["identifier"])
-
-
-def _client_path(value: str) -> Path:
-    from nous.runtime.local_context import current_call
-
-    path = Path(value)
-    call = current_call.get()
-    return call.cwd / path if call is not None and not path.is_absolute() else path

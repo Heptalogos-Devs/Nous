@@ -37,9 +37,9 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 CorpusView(namespace_id, generation, profile,
            documents[exact refs], annotations, concept_revisions,
            source_sequences, support_groups, candidate_specs)
-Wave.prepare_build(view, resolved_profile) -> PreparedSnapshot
-Wave.accept_in(tx, prepared) -> SnapshotDescriptor
-Wave.promote_in(tx, snapshot_ref) -> None
+async with Wave.prepare_build(view, resolved_profile) as prepared:
+    Wave.accept_in(tx, prepared) -> SnapshotDescriptor
+    Wave.promote_in(tx, snapshot_ref) -> None
 WaveOperations.query(WaveQuery) -> ordered groups + exact hits
 ```
 

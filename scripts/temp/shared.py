@@ -25,5 +25,5 @@ def command(args: Sequence[str]) -> bytes:
     try:
         result = subprocess.run(args, capture_output=True, check=True, timeout=20)
         return result.stdout
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         raise Unsafe(f"无法完成 {args[0]} 检查，保留候选。") from None

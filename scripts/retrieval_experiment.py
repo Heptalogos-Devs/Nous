@@ -330,11 +330,22 @@ async def run(args: argparse.Namespace) -> None:
             path = args.output / "queries.json"
             results: list[SearchResult]
             pending: list[tuple[int, SearchResult]]
+
+            def selected(entry: SearchResult) -> bool:
+                return (
+                    not args.contains
+                    or any(text.casefold() in entry.question.casefold() for text in args.contains)
+                ) and (not args.mode or entry.mode in args.mode)
+
             if args.retry_failed:
                 results = TypeAdapter(list[SearchResult]).validate_json(
                     path.read_text(encoding="utf-8")
                 )
-                pending = [(index, entry) for index, entry in enumerate(results) if entry.error]
+                pending = [
+                    (index, entry)
+                    for index, entry in enumerate(results)
+                    if entry.error and selected(entry)
+                ]
             else:
                 results = []
                 pending = []
@@ -343,8 +354,12 @@ async def run(args: argparse.Namespace) -> None:
                         entry = SearchResult(
                             question=case.question, mode=mode, top_k=case.top_k, error="尚未执行"
                         )
+                        if not selected(entry):
+                            continue
                         pending.append((len(results), entry))
                         results.append(entry)
+                if not results:
+                    raise ValueError("没有与筛选条件匹配的查询。")
                 save_json(path, [result.model_dump(mode="json") for result in results])
                 write_queries(args.output, results)
             failures = 0
@@ -393,6 +408,17 @@ def main() -> None:
     adopt.add_argument("--annotate", action="store_true")
     query = commands.add_parser("query", help="Run configured questions and save full results")
     query.add_argument("--retry-failed", action="store_true", help="Retry only failed queries")
+    query.add_argument(
+        "--contains",
+        action="append",
+        help="Only questions containing this text; repeat for alternatives",
+    )
+    query.add_argument(
+        "--mode",
+        action="append",
+        choices=("auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"),
+        help="Only this mode from the plan; repeat for alternatives",
+    )
     asyncio.run(run(parser.parse_args()))
 
 

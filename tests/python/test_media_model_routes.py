@@ -1,10 +1,8 @@
 """Media route selection through the SDK and CLI."""
 
 import asyncio
-import base64
 import json
 import shutil
-import subprocess
 import wave
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -12,7 +10,6 @@ from typing import cast
 
 import pytest
 from model_support import configure_models, model_cli, model_server
-from pydantic import JsonValue, TypeAdapter
 
 from nous.application.configuration import open_configuration_operations
 
@@ -412,57 +409,31 @@ def test_media_stages_share_routes_and_reuse_completed_description(tmp_path: Pat
     assert result["coverage"] == outcome["coverage"]["actual"][0]
 
 
-@pytest.mark.parametrize("without_audio", [False, True])
-def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
-    tmp_path: Path, without_audio: bool
-) -> None:
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        pytest.skip("Video interval preparation needs FFmpeg and ffprobe")
-    video = tmp_path / "source.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=blue:s=32x32:r=20",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=16000",
-            "-t",
-            "2",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            str(video),
-        ],
-        check=True,
-    )
-    opaque_video = tmp_path / "source-without-extension"
-    video.rename(opaque_video)
-    video = opaque_video
-    submissions: list[dict[str, JsonValue]] = []
+def test_media_batch_recovery_reuses_saved_responses_after_reopen(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from nous.common.operations import exception_context
+    from nous.content.contracts import ResultRef
+    from nous.models.generation import ProducedTask
+    from nous.runtime.bootstrap import open_instance
+
+    calls: list[object] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            request = TypeAdapter(dict[str, JsonValue]).validate_json(
-                self.rfile.read(int(self.headers["Content-Length"]))
-            )
-            submissions.append(request)
+            calls.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             payload = json.dumps(
                 {
-                    "id": "video-response",
-                    "created": 1700000000,
+                    "id": "media-batch",
                     "object": "chat.completion",
-                    "model": request["model"],
+                    "created": 1700000000,
+                    "model": "local-model",
                     "choices": [
                         {
                             "index": 0,
-                            "message": {"role": "assistant", "content": "Video received."},
+                            "message": {"role": "assistant", "content": "Page description."},
                             "finish_reason": "stop",
                         }
                     ],
@@ -477,82 +448,60 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         def log_message(self, format: str, *args: object) -> None:
             pass
 
-    instance = tmp_path / "instance"
+    pdf = tmp_path / "pages.pdf"
+    page = Image.new("RGB", (20, 20), "red")
+    page.save(pdf, save_all=True, append_images=[Image.new("RGB", (20, 20), "blue")])
+    instance = tmp_path / "media-recovery"
     with model_server(Handler) as server:
         configure_models(instance, server)
 
-        async def configure() -> None:
+        async def scenario() -> None:
             async with open_configuration_operations(instance, environment={}) as configuration:
                 await configuration.update(
                     {
                         "models.reader.capabilities": ["text", "image"],
                         "models.reader.input_formats": ["text/plain", "image/png"],
-                        "localization.language": "en" if without_audio else "zh-CN",
-                        "models.video": {
-                            "provider": "local",
-                            "model_name": "local-video",
-                            "capabilities": ["text", "video"],
-                            "input_formats": ["text/plain", "video/mp4"],
-                        },
-                        "tasks.read.fallback": [{"model": "video"}],
+                        "media.pdf.max_pages_per_request": 1,
                     }
                 )
+            async with open_instance(instance, environment={}) as runtime:
+                original = runtime.generation.prepare_adoption
+                count = 0
 
-        asyncio.run(configure())
-        response = model_cli(
-            instance,
-            "tools",
-            "media",
-            "analyze",
-            str(video),
-            "--strategy",
-            "description_only",
-            "--description-task",
-            "read",
-            "--from",
-            "0.25",
-            "--to",
-            "0.75",
-            *(["--without-audio"] if without_audio else []),
-        )
-        assert response.returncode == 0, (response.stdout, response.stderr)
-    result = json.loads(response.stdout)["results"][0]
-    assert len(submissions) == 1
-    assert submissions[0]["model"] == "local-video"
-    messages = TypeAdapter(list[dict[str, JsonValue]]).validate_python(submissions[0]["messages"])
-    parts = [
-        part
-        for message in messages
-        if isinstance(message["content"], list)
-        for part in TypeAdapter(list[dict[str, JsonValue]]).validate_python(message["content"])
-    ]
-    binary = [part for part in parts if part["type"] != "text"]
-    source_text = "\n".join(str(part["text"]) for part in parts if part["type"] == "text")
-    if without_audio:
-        assert "Source Video duration: approximately 2 seconds." in source_text
-        assert "Provided Video: source interval 0.25–0.75 seconds." in source_text
-        assert "The source audio was excluded from the video." in source_text
-    else:
-        assert "源视频时长约 2 秒。" in source_text
-        assert "本次提供源文件第 0.25–0.75 秒的视频。" in source_text
-        assert "移除源音轨" not in source_text
-    assert [part["type"] for part in binary] == ["video_url"]
-    video_url = TypeAdapter(dict[str, JsonValue]).validate_python(binary[0]["video_url"])
-    payload = TypeAdapter(str).validate_python(video_url["url"])
-    assert payload.startswith("data:video/mp4;base64,")
-    sent = tmp_path / "sent.mp4"
-    sent.write_bytes(base64.b64decode(payload.split(",", 1)[1]))
-    info = json.loads(
-        subprocess.check_output(
-            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(sent)]
-        )
-    )
-    assert abs(float(info["format"]["duration"]) - 0.5) < 0.1
-    assert any(stream["codec_type"] == "audio" for stream in info["streams"]) is not without_audio
-    origin = result["inputs"][0]["parts"][0]["origins"][0]["origin"]
-    assert origin["selection"]["start_ms"] == 250 and origin["selection"]["end_ms"] == 750
-    assert result["coverage"]["audio"] == ("excluded" if without_audio else "included")
-    assert "data:video" not in response.stdout
+                async def fail_second(produced: ProducedTask, *, producer_key: str | None = None):
+                    nonlocal count
+                    count += 1
+                    if count == 2:
+                        raise OSError("injected adoption failure")
+                    return await original(produced, producer_key=producer_key)
+
+                with patch.object(runtime.generation, "prepare_adoption", side_effect=fail_second):
+                    with pytest.raises(OSError) as failure:
+                        await runtime.media.analyze(
+                            pdf,
+                            "description_only",
+                            runtime.configuration.snapshot,
+                            description_task="read",
+                        )
+                ref = ResultRef.model_validate(
+                    exception_context(failure.value)["media_request_ref"]
+                )
+                assert len(calls) == 2
+            async with open_instance(instance, environment={}) as runtime:
+                with patch.object(
+                    runtime.generation,
+                    "load_language_task",
+                    side_effect=AssertionError("provider lookup"),
+                ):
+                    recovered = await runtime.media.recover(ref, runtime.configuration.snapshot)
+                    repeated = await runtime.media.recover(ref, runtime.configuration.snapshot)
+                assert [result.ref for result in recovered.batches] == [
+                    result.ref for result in repeated.batches
+                ]
+                assert len(recovered.batches) == 2
+                assert len(calls) == 2
+
+        asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("entry", ["model", "media"])

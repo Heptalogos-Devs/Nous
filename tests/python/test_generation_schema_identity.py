@@ -16,7 +16,6 @@ from pydantic import JsonValue, TypeAdapter
 from nous.common.errors import NousError
 from nous.content.contracts import SelectedInputs
 from nous.models.generation import GenerationRequest
-from nous.models.requests import PreparedGeneration
 from nous.runtime.bootstrap import open_instance
 
 
@@ -401,41 +400,6 @@ def test_pending_response_checks_full_schema_after_reopen(tmp_path: Path, api: s
                 assert TypeAdapter(dict[str, JsonValue]).validate_json(output)["other"] == (
                     "Return Alice's answer"
                 )
-                assert len(SchemaHandler.requests) == 1
-
-        asyncio.run(scenario())
-
-
-def test_prepared_schema_identity_preserves_field_order(tmp_path: Path) -> None:
-    reset_handler()
-    instance = tmp_path / "instance"
-    with model_server(SchemaHandler) as server:
-        configure_models(instance, server, "native")
-
-        async def scenario() -> None:
-            async with open_instance(instance, environment={}) as runtime:
-                snapshot = runtime.configuration.snapshot
-                source = await runtime.artifacts.ingest("Source")
-                selected = await runtime.generation.accept_inputs(source, snapshot)
-
-                async def prepare(schema: dict[str, JsonValue]) -> PreparedGeneration:
-                    plan = await runtime.generation.prepare_input(
-                        "read", selected, snapshot, schema=schema
-                    )
-                    result = await runtime.generation.prepare_group(
-                        plan.frozen, plan.batches[0], snapshot, schema=schema
-                    )
-                    assert isinstance(result, PreparedGeneration)
-                    return result
-
-                original = await prepare(schema_for("Alice"))
-                reordered = await prepare(schema_for("Alice", reverse=True))
-                changed = await prepare(schema_for("Bob"))
-                await runtime.generation.produce_prepared(original, producer_key="prepared")
-                for value in (reordered, changed):
-                    with pytest.raises(NousError) as conflict:
-                        await runtime.generation.produce_prepared(value, producer_key="prepared")
-                    assert conflict.value.code == "content.producer_conflict"
                 assert len(SchemaHandler.requests) == 1
 
         asyncio.run(scenario())

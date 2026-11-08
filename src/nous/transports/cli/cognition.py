@@ -1,14 +1,13 @@
 """User-facing written record commands call the shared cognitive owners."""
 
 import json
-import sys
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import typer
-from pydantic import TypeAdapter
 
-from nous.cognition.contracts import NamespaceRef, RecordView
+from nous.application.inputs import InputParameter
+from nous.cognition.contracts import Namespace, RecordView, RevisionSummary
 from nous.cognition.retrieval.contracts import Mode
 from nous.cognition.writing.contracts import (
     AfterWrite,
@@ -18,12 +17,10 @@ from nous.cognition.writing.contracts import (
     SourceRequest,
 )
 from nous.common.errors import NousError
-from nous.content.edits import TextChange
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 
-from . import cli, emit_content_view, language_for, options, run_async
-from .input_files import input_bytes
+from . import application_action, cli, emit_content_view, language_for, options
+from .input_files import body_parameter, json_parameter
 
 note_cli = typer.Typer(help="Notes", no_args_is_help=True)
 journal_cli = typer.Typer(help="Journals", no_args_is_help=True)
@@ -31,21 +28,6 @@ namespace_cli = typer.Typer(help="Namespaces", no_args_is_help=True)
 cli.add_typer(note_cli, name="note")
 cli.add_typer(journal_cli, name="journal")
 cli.add_typer(namespace_cli, name="namespace")
-
-
-def read_body(text: str | None, file: Path | None) -> str:
-    stdin = not sys.stdin.isatty()
-    if text is not None and file is not None:
-        raise NousError("input.conflicting_body", "Choose one of --text, --file or stdin")
-    if stdin and (text is not None or file is not None) and sys.stdin.read():
-        raise NousError("input.conflicting_body", "Choose one of --text, --file or stdin")
-    if text is not None:
-        return text
-    if file is not None:
-        return input_bytes(file).decode("utf-8")
-    if stdin:
-        return sys.stdin.read()
-    raise NousError("input.body_required", "Provide --text, --file or stdin")
 
 
 def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | RecordOutcome) -> None:
@@ -112,10 +94,10 @@ def source_requests(
     )
 
 
-async def _create(
+def _create(
     ctx: typer.Context,
     namespace: str | None,
-    body: str,
+    body: InputParameter,
     title: str | None,
     kind: str,
     remember: bool | None = None,
@@ -129,24 +111,31 @@ async def _create(
     inline: bool = False,
     annotate: bool = False,
 ) -> RecordOutcome:
-    async with open_instance(options(ctx).locator) as runtime:
-        records = (await runtime.cognition(namespace)).records
-        requests = source_requests(source, current_basis, inspiration)
-        if kind == "note":
-            return await records.add_note(
-                body,
-                title=title,
-                remember=remember,
-                source_requests=requests,
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-        return await records.create_journal(
-            body,
+    requests = source_requests(source, current_basis, inspiration)
+    after = after_write(refresh, refresh_mode, background, inline, annotate)
+    if kind == "note":
+        result = application_action(
+            ctx,
+            "records.add_note",
+            scope=namespace,
+            title=title,
+            remember=remember,
+            source_requests=requests,
+            after=after,
+            input_parameters=(body,),
+        )
+    else:
+        result = application_action(
+            ctx,
+            "records.create_journal",
+            scope=namespace,
             title=title,
             purpose=purpose,
             source_requests=requests,
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after,
+            input_parameters=(body,),
         )
+    return cast(RecordOutcome, result)
 
 
 @note_cli.command("add")
@@ -173,23 +162,21 @@ def note_add(
 ):
     emit_record(
         ctx,
-        run_async(
-            _create(
-                ctx,
-                namespace,
-                read_body(text, file),
-                title,
-                "note",
-                remember,
-                source=source,
-                current_basis=current_basis,
-                inspiration=inspiration,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
-                background=background,
-                inline=inline,
-                annotate=annotate,
-            )
+        _create(
+            ctx,
+            namespace,
+            body_parameter("body", text, file),
+            title,
+            "note",
+            remember,
+            source=source,
+            current_basis=current_basis,
+            inspiration=inspiration,
+            refresh=refresh,
+            refresh_mode=refresh_mode,
+            background=background,
+            inline=inline,
+            annotate=annotate,
         ),
     )
 
@@ -218,23 +205,21 @@ def journal_create(
 ):
     emit_record(
         ctx,
-        run_async(
-            _create(
-                ctx,
-                namespace,
-                read_body(text, file),
-                title,
-                "journal",
-                purpose=purpose,
-                source=source,
-                current_basis=current_basis,
-                inspiration=inspiration,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
-                background=background,
-                inline=inline,
-                annotate=annotate,
-            )
+        _create(
+            ctx,
+            namespace,
+            body_parameter("body", text, file),
+            title,
+            "journal",
+            purpose=purpose,
+            source=source,
+            current_basis=current_basis,
+            inspiration=inspiration,
+            refresh=refresh,
+            refresh_mode=refresh_mode,
+            background=background,
+            inline=inline,
+            annotate=annotate,
         ),
     )
 
@@ -247,15 +232,15 @@ def read_record(
     sources: bool = False,
     blocks: str | None = None,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.read(
-                ref,
-                sources=sources,
-                blocks=tuple(blocks.split(",")) if blocks else (),
-            )
-
-    emit_record(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "records.read",
+        ref,
+        scope=namespace,
+        sources=sources,
+        blocks=tuple(blocks.split(",")) if blocks else (),
+    )
+    emit_record(ctx, cast(RecordView, result))
 
 
 @journal_cli.command("replace")
@@ -287,43 +272,35 @@ def revise_record(
         raise NousError("input.conflicting_sources", "Choose --source or --clear-sources")
     if source_changes is not None and clear_sources:
         raise NousError("input.conflicting_sources", "Choose source changes or --clear-sources")
-    changes = (
-        SourceChanges.model_validate_json(input_bytes(source_changes))
-        if source_changes
-        else SourceChanges(preserve=False)
-        if clear_sources
-        else None
-    )
-    body = read_body(text, file)
-    mappings = (
-        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
-        if feedback_mappings
-        else {}
-    )
+    changes = SourceChanges(preserve=False) if clear_sources else None
+    parameters = [body_parameter("markdown", text, file)]
+    if source_changes:
+        parameters.append(json_parameter("sources", source_changes))
+    if feedback_mappings:
+        parameters.append(json_parameter("feedback_mappings", feedback_mappings))
 
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            records = (await runtime.cognition(namespace)).records
-            bindings = (
-                source_requests(source, current_basis, inspiration)
-                if source is not None or current_basis is not None or inspiration is not None
-                else (() if clear_sources else None)
-            )
-            return await records.replace(
-                ref,
-                body,
-                expected=expected,
-                title=title,
-                reason=reason,
-                intent=intent,
-                feedback_refs=feedback or (),
-                feedback_mappings=mappings,
-                source_requests=bindings,
-                sources=changes,
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_record(ctx, run_async(run()))
+    bindings = (
+        source_requests(source, current_basis, inspiration)
+        if source is not None or current_basis is not None or inspiration is not None
+        else (() if clear_sources else None)
+    )
+    result = application_action(
+        ctx,
+        "records.replace",
+        ref,
+        scope=namespace,
+        expected=expected,
+        title=title,
+        reason=reason,
+        intent=intent,
+        feedback_refs=feedback or (),
+        feedback_mappings={},
+        source_requests=bindings,
+        sources=changes,
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+        input_parameters=parameters,
+    )
+    emit_record(ctx, cast(RecordOutcome, result))
 
 
 @journal_cli.command("patch")
@@ -344,40 +321,36 @@ def patch_record(
     inline: bool = False,
     annotate: bool = False,
 ):
-    parsed = TypeAdapter(list[TextChange]).validate_json(input_bytes(changes))
-    mappings = (
-        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
-        if feedback_mappings
-        else {}
-    )
-    bindings = (
-        SourceChanges.model_validate_json(input_bytes(source_changes)) if source_changes else None
-    )
+    parameters = [json_parameter("changes", changes)]
+    if feedback_mappings:
+        parameters.append(json_parameter("feedback_mappings", feedback_mappings))
+    if source_changes:
+        parameters.append(json_parameter("sources", source_changes))
 
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.apply(
-                ref,
-                parsed,
-                sources=bindings,
-                reason=reason,
-                intent=intent,
-                feedback_refs=feedback or (),
-                feedback_mappings=mappings,
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_record(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "records.apply",
+        ref,
+        scope=namespace,
+        sources=None,
+        reason=reason,
+        intent=intent,
+        feedback_refs=feedback or (),
+        feedback_mappings={},
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+        input_parameters=parameters,
+    )
+    emit_record(ctx, cast(RecordOutcome, result))
 
 
 @journal_cli.command("diff")
 @note_cli.command("diff")
 def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None = None):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.diff(left, right)
+    from nous.cognition.writing.contracts import RevisionDiff
 
-    result = run_async(run())
+    result = cast(
+        RevisionDiff, application_action(ctx, "records.diff", left, right, scope=namespace)
+    )
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.unified)
 
 
@@ -398,13 +371,16 @@ def edit_record(
 
     import click
 
-    from .editing import EditSession
+    from nous.application.editing import EditSession
+    from nous.configuration import Configuration
 
     selected = options(ctx)
     language = language_for(selected)
     if resume is not None:
         kind = ctx.parent.info_name if ctx.parent else ""
-        session = EditSession.resume(resume, selected.locator, kind or "")
+        session = cast(
+            EditSession, application_action(ctx, "records.resume_edit", resume, kind or "")
+        )
         if (refresh or refresh_mode or background or inline or annotate) and after_write(
             refresh, refresh_mode, background, inline, annotate
         ) != session.after:
@@ -416,69 +392,75 @@ def edit_record(
         if ref is None:
             raise NousError("input.body_required", "Provide a record or --resume PATH.")
 
-        async def load():
-            async with open_instance(selected.locator) as runtime:
-                original = await (await runtime.cognition(namespace)).records.read(ref)
-                return EditSession.create(
-                    runtime.paths,
-                    original,
-                    after_write(refresh, refresh_mode, background, inline, annotate),
-                )
-
-        session = run_async(load())
-
-    async def save():
-        async with open_instance(selected.locator) as runtime:
-            if runtime.descriptor.instance_id != session.target.instance_id:
-                raise NousError(
-                    "input.edit_session_mismatch", "The edit session belongs to another instance."
-                )
-            records = (
-                await runtime.cognition(
-                    NamespaceRef(
-                        instance_id=session.target.instance_id, id=session.target.namespace_id
-                    )
-                )
-            ).records
-            if ref is not None:
-                requested = await records.read(ref)
-                if requested.ref != session.target:
-                    raise NousError(
-                        "input.edit_session_mismatch", "The edit session belongs to another target."
-                    )
-            try:
-                return await records.replace(
-                    session.target,
-                    body,
-                    expected=session.expected,
-                    write_key=session.id,
-                    after=session.after,
-                )
-            except NousError as error:
-                if error.code == "cognition.revision_conflict":
-                    current = await records.read(session.target)
-                    error.details.update(
-                        current=current.revision_ref.identifier,
-                        expected=session.expected.identifier,
-                        diff="".join(
-                            unified_diff(
-                                current.body.splitlines(keepends=True),
-                                body.splitlines(keepends=True),
-                                fromfile=current.revision_ref.identifier,
-                                tofile=str(session.file),
-                            )
-                        ),
-                    )
-                raise
+        session = cast(
+            EditSession,
+            application_action(
+                ctx,
+                "records.begin_edit",
+                ref,
+                namespace,
+                after_write(refresh, refresh_mode, background, inline, annotate),
+            ),
+        )
 
     try:
         if resume is None:
             click.edit(filename=str(session.file))
-        body = session.read()
+        body = cast(str, application_action(ctx, "records.read_edit", session.file))
         if session.unchanged(body):
             session.clear()
             return
-        result = run_async(save())
+        if (
+            Configuration(selected.locator.config_file).snapshot.values.instance.id
+            != session.target.instance_id
+        ):
+            raise NousError(
+                "input.edit_session_mismatch", "The edit session belongs to another instance."
+            )
+        if ref is not None:
+            requested = cast(
+                RecordView,
+                application_action(ctx, "records.read", ref, scope=session.target.namespace_id),
+            )
+            if requested.ref != session.target:
+                raise NousError(
+                    "input.edit_session_mismatch", "The edit session belongs to another target."
+                )
+        try:
+            result = cast(
+                RecordOutcome,
+                application_action(
+                    ctx,
+                    "records.replace",
+                    session.target,
+                    body,
+                    scope=session.target.namespace_id,
+                    expected=session.expected,
+                    write_key=session.id,
+                    after=session.after,
+                ),
+            )
+        except NousError as error:
+            if error.code == "cognition.revision_conflict":
+                current = cast(
+                    RecordView,
+                    application_action(
+                        ctx, "records.read", session.target, scope=session.target.namespace_id
+                    ),
+                )
+                error.details.update(
+                    current=current.revision_ref.identifier,
+                    expected=session.expected.identifier,
+                    diff="".join(
+                        unified_diff(
+                            current.body.splitlines(keepends=True),
+                            body.splitlines(keepends=True),
+                            fromfile=current.revision_ref.identifier,
+                            tofile=str(session.file),
+                        )
+                    ),
+                )
+            raise
         try:
             emit_record(ctx, result)
         except typer.Exit as exit:
@@ -503,11 +485,10 @@ def edit_record(
 @journal_cli.command("history")
 @note_cli.command("history")
 def history(ctx: typer.Context, ref: str, namespace: str | None = None):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.history(ref)
-
-    result = run_async(run())
+    result = cast(
+        tuple[RevisionSummary, ...],
+        application_action(ctx, "records.history", ref, scope=namespace),
+    )
     if options(ctx).json_mode:
         typer.echo(
             json.dumps(
@@ -521,7 +502,7 @@ def history(ctx: typer.Context, ref: str, namespace: str | None = None):
             )
 
 
-async def _membership(
+def _membership(
     ctx: typer.Context,
     ref: str,
     namespace: str | None,
@@ -534,14 +515,21 @@ async def _membership(
     inline: bool = False,
 ) -> RecordOutcome:
     after = after_write(refresh, refresh_mode, background, inline)
-    async with open_instance(options(ctx).locator) as runtime:
-        if operation == "recall":
-            return await (await runtime.cognition(namespace)).records.set_recall(
-                ref, bool(enabled), expected=expected, after=after
-            )
-        return await getattr((await runtime.cognition(namespace)).records, operation)(
-            ref, expected=expected, after=after
+    if operation == "recall":
+        result = application_action(
+            ctx,
+            "records.set_recall",
+            ref,
+            bool(enabled),
+            scope=namespace,
+            expected=expected,
+            after=after,
         )
+    else:
+        result = application_action(
+            ctx, f"records.{operation}", ref, scope=namespace, expected=expected, after=after
+        )
+    return cast(RecordOutcome, result)
 
 
 @journal_cli.command("archive")
@@ -558,18 +546,16 @@ def archive(
 ):
     emit_record(
         ctx,
-        run_async(
-            _membership(
-                ctx,
-                ref,
-                namespace,
-                "archive",
-                expected,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
-                background=background,
-                inline=inline,
-            )
+        _membership(
+            ctx,
+            ref,
+            namespace,
+            "archive",
+            expected,
+            refresh=refresh,
+            refresh_mode=refresh_mode,
+            background=background,
+            inline=inline,
         ),
     )
 
@@ -588,18 +574,16 @@ def restore(
 ):
     emit_record(
         ctx,
-        run_async(
-            _membership(
-                ctx,
-                ref,
-                namespace,
-                "restore",
-                expected,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
-                background=background,
-                inline=inline,
-            )
+        _membership(
+            ctx,
+            ref,
+            namespace,
+            "restore",
+            expected,
+            refresh=refresh,
+            refresh_mode=refresh_mode,
+            background=background,
+            inline=inline,
         ),
     )
 
@@ -618,19 +602,17 @@ def remember(
 ):
     emit_record(
         ctx,
-        run_async(
-            _membership(
-                ctx,
-                ref,
-                namespace,
-                "recall",
-                expected,
-                enabled,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
-                background=background,
-                inline=inline,
-            )
+        _membership(
+            ctx,
+            ref,
+            namespace,
+            "recall",
+            expected,
+            enabled,
+            refresh=refresh,
+            refresh_mode=refresh_mode,
+            background=background,
+            inline=inline,
         ),
     )
 
@@ -646,13 +628,18 @@ def list_records(
 ):
     kind = "note" if ctx.parent is not None and ctx.parent.info_name == "note" else "journal"
 
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.list(
-                kind=kind, archived=archived, offset=offset, limit=limit
-            )
-
-    result = run_async(run())
+    result = cast(
+        tuple[CommittedRecord, ...],
+        application_action(
+            ctx,
+            "records.list",
+            scope=namespace,
+            kind=kind,
+            archived=archived,
+            offset=offset,
+            limit=limit,
+        ),
+    )
     if options(ctx).json_mode:
         typer.echo(
             json.dumps(
@@ -668,21 +655,13 @@ def list_records(
 
 @namespace_cli.command("create")
 def namespace_create(ctx: typer.Context, name: str):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.namespaces.create(name)
-
-    result = run_async(run())
+    result = cast(Namespace, application_action(ctx, "namespaces.create", name))
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
 
 
 @namespace_cli.command("list")
 def namespace_list(ctx: typer.Context):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.namespaces.list()
-
-    result = run_async(run())
+    result = cast(tuple[Namespace, ...], application_action(ctx, "namespaces.list"))
     typer.echo(
         json.dumps(
             {"namespaces": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
@@ -694,19 +673,11 @@ def namespace_list(ctx: typer.Context):
 
 @namespace_cli.command("rename")
 def namespace_rename(ctx: typer.Context, namespace: str, name: str):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.namespaces.rename(namespace, name)
-
-    result = run_async(run())
+    result = cast(Namespace, application_action(ctx, "namespaces.rename", namespace, name))
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
 
 
 @namespace_cli.command("select")
 def namespace_select(ctx: typer.Context, namespace: str):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.namespaces.select(namespace)
-
-    result = run_async(run())
+    result = cast(Namespace, application_action(ctx, "namespaces.select", namespace))
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)

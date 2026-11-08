@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 from weakref import WeakValueDictionary
 
-from pydantic import JsonValue, TypeAdapter
-
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context, record_completed
 from nous.content.contracts import (
-    InputGroup,
     OutputContent,
     ProcessingResult,
     ResultRef,
@@ -92,13 +88,7 @@ class ResponseRecovery:
         )
         return replace(pending, outputs=published)
 
-    async def resume_in_lock(
-        self,
-        pending: PendingResponse,
-        *,
-        inputs: Sequence[InputGroup] | None = None,
-        coverage: Mapping[str, object] | None = None,
-    ) -> ProducedTask:
+    async def resume_in_lock(self, pending: PendingResponse) -> ProducedTask:
         try:
             existing = self.pending.get(pending.producer_key)
             if (
@@ -129,13 +119,7 @@ class ResponseRecovery:
             )
             raise
         await self.forget(pending.producer_key)
-        return await self._interpret_response(
-            pending.generated,
-            accepted,
-            pending.producer_key,
-            inputs if inputs is not None else pending.requested_inputs,
-            coverage if coverage is not None else pending.requested_coverage,
-        )
+        return await self._interpret_response(pending.generated, accepted, pending.producer_key)
 
     async def _adopt_response(self, pending: PendingResponse) -> ProcessingResult:
         assert pending.outputs is not None
@@ -157,12 +141,6 @@ class ResponseRecovery:
                     if pending.selected_inputs
                     else None,
                     "interpretation_contract": pending.interpretation_contract,
-                    "requested_inputs": [
-                        group.model_dump(mode="json") for group in pending.requested_inputs
-                    ]
-                    if pending.requested_inputs is not None
-                    else None,
-                    "requested_coverage": pending.requested_coverage,
                 },
                 coverage=pending.generated.coverage,
                 producer_key=pending.producer_key,
@@ -183,13 +161,6 @@ class ResponseRecovery:
             if accepted is not None:
                 if isinstance(pending, PendingResponse) and (
                     accepted.parameters.get("request_identity") != pending.identity
-                    or accepted.parameters.get("requested_inputs")
-                    != (
-                        [group.model_dump(mode="json") for group in pending.requested_inputs]
-                        if pending.requested_inputs is not None
-                        else None
-                    )
-                    or accepted.parameters.get("requested_coverage") != pending.requested_coverage
                 ):
                     raise NousError(
                         "content.producer_conflict",
@@ -226,18 +197,10 @@ class ResponseRecovery:
                 output.artifact for output in accepted.outputs if output.name == "computation"
             )
             generated = read_generated(json.loads(await descriptor_text(self.results, envelope)))
-            requested_inputs = accepted.parameters.get("requested_inputs")
-            requested_coverage = accepted.parameters.get("requested_coverage")
             return await self._interpret_response(
                 generated,
                 accepted,
                 str(accepted.parameters.get("producer_key") or accepted.ref.identifier),
-                TypeAdapter(tuple[InputGroup, ...]).validate_python(requested_inputs)
-                if requested_inputs is not None
-                else None,
-                TypeAdapter(dict[str, JsonValue]).validate_python(requested_coverage)
-                if requested_coverage is not None
-                else None,
             )
 
     def _validate_interpreter(self, generated: GenerationResult, expected: object) -> None:
@@ -267,14 +230,12 @@ class ResponseRecovery:
         generated: GenerationResult,
         accepted: ProcessingResult,
         producer_key: str,
-        inputs: Sequence[InputGroup] | None,
-        coverage: Mapping[str, object] | None,
     ) -> ProducedTask:
         try:
             self._validate_interpreter(
                 generated, accepted.parameters.get("interpretation_contract")
             )
-            produced = await self._interpret(generated, inputs, coverage)
+            produced = await self._interpret(generated)
             return replace(
                 produced,
                 selected_inputs=SelectedInputs.model_validate(
@@ -306,12 +267,7 @@ class ResponseRecovery:
             )
             raise
 
-    async def _interpret(
-        self,
-        generated: GenerationResult,
-        inputs: Sequence[InputGroup] | None,
-        coverage: Mapping[str, object] | None,
-    ) -> ProducedTask:
+    async def _interpret(self, generated: GenerationResult) -> ProducedTask:
         reading = generated.reading
         if reading is None:
             raise NousError("model.response_invalid", "Saved response has no actual input context")
@@ -333,9 +289,7 @@ class ResponseRecovery:
         return ProducedTask(
             operation=str(generated.request["task"]),
             producer=generated.producer,
-            actual_inputs=tuple(inputs)
-            if inputs is not None
-            else tuple(source.group for source in reading.sources if source.group),
+            actual_inputs=tuple(source.group for source in reading.sources if source.group),
             outputs=outputs,
             request=generated.request,
             parameters={
@@ -348,7 +302,6 @@ class ResponseRecovery:
                 "finish_reason": generated.finish_reason,
                 "stage_result_refs": generated.request.get("stage_result_refs", []),
             },
-            coverage=generated.coverage
-            or TypeAdapter(dict[str, JsonValue]).validate_python(coverage or {}),
+            coverage=generated.coverage,
             completed_stage_refs=stages,
         )

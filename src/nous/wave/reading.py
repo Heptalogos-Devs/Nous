@@ -48,8 +48,10 @@ class SnapshotReader:
                 schema.snapshots.c.identity,
             ]
         )
-        query = sa.select(*columns, schema.collections.c.name).join(
-            schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id
+        query = (
+            sa.select(*columns, schema.collections.c.name)
+            .join(schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id)
+            .where(schema.snapshots.c.accepted.is_(True))
         )
         condition = (
             sa.and_(
@@ -201,8 +203,10 @@ class SnapshotReader:
             units[position["unit_signature"]][position["unit_index"]] for position in positions
         ]
         value = dict(row)
+        layout = dict(value.pop("layout"))
+        roots = layout.pop("roots", roots)
         value["mapping"] = {
-            **value.pop("layout"),
+            **layout,
             "name": value["name"],
             "owner": value["owner"],
             "metadata": value["metadata"],

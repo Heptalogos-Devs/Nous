@@ -16,6 +16,9 @@ from nous.common.operations import OperationIssue, add_error_context, record_com
 from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import (
     ContentSelection,
+    InputGroup,
+    InputPart,
+    OutputContent,
     ResultRef,
     SelectedInputs,
     SelectedSource,
@@ -37,7 +40,13 @@ from ..concept_contracts import (
 from ..concepts import ConceptOperations, ConceptTarget
 from ..contracts import RecordRevisionRef, RevisionSelection
 from ..writing.reading import RecordReader, Target
-from .contracts import AnnotationCommit, AnnotationPlan, AnnotationRequest, ConceptCandidate
+from .contracts import (
+    AnnotationCommit,
+    AnnotationOperation,
+    AnnotationPlan,
+    AnnotationRequest,
+    ConceptCandidate,
+)
 from .reading import read_views_in
 from .task import ConceptAnnotationTask
 
@@ -201,6 +210,104 @@ class AnnotationOperations:
                 result = await self.generation.adopt_in(tx, prepared)
             return await self.read_proposal(result.ref)
 
+    async def _foreground_plan(
+        self,
+        target: Target,
+        namespace: str | None,
+        task: str | None,
+        known_concepts: Mapping[str, ConceptTarget] | None,
+    ) -> AnnotationPlan:
+        async with self.database.read() as tx:
+            row, revision, _ = await self.records.resolve_in(tx, target, namespace)
+            exact = self.records.revision_ref(row, revision)
+        settings = self.execution.snapshot.values.cognition.annotation
+        frozen = await self.generation.freeze_language_task(
+            task or settings.task, self.execution.snapshot
+        )
+        selected = await self.generation.load_language_task(frozen, self.execution.snapshot)
+        if (
+            selected.resource is None
+            or selected.resource.manifest.contract_id != "concept-annotation"
+        ):
+            raise NousError(
+                "model.task_contract_mismatch", "Annotation task uses another output contract"
+            )
+        request = AnnotationRequest(
+            computation_key=str(uuid4()),
+            task=frozen,
+            candidate_limit=settings.known_concept_limit,
+            eligibility="historical",
+        )
+        return await self.prepare_plan(exact, request, known_concepts=known_concepts)
+
+    async def _start_foreground(
+        self, operation: AnnotationOperation
+    ) -> AnnotationProposalView | AnnotationView:
+        plan = operation.plan
+        result = await self.results.adopt(
+            operation="annotation.request",
+            producer={"kind": "user"},
+            inputs=(
+                InputGroup(
+                    key="BASE",
+                    slot_key="BASE",
+                    name="Annotation body",
+                    role="revision_base",
+                    parts=tuple(InputPart(content=item) for item in plan.body.selections),
+                ),
+            ),
+            outputs={
+                "request": OutputContent(
+                    data=operation.model_dump_json().encode(),
+                    media_type="application/json",
+                    display_name="annotation-request.json",
+                )
+            },
+            dependencies=(plan.task.descriptor,),
+            producer_key=plan.computation_key + ":request",
+        )
+        return await self._continue_foreground(result.ref, operation)
+
+    async def _continue_foreground(
+        self, request_ref: ResultRef, operation: AnnotationOperation
+    ) -> AnnotationProposalView | AnnotationView:
+        try:
+            proposed = await self.produce_proposal(operation.plan)
+            if operation.draft_only:
+                return proposed
+            return await self.adopt(
+                operation.plan.target,
+                proposed.result_ref,
+                namespace=operation.plan.target.record_ref.namespace_id,
+                bindings=operation.bindings,
+                activate_for_current=operation.activate_for_current,
+            )
+        except BaseException as error:
+            add_error_context(
+                error, {"annotation_request_ref": request_ref.model_dump(mode="json")}
+            )
+            raise
+
+    async def recover(
+        self, request_ref: str | ResultRef
+    ) -> AnnotationProposalView | AnnotationView:
+        async with self.execution.operation("annotation.recover"):
+            result = await self.results.get(request_ref)
+            if result.operation != "annotation.request":
+                raise NousError(
+                    "cognition.annotation_request_required",
+                    "Recovery requires an annotation request",
+                )
+            output = next(item.artifact for item in result.outputs if item.name == "request")
+            operation = AnnotationOperation.model_validate_json(
+                await self.artifacts.read_bytes(output)
+            )
+            async with self.database.read() as tx:
+                await self.records.resolve_in(
+                    tx, operation.plan.target, operation.plan.target.record_ref.namespace_id
+                )
+            return await self._continue_foreground(result.ref, operation)
+
     async def propose(
         self,
         target: Target,
@@ -223,30 +330,12 @@ class AnnotationOperations:
         """
         async with self.execution.operation("annotation.propose"):
             if proposal is None:
-                async with self.database.read() as tx:
-                    row, revision, _ = await self.records.resolve_in(tx, target, namespace)
-                    exact = self.records.revision_ref(row, revision)
-                settings = self.execution.snapshot.values.cognition.annotation
-                frozen = await self.generation.freeze_language_task(
-                    task or settings.task, self.execution.snapshot
+                plan = await self._foreground_plan(target, namespace, task, known_concepts)
+                result = await self._start_foreground(
+                    AnnotationOperation(plan=plan, draft_only=True)
                 )
-                selected = await self.generation.load_language_task(frozen, self.execution.snapshot)
-                if (
-                    selected.resource is None
-                    or selected.resource.manifest.contract_id != "concept-annotation"
-                ):
-                    raise NousError(
-                        "model.task_contract_mismatch",
-                        "Annotation task uses another output contract",
-                    )
-                request = AnnotationRequest(
-                    computation_key=str(uuid4()),
-                    task=frozen,
-                    candidate_limit=settings.known_concept_limit,
-                    eligibility="historical",
-                )
-                plan = await self.prepare_plan(exact, request, known_concepts=known_concepts)
-                return await self.produce_proposal(plan)
+                assert isinstance(result, AnnotationProposalView)
+                return result
             async with self.database.read() as tx:
                 row, revision, ns = await self.records.resolve_in(tx, target, namespace)
                 exact = self.records.revision_ref(row, revision)
@@ -799,6 +888,27 @@ class AnnotationOperations:
             if proposal is not None and proposal_result is not None:
                 raise NousError(
                     "input.conflicting_proposal", "Choose a proposal or proposal result"
+                )
+            if proposal is None and proposal_result is None:
+                plan = await self._foreground_plan(target, namespace, task, known_concepts)
+                async with self.database.read() as tx:
+                    frozen_bindings = {
+                        key: (
+                            await self.concepts.read_in(
+                                tx, value, plan.target.record_ref.namespace_id
+                            )
+                        ).ref
+                        if value is not None
+                        else None
+                        for key, value in (bindings or {}).items()
+                    }
+                return await self._start_foreground(
+                    AnnotationOperation(
+                        plan=plan,
+                        bindings=frozen_bindings,
+                        draft_only=draft_only,
+                        activate_for_current=activate_for_current,
+                    )
                 )
             proposed = (
                 await self.read_proposal(proposal_result)

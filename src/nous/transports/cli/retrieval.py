@@ -2,19 +2,18 @@
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
-from pydantic import TypeAdapter
 
-from nous.cognition.retrieval.contracts import CognitiveQuery, Mode, QueryResult
+from nous.application.inputs import InputParameter
+from nous.cognition.retrieval.contracts import Mode, QueryResult
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
-from nous.wave.contracts import CandidateFilter, ContextFragment, QueryCue
+from nous.wave.contracts import QueryCue
 
-from . import cli, emit, language_for, options, run_async
+from . import application_action, cli, emit, language_for, options
 from .cognition import journal_cli
-from .input_files import input_bytes
+from .input_files import json_parameter
 
 
 @cli.command("query")
@@ -36,36 +35,31 @@ def query(
     purpose: str | None = None,
     explain: bool = False,
 ) -> None:
-    selected_context = (
-        TypeAdapter(tuple[ContextFragment, ...]).validate_json(input_bytes(context))
-        if context
-        else ()
+    request = {
+        "text": text,
+        "mode": mode,
+        "snapshot": snapshot,
+        "top_k": top_k,
+        "include_review": True if include_review else None,
+        "include_exploration": include_exploration,
+        "context": (),
+        "core_concepts": tuple(core or ()),
+        "cues": tuple(QueryCue(label=value, description=value) for value in cue or ()),
+        "filters": None,
+        "purpose": purpose,
+        "explain": explain,
+    }
+    parameters: list[InputParameter] = []
+    if context:
+        parameters.append(json_parameter("request.context", context))
+    if filters:
+        parameters.append(json_parameter("request.filters", filters))
+    result = cast(
+        QueryResult,
+        application_action(
+            ctx, "retrieval.query", scope=namespace, request=request, input_parameters=parameters
+        ),
     )
-    selected_filters = (
-        CandidateFilter.model_validate_json(input_bytes(filters)) if filters else None
-    )
-
-    async def run() -> QueryResult:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.retrieval.query(
-                CognitiveQuery(
-                    text=text,
-                    mode=mode,
-                    snapshot=snapshot,
-                    top_k=top_k,
-                    include_review=True if include_review else None,
-                    include_exploration=include_exploration,
-                    context=selected_context,
-                    core_concepts=tuple(core or ()),
-                    cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
-                    filters=selected_filters,
-                    purpose=purpose,
-                    explain=explain,
-                )
-            )
-
-    result = run_async(run())
     if options(ctx).json_mode:
         emit(ctx, result.model_dump(mode="json"))
         return
@@ -104,14 +98,16 @@ def refresh(
     mode: Annotated[Mode | None, typer.Option("--mode")] = None,
     include_review: bool = False,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.retrieval.refresh(
-                mode=mode, include_review=True if include_review else None
-            )
-
-    result = run_async(run())
+    result = cast(
+        dict[str, object],
+        application_action(
+            ctx,
+            "retrieval.refresh",
+            scope=namespace,
+            mode=mode,
+            include_review=True if include_review else None,
+        ),
+    )
     if options(ctx).json_mode:
         emit(ctx, result)
     else:

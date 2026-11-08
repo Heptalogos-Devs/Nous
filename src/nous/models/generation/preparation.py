@@ -86,14 +86,10 @@ class GenerationPreparation:
                         else InputSpec(kind="artifact", artifact=value)
                     )
                 )
-                originals.append(
-                    (
-                        await self.results.artifacts.accept(spec),
-                        spec.selection,
-                        spec.role,
-                        spec.slot_key,
-                    )
-                )
+                artifact = await self.results.artifacts.accept(spec)
+                if spec.display_name is not None:
+                    artifact = artifact.model_copy(update={"display_name": spec.display_name})
+                originals.append((artifact, spec.selection, spec.role, spec.slot_key))
         for ordinal, text in enumerate(texts, 1):
             originals.append(
                 (
@@ -111,12 +107,16 @@ class GenerationPreparation:
 
     async def accept_inputs(
         self,
-        inputs: InputValue | Sequence[InputValue],
+        inputs: SelectedInputs | InputValue | Sequence[InputValue],
         snapshot: ConfigSnapshot,
         *,
         texts: Sequence[str] = (),
     ) -> SelectedInputs:
         """Accept and normalize original selections without deriving physical representations."""
+        if isinstance(inputs, SelectedInputs):
+            if texts:
+                raise NousError("input.invalid", "Texts cannot be added to selected inputs")
+            return await self._inspect_selected(inputs, snapshot)
         originals = await self._accept(inputs, texts)
         explicit = {slot for _, _, _, slot in originals if slot is not None}
         grouped: dict[str, tuple[SourceRole, list[ContentSelection], str | None]] = {}
@@ -140,39 +140,20 @@ class GenerationPreparation:
             if slot not in grouped:
                 grouped[slot] = (role, [], artifact.display_name)
             grouped[slot][1].append(ContentSelection(artifact=artifact.ref, selection=selection))
-        values = [selection for _, selections, _ in grouped.values() for selection in selections]
-        inspected: dict[str, dict[str, JsonValue]] = {}
-        facts: list[SourceFacts] = []
-        for artifact, _, _, _ in originals:
-            if artifact.ref.id in inspected:
-                continue
-            info = await self.preparer.inspect(artifact, snapshot.values.media)
-            inspected[artifact.ref.id] = info
-            facts.append(
-                SourceFacts(
-                    artifact=artifact.ref,
-                    declared_mime=artifact.media_type,
-                    detected_mime=str(info["media_type"]),
-                    kind=cast(Literal["text", "image", "pdf", "audio", "video"], info["kind"]),
-                    details=info,
+        return await self._inspect_selected(
+            SelectedInputs(
+                sources=tuple(
+                    SelectedSource(
+                        slot_key=slot,
+                        role=role,
+                        selections=tuple(selections),
+                        display_name=name,
+                    )
+                    for slot, (role, selections, name) in grouped.items()
                 )
-            )
-        normalized = await self.preparer.validate_selections(
-            values, settings=snapshot.values.media, facts=inspected
+            ),
+            snapshot,
         )
-        sources: list[SelectedSource] = []
-        offset = 0
-        for slot, (role, selections, name) in grouped.items():
-            sources.append(
-                SelectedSource(
-                    slot_key=slot,
-                    role=role,
-                    selections=normalized[offset : offset + len(selections)],
-                    display_name=name,
-                )
-            )
-            offset += len(selections)
-        return SelectedInputs(sources=tuple(sources), facts=tuple(facts))
 
     async def _inspect_selected(
         self, selected: SelectedInputs, snapshot: ConfigSnapshot
@@ -183,11 +164,10 @@ class GenerationPreparation:
                 item.artifact for source in selected.sources for item in source.selections
             )
         )
-        if all(ref.id in existing for ref in references):
+        missing = tuple(ref for ref in references if ref.id not in existing)
+        if not missing:
             return selected
-        for artifact in await self.results.artifacts.get_many(references):
-            if artifact.ref.id in existing:
-                continue
+        for artifact in await self.results.artifacts.get_many(missing):
             info = await self.preparer.inspect(artifact, snapshot.values.media)
             existing[artifact.ref.id] = SourceFacts(
                 artifact=artifact.ref,
@@ -217,10 +197,6 @@ class GenerationPreparation:
         input: SelectedInputs | InputValue | Sequence[InputValue],
         snapshot: ConfigSnapshot,
         *,
-        selection: SourceSelection | None = None,
-        question: str = "",
-        instructions: str = "",
-        schema: dict[str, JsonValue] | None = None,
         document_mode: str = "auto",
         without_audio: bool = False,
         texts: Sequence[str] = (),
@@ -228,44 +204,7 @@ class GenerationPreparation:
     ) -> PreparedRun:
         async with self.execution.operation("model.prepare_input", snapshot):
             frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-            if isinstance(input, SelectedInputs):
-                selected_inputs = await self._inspect_selected(input, snapshot)
-            else:
-                selected_inputs = await self.accept_inputs(input, snapshot, texts=texts)
-            if selection is not None:
-                selected_inputs = selected_inputs.model_copy(
-                    update={
-                        "sources": tuple(
-                            source.model_copy(
-                                update={
-                                    "selections": tuple(
-                                        item.model_copy(
-                                            update={"selection": item.selection.restrict(selection)}
-                                        )
-                                        for item in source.selections
-                                    )
-                                }
-                            )
-                            for source in selected_inputs.sources
-                        )
-                    }
-                )
-                normalized = await self.preparer.validate_selections(
-                    [item for source in selected_inputs.sources for item in source.selections],
-                    settings=snapshot.values.media,
-                    facts={fact.artifact.id: fact.details for fact in selected_inputs.facts},
-                )
-                offset = 0
-                sources: list[SelectedSource] = []
-                for source in selected_inputs.sources:
-                    count = len(source.selections)
-                    sources.append(
-                        source.model_copy(
-                            update={"selections": normalized[offset : offset + count]}
-                        )
-                    )
-                    offset += count
-                selected_inputs = selected_inputs.model_copy(update={"sources": tuple(sources)})
+            selected_inputs = await self.accept_inputs(input, snapshot, texts=texts)
             unavailable: dict[str, JsonValue] = {}
             routes = frozen.routes
             if any(fact.kind == "video" for fact in selected_inputs.facts):
@@ -324,12 +263,8 @@ class GenerationPreparation:
                         ]
                     )
                 ),
-                plan.request_groups,
-                plan.requested_coverage,
                 frozen,
-                question,
-                instructions,
-                schema,
+                plan,
                 tuple(
                     dict.fromkeys(
                         ref
@@ -337,7 +272,6 @@ class GenerationPreparation:
                         for ref in item.completed_result_refs
                     )
                 ),
-                plan,
             )
 
     async def prepare_group(

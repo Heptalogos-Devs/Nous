@@ -176,6 +176,45 @@ def test_cancel_during_reader_launch_reaps_late_process(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_cancel_during_media_launch_reaps_late_process(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from nous.media.audiovisual import AudioVisual
+    from nous.runtime.bootstrap import open_instance
+
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance, environment={})
+        started, release = asyncio.Event(), asyncio.Event()
+        processes: list[asyncio.subprocess.Process] = []
+        original = asyncio.create_subprocess_exec
+
+        async def delayed(*args: str, **kwargs: object) -> asyncio.subprocess.Process:
+            started.set()
+            await release.wait()
+            process = await original(*args, **kwargs)  # type: ignore[arg-type]
+            processes.append(process)
+            return process
+
+        async with open_instance(instance, environment={}) as runtime:
+            settings = runtime.configuration.snapshot.values.media.model_copy(
+                update={"ffmpeg_path": sys.executable, "ffprobe_path": sys.executable}
+            )
+            media = AudioVisual(settings, runtime.execution)
+            with patch("asyncio.create_subprocess_exec", new=delayed):
+                task = asyncio.create_task(
+                    media.process(sys.executable, "-c", "import time; time.sleep(60)")
+                )
+                await asyncio.wait_for(started.wait(), timeout=10)
+                task.cancel()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert len(processes) == 1 and processes[0].returncode is not None
+
+    asyncio.run(scenario())
+
+
 def test_file_readers_are_reused_and_closed_with_runtime(tmp_path: Path) -> None:
     from unittest.mock import patch
 
@@ -267,7 +306,7 @@ def test_reader_pool_finishes_reaping_despite_repeated_close_cancellation(tmp_pa
         assert b"".join([block async for block in pool.chunks(source, 1024)]) == b"contents"
         process = pool._idle[0]  # pyright: ignore[reportPrivateUsage]
         started, release = asyncio.Event(), asyncio.Event()
-        original = file_input._stop  # pyright: ignore[reportPrivateUsage]
+        original = file_input.stop_process
 
         async def delayed_stop(worker: asyncio.subprocess.Process) -> None:
             started.set()
@@ -275,7 +314,7 @@ def test_reader_pool_finishes_reaping_despite_repeated_close_cancellation(tmp_pa
             await original(worker)
 
         try:
-            with patch("nous.storage.file_input._stop", new=delayed_stop):
+            with patch("nous.storage.file_input.stop_process", new=delayed_stop):
                 task = asyncio.create_task(pool.aclose())
                 await asyncio.wait_for(started.wait(), timeout=10)
                 task.cancel()

@@ -85,6 +85,9 @@ line-length = 100
 cache-dir = "temp/cache/ruff"
 extend-exclude = ["legacy", "temp", ".venv", "dist"]
 
+[tool.ruff.per-file-target-version]
+"scripts/temp/*.py" = "py39"
+
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B", "UP", "ASYNC"]
 

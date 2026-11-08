@@ -1,19 +1,16 @@
 """Record and resolve feedback through the cognitive application owner."""
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import typer
 
 from nous.cognition.feedback import Category, FeedbackView, Value
-from nous.cognition.retrieval.contracts import QueryResult
 from nous.common.errors import NousError
-from nous.content.contracts import ContentSelection
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 
-from . import cli, emit, language_for, options, run_async
-from .input_files import input_bytes
+from . import application_action, cli, emit, language_for, options
+from .input_files import json_parameter
 
 feedback_cli = typer.Typer(help="Feedback", no_args_is_help=True)
 cli.add_typer(feedback_cli, name="feedback")
@@ -84,53 +81,38 @@ def record(
             "input.invalid_feedback", "Choose the delivered candidate from the query result"
         )
 
-    parsed_result = (
-        QueryResult.model_validate_json(input_bytes(query_result)) if query_result else None
-    )
-    parsed_selection = (
-        ContentSelection.model_validate_json(input_bytes(selection)) if selection else None
-    )
-
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            if parsed_result is not None:
-                result = parsed_result
-                target = None
-                if candidate is not None:
-                    matches = [
-                        item for item in result.delivery if item.candidate_ref.key == candidate
-                    ]
-                    if len(matches) != 1:
-                        raise NousError(
-                            "input.invalid_feedback",
-                            "Candidate is not a unique delivered selection",
-                        )
-                    target = matches[0]
-                return await cognition.feedback.record_query(
-                    result, category, target=target, value=value, comment=comment, author=author
-                )
-            assert ref is not None
-            return await cognition.feedback.record(
-                ref,
-                category,
-                value=value,
-                comment=comment,
-                author=author,
-                selection=parsed_selection,
-            )
-
-    _show(ctx, run_async(run()))
+    if query_result is not None:
+        result = application_action(
+            ctx,
+            "feedback.record_query",
+            scope=namespace,
+            category=category,
+            target=candidate,
+            value=value,
+            comment=comment,
+            author=author,
+            input_parameters=(json_parameter("result", query_result),),
+        )
+    else:
+        assert ref is not None
+        result = application_action(
+            ctx,
+            "feedback.record",
+            ref,
+            category,
+            scope=namespace,
+            value=value,
+            comment=comment,
+            author=author,
+            selection=None,
+            input_parameters=(json_parameter("selection", selection),) if selection else (),
+        )
+    _show(ctx, cast(FeedbackView, result))
 
 
 @feedback_cli.command("read")
 def read(ctx: typer.Context, ref: str, namespace: str | None = None) -> None:
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.read(ref)
-
-    _show(ctx, run_async(run()))
+    _show(ctx, cast(FeedbackView, application_action(ctx, "feedback.read", ref, scope=namespace)))
 
 
 @feedback_cli.command("list")
@@ -143,18 +125,19 @@ def list_feedback(
     offset: Annotated[int, typer.Option(min=0)] = 0,
     namespace: str | None = None,
 ) -> None:
-    async def run() -> tuple[FeedbackView, ...]:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.list(
-                target=target,
-                category=category,
-                unresolved_only=unresolved,
-                limit=limit,
-                offset=offset,
-            )
-
-    result = run_async(run())
+    result = cast(
+        tuple[FeedbackView, ...],
+        application_action(
+            ctx,
+            "feedback.list",
+            scope=namespace,
+            target=target,
+            category=category,
+            unresolved_only=unresolved,
+            limit=limit,
+            offset=offset,
+        ),
+    )
     if options(ctx).json_mode:
         emit(ctx, {"items": [item.model_dump(mode="json") for item in result]})
     elif not result:
@@ -174,9 +157,7 @@ def resolve(
     actor: str | None = None,
     namespace: str | None = None,
 ) -> None:
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.resolve(ref, action, note=note, actor=actor)
-
-    _show(ctx, run_async(run()))
+    result = application_action(
+        ctx, "feedback.resolve", ref, action, scope=namespace, note=note, actor=actor
+    )
+    _show(ctx, cast(FeedbackView, result))

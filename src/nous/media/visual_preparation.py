@@ -25,7 +25,7 @@ from nous.content.contracts import (
     SourceSelection,
 )
 from nous.content.results import ResultStore
-from nous.runtime.execution import ExecutionManager
+from nous.runtime.execution import ExecutionManager, acquire_owned
 
 from .configuration import MediaConfig
 from .contracts import (
@@ -135,10 +135,13 @@ class VisualPreparation:
                 await self.execution.blocking(
                     self.artifacts.content.temporary.mkdir, parents=True, exist_ok=True
                 )
-                workspace = await self.execution.blocking(
-                    tempfile.TemporaryDirectory,
-                    prefix="images-",
-                    dir=self.artifacts.content.temporary,
+                workspace = await acquire_owned(
+                    self.execution.blocking(
+                        tempfile.TemporaryDirectory,
+                        prefix="images-",
+                        dir=self.artifacts.content.temporary,
+                    ),
+                    lambda value: self.execution.control_blocking(value.cleanup),
                 )
                 try:
                     frames = await self.execution.blocking(

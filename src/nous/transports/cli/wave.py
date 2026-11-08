@@ -7,21 +7,11 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 import typer
-from pydantic import TypeAdapter
 
-from nous.models.vector_contracts import VectorRef
-from nous.runtime.bootstrap import open_instance
-from nous.wave.contracts import (
-    CandidateFilter,
-    CandidatePool,
-    ContextFragment,
-    QueryCue,
-    ThinkingStage,
-    WaveQuery,
-)
+from nous.application.inputs import InputParameter
 
-from . import emit, options, run_async
-from .input_files import input_bytes
+from . import application_action, emit, options
+from .input_files import json_parameter
 
 wave_cli = typer.Typer(help="构建、检索和回读内容集合 / Wave retrieval", no_args_is_help=True)
 
@@ -34,16 +24,8 @@ def cleanup(
 ) -> None:
     """清理未保留的旧快照 / Remove unretained old snapshots."""
 
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            refs = tuple([(await runtime.wave.describe(value)).ref for value in retain or ()])
-            return await runtime.wave.cleanup(keep_recent=keep_recent, retain=refs)
-
-    emit(ctx, run_async(run()))
-
-
-def _context(path: Path | None) -> tuple[ContextFragment, ...]:
-    return TypeAdapter(tuple[ContextFragment, ...]).validate_json(input_bytes(path)) if path else ()
+    result = application_action(ctx, "wave.cleanup_named", keep_recent, retain or ())
+    emit(ctx, cast(dict[str, object], result))
 
 
 def _hits(value: dict[str, object], explain: bool) -> None:
@@ -104,11 +86,7 @@ def build(
     manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
     space: Annotated[str | None, typer.Option("--space")] = None,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.wave.build(manifest, space)
-
-    emit(ctx, run_async(run()))
+    emit(ctx, cast(dict[str, object], application_action(ctx, "wave.build", manifest, space)))
 
 
 @wave_cli.command("inspect")
@@ -119,15 +97,12 @@ def inspect(
         list[str] | None, typer.Option("--concept", help="概念 key；可重复 / Concept keys")
     ] = None,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return (
-                await runtime.wave.neighborhood(snapshot, concept)
-                if concept
-                else await runtime.wave.inspect(snapshot)
-            )
-
-    emit(ctx, run_async(run()))
+    result = (
+        application_action(ctx, "wave.neighborhood", snapshot, concept)
+        if concept
+        else application_action(ctx, "wave.inspect", snapshot)
+    )
+    emit(ctx, cast(dict[str, object], result))
 
 
 @wave_cli.command("query")
@@ -163,36 +138,36 @@ def query(
     passages_per_group: Annotated[int, typer.Option("--passages-per-group", min=1)] = 1,
     explain: Annotated[bool, typer.Option("--explain")] = False,
 ) -> None:
-    request = WaveQuery(
-        snapshot=snapshot,
-        text=text,
-        vector=VectorRef.model_validate_json(input_bytes(vector_ref)) if vector_ref else None,
-        candidate_pool=CandidatePool.model_validate_json(input_bytes(candidate_pool))
-        if candidate_pool
-        else None,
-        mode=mode,
-        context=_context(context),
-        core_concepts=tuple(core or ()),
-        cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
-        thinking_stages=TypeAdapter(tuple[ThinkingStage, ...]).validate_json(
-            input_bytes(thinking_stages)
-        )
-        if thinking_stages
-        else (),
-        candidate_filter=CandidateFilter.model_validate_json(input_bytes(candidate_filter))
-        if candidate_filter
-        else None,
-        top_k=top_k,
-        grouping=grouping,
-        passages_per_group=passages_per_group,
-        include_trace=explain,
+    request = {
+        "snapshot": snapshot,
+        "text": text,
+        "vector": None,
+        "candidate_pool": None,
+        "mode": mode,
+        "context": (),
+        "core_concepts": tuple(core or ()),
+        "cues": tuple({"label": value, "description": value} for value in cue or ()),
+        "thinking_stages": (),
+        "candidate_filter": None,
+        "top_k": top_k,
+        "grouping": grouping,
+        "passages_per_group": passages_per_group,
+        "include_trace": explain,
+    }
+    parameters: list[InputParameter] = []
+    for field, path in (
+        ("context", context),
+        ("vector", vector_ref),
+        ("candidate_pool", candidate_pool),
+        ("thinking_stages", thinking_stages),
+        ("candidate_filter", candidate_filter),
+    ):
+        if path is not None:
+            parameters.append(json_parameter(f"request.{field}", path))
+    value = cast(
+        dict[str, object],
+        application_action(ctx, "wave.query", request=request, input_parameters=parameters),
     )
-
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.wave.query(request)
-
-    value = run_async(run())
     if options(ctx).json_mode:
         emit(ctx, value)
     else:
@@ -206,11 +181,10 @@ def read(
     candidate: str,
     sources: Annotated[bool, typer.Option("--sources")] = False,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.wave.read(snapshot, candidate, sources=sources)
-
-    value = run_async(run())
+    value = cast(
+        dict[str, object],
+        application_action(ctx, "wave.read", snapshot, candidate, sources=sources),
+    )
     if options(ctx).json_mode:
         emit(ctx, value)
     else:
@@ -225,10 +199,10 @@ def segment(
     snapshot: str,
     context: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
 ) -> None:
-    fragments = _context(context)
-
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.wave.segment(snapshot, fragments)
-
-    emit(ctx, run_async(run()))
+    value = application_action(
+        ctx,
+        "wave.segment",
+        snapshot,
+        input_parameters=(json_parameter("fragments", context),),
+    )
+    emit(ctx, cast(dict[str, object], value))

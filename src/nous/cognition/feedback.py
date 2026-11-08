@@ -29,9 +29,10 @@ from .retrieval.contracts import (
     QueryResult,
 )
 from .scope import NamespaceOperations
+from .writing.reading import Target
 
 if TYPE_CHECKING:
-    from .writing.reading import RecordReader, Target
+    from .writing.reading import RecordReader
 
 Category = Literal["usefulness", "agreement", "accuracy", "retrieval"]
 Value = Literal["positive", "negative", "neutral"]
@@ -269,7 +270,7 @@ class FeedbackOperations:
         result: QueryResult,
         category: Category,
         *,
-        target: DeliveredSelection | None = None,
+        target: DeliveredSelection | str | None = None,
         value: Value | None = None,
         comment: str | None = None,
         author: str | None = None,
@@ -292,6 +293,13 @@ class FeedbackOperations:
                 differs from its snapshot candidate.
         """
         async with self.execution.operation("feedback.record_query"):
+            if isinstance(target, str):
+                matches = [item for item in result.delivery if item.candidate_ref.key == target]
+                if len(matches) != 1:
+                    raise NousError(
+                        "input.invalid_feedback", "Candidate is not a unique delivered selection"
+                    )
+                target = matches[0]
             async with self.database.read() as tx:
                 ns = await self._namespace_in(tx, namespace or result.context.namespace_id)
             context = result.context

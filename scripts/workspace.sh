@@ -26,4 +26,7 @@ for nous_bin in "$UV_PROJECT_ENVIRONMENT/bin" "$NOUS_REPO_ROOT/temp/tools/codegr
     case ":$PATH:" in *":$nous_bin:"*) ;; *) PATH="$nous_bin:$PATH" ;; esac
 done
 export PATH
+if [ "${1:-}" = "env" ]; then
+    return 0
+fi
 uv run --no-project --with tomlkit python -B "$NOUS_REPO_ROOT/scripts/workspace.py" "${1:-init}" || return $?

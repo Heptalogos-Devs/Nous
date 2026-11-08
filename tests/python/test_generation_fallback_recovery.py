@@ -1,4 +1,4 @@
-"""A durable prepared identity also covers an actually selected fallback route."""
+"""A successful fallback response can be restored after reopening."""
 
 import asyncio
 import json
@@ -7,8 +7,7 @@ from pathlib import Path
 
 from model_support import configure_models, model_server
 
-from nous.models.configuration import ModelRoute
-from nous.models.requests import PreparedGeneration
+from nous.models.generation import GenerationRequest
 from nous.runtime.bootstrap import open_instance
 
 
@@ -64,50 +63,25 @@ def test_fallback_response_is_reused_after_reopen(tmp_path: Path) -> None:
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("fallback source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
-
-                async def prepare_route(route: ModelRoute) -> PreparedGeneration:
-                    result = await runtime.generation.prepare_group(
-                        plan.frozen, plan.batches[0], snapshot, route=route
-                    )
-                    assert isinstance(result, PreparedGeneration)
-                    return result
-
-                result = await runtime.generation.produce_prepared(
-                    prepared,
-                    producer_key="fallback",
-                    request_identity="fallback-input-and-plan-v1",
-                    prepare_route=prepare_route,
+                request = GenerationRequest("read", selected)
+                result = await runtime.generation.produce(
+                    request, computation_key="fallback", snapshot=snapshot
                 )
                 assert result.outputs["output"].data == b"Fallback output."
                 assert len(requests) == 2
                 assert [request["temperature"] for request in requests] == [0.1, 0.7]
             async with open_instance(instance, environment={}) as runtime:
+                await runtime.configuration.update({"presets.primary.temperature": 0.2})
                 snapshot = runtime.configuration.snapshot
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
-
-                async def prepare_route_again(route: ModelRoute) -> PreparedGeneration:
-                    result = await runtime.generation.prepare_group(
-                        plan.frozen, plan.batches[0], snapshot, route=route
-                    )
-                    assert isinstance(result, PreparedGeneration)
-                    return result
-
-                restored = await runtime.generation.produce_prepared(
-                    prepared,
-                    producer_key="fallback",
-                    request_identity="fallback-input-and-plan-v1",
-                    prepare_route=prepare_route_again,
+                restored = await runtime.generation.produce(
+                    request, computation_key="fallback", snapshot=snapshot
                 )
                 assert restored.outputs["output"].data == b"Fallback output."
                 assert len(requests) == 2
+                await runtime.generation.produce(
+                    request, computation_key="new-computation", snapshot=snapshot
+                )
+                assert len(requests) == 3
+                assert requests[-1]["temperature"] == 0.2
 
         asyncio.run(scenario())

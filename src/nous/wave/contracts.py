@@ -389,7 +389,7 @@ class ProjectionUnit(WaveValue):
 
     signature: str
     input_signature: str
-    input_payload: dict[str, JsonValue]
+    roots: dict[str, JsonValue]
     document_key: str
     document: dict[str, JsonValue]
     candidates: tuple[dict[str, JsonValue], ...]
@@ -399,8 +399,8 @@ class ProjectionUnit(WaveValue):
     candidate_rows: tuple[int, ...]
 
 
-class PreparedSnapshot(WaveValue):
-    """Published immutable files and their complete, same-build registration data."""
+class SnapshotDraft(WaveValue):
+    """Frozen projection used to register a durable prepared snapshot."""
 
     ref: SnapshotRef
     view: CorpusView
@@ -414,11 +414,16 @@ class PreparedSnapshot(WaveValue):
     index_location: str
     layout: dict[str, JsonValue]
     units: tuple[ProjectionUnit, ...]
-    vector_mappings: tuple[dict[str, JsonValue], ...]
-    artifact_ids: tuple[str, ...]
-    native_manifest: dict[str, str]
     summary: dict[str, JsonValue]
     created_at: str
+
+
+class PreparedSnapshot(WaveValue):
+    """Identity of a durably prepared or already adopted snapshot."""
+
+    ref: SnapshotRef
+    build_signature: str
+    summary: dict[str, JsonValue]
 
 
 class ContextContent(WaveValue):

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
@@ -19,7 +17,6 @@ from nous.common.operations import add_error_context, record_completed
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
-    InputGroup,
     InputSpec,
     OutputMapping,
     ProcessingResult,
@@ -30,9 +27,8 @@ from nous.content.contracts import (
 from nous.content.results import ResultStore
 from nous.media.contracts import PreparedSource
 from nous.models.configuration import ModelRoute
-from nous.runtime.execution import ExecutionManager, OperationContext
+from nous.runtime.execution import ExecutionManager
 
-from ..contracts import ReadingInput
 from ..input import RequestGroup
 from ..requests import FrozenTask, PreparedGeneration, UnavailableTask
 from . import inspection
@@ -40,7 +36,6 @@ from .computation import (
     FrozenLanguageTask,
     freeze_task,
     load_task,
-    reading_value,
 )
 from .contracts import (
     GenerationOutcome,
@@ -49,7 +44,6 @@ from .contracts import (
     PreparedProduction,
     ProducedTask,
 )
-from .identity import capture_invocation
 from .preparation import GenerationPreparation
 from .response import ResponseRecovery
 from .transcription import TranscriptionOperations
@@ -68,9 +62,8 @@ class GenerationOperations:
     """Coordinate language preparation, execution and result adoption.
 
     Only the active bounded request is materialized. Use ``produce`` when a
-    caller must combine a completed model output with its own adoption; use
-    ``run_group`` to execute and adopt a group directly. Dependencies are
-    borrowed from the runtime.
+    caller must combine a completed model output with its own adoption. Dependencies
+    are borrowed from the runtime.
     """
 
     def __init__(
@@ -97,10 +90,6 @@ class GenerationOperations:
         )
         self.accept_inputs = self.preparation.accept_inputs
         self.prepare_input = self.preparation.prepare_input
-        self.prepare_group = self.preparation.prepare_group
-        self.freeze_transcription = self.transcription.freeze_transcription
-        self.transcribe = self.transcription.transcribe
-        self.language_sources = self.transcription.language_sources
 
     async def freeze_language_task(
         self,
@@ -245,19 +234,15 @@ class GenerationOperations:
                 frozen,
                 request.inputs,
                 snapshot,
-                question=request.question,
-                instructions=request.instructions,
-                schema=request.schema,
                 document_mode=request.document_mode,
                 without_audio=request.without_audio,
                 per_batch=request.mode == "independent_batches",
             )
-            if len(prepared.batches) != 1:
+            if len(prepared.input_plan.request_groups) != 1:
                 raise NousError(
                     "model.single_computation_required",
                     "This computation requires one semantic request group",
                 )
-            assert prepared.input_plan is not None
             selected_inputs = prepared.input_plan.selected_inputs
             task_ref = (
                 request.task
@@ -277,9 +262,26 @@ class GenerationOperations:
                         transcription=retained.transcription,
                     ),
                 )
+            context_sources = tuple(
+                [
+                    PreparedSource(
+                        key=group.key,
+                        name=group.name,
+                        text="\n".join(
+                            [
+                                await self.results.artifacts.read_selection(part.content)
+                                for part in group.parts
+                            ]
+                        ),
+                        group=group,
+                        metadata={"representation": group.parts[0].representation},
+                    )
+                    for group in request.context
+                ]
+            )
             return await self._produce_group(
                 prepared.frozen,
-                prepared.batches[0],
+                prepared.input_plan.request_groups[0],
                 snapshot,
                 question=request.question,
                 instructions=request.instructions,
@@ -291,71 +293,8 @@ class GenerationOperations:
                 request_identity=identity,
                 selected_inputs=selected_inputs,
                 dependencies=(*request.dependencies, task_ref.descriptor),
-                producer_locked=True,
+                extra_sources=context_sources,
             )
-
-    async def run_group(
-        self,
-        frozen: FrozenTask,
-        group: RequestGroup,
-        snapshot: ConfigSnapshot,
-        *,
-        question: str = "",
-        instructions: str = "",
-        schema: dict[str, JsonValue] | None = None,
-        extra_sources: Sequence[PreparedSource] = (),
-        completed: list[str] | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        on_prepared: Callable[[PreparedGeneration], None] | None = None,
-        parameters: Mapping[str, JsonValue] | None = None,
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
-        frozen_task_ref: ArtifactRef | None = None,
-    ) -> ProcessingResult:
-        """Produce and adopt one semantic group using the supplied snapshot.
-
-        Model computation and adoption are separate stages. When composing an
-        atomic adoption with another owner, use ``produce`` and adopt its output
-        within the caller's transaction instead.
-
-        Returns:
-            The committed processing result for the group.
-
-        Raises:
-            NousError: If preparation, model execution or result adoption fails.
-                An adoption failure retains successful computation as recovery
-                context on the error.
-        """
-        async with self.execution.operation("model.generate", snapshot):
-            produced = await self._produce_group(
-                frozen,
-                group,
-                snapshot,
-                question=question,
-                instructions=instructions,
-                schema=schema,
-                extra_sources=extra_sources,
-                completed=completed,
-                on_delta=on_delta,
-                on_prepared=on_prepared,
-                dependencies=dependencies,
-                frozen_task_ref=frozen_task_ref,
-            )
-            response_key = produced.parameters.get("response_producer_key")
-            if parameters:
-                produced = replace(
-                    produced,
-                    parameters={
-                        **produced.parameters,
-                        **parameters,
-                        "response_producer_key": response_key,
-                    },
-                )
-            result_key = (
-                response_key.removesuffix(":response") + ":result"
-                if isinstance(response_key, str) and response_key.endswith(":response")
-                else None
-            )
-            return await self._adopt(produced, producer_key=result_key)
 
     async def _produce_group(
         self,
@@ -375,7 +314,6 @@ class GenerationOperations:
         request_identity: str | None = None,
         selected_inputs: SelectedInputs | None = None,
         dependencies: Sequence[ArtifactRef | ResultRef] = (),
-        producer_locked: bool = False,
     ) -> ProducedTask:
         """Compute one semantic group without adopting its named outputs.
 
@@ -393,44 +331,12 @@ class GenerationOperations:
             NousError: If no eligible route can prepare or complete the request.
         """
         completed = completed if completed is not None else []
-        async with self.execution.operation("model.generate", snapshot):
+        async with self.execution.operation("model.generate", snapshot) as context:
             selected_inputs = selected_inputs or group.selected_inputs
-            identity = (
-                request_identity
-                or hashlib.sha256(
-                    json.dumps(
-                        {
-                            "task": frozen.task,
-                            "prompt": frozen.resource.execution_signature
-                            if frozen.resource
-                            else None,
-                            "question": question,
-                            "instructions": instructions,
-                            "schema": schema,
-                            "inputs": selected_inputs.identity(),
-                            "range": group.route_inputs.identity(),
-                            "extra_sources": reading_value(
-                                ReadingInput(sources=tuple(extra_sources))
-                            ),
-                        },
-                        sort_keys=True,
-                        ensure_ascii=False,
-                    ).encode()
-                ).hexdigest()
-            )
-            if producer_key is not None:
-                accepted = await self.results.find_producer(producer_key + ":response")
-                if accepted is not None:
-                    if accepted.parameters.get("request_identity") != identity:
-                        raise NousError(
-                            "content.producer_conflict",
-                            "Saved response belongs to a different language request",
-                            details={"producer_key": producer_key},
-                        )
-                    return await self.recover_response(accepted.ref, snapshot)
+            producer_key = producer_key or "generation:" + str(uuid4())
 
             async def resolve(route: ModelRoute | None = None) -> PreparedGeneration:
-                request = await self.prepare_group(
+                request = await self.preparation.prepare_group(
                     frozen,
                     group,
                     snapshot,
@@ -446,18 +352,40 @@ class GenerationOperations:
                 assert isinstance(request, PreparedGeneration)
                 return request
 
-            prepare = await resolve()
-            produce = self._produce_prepared_locked if producer_locked else self.produce_prepared
-            return await produce(
-                prepare,
-                on_delta=on_delta,
-                prepare_route=resolve,
-                producer_key=producer_key,
-                frozen_task_ref=frozen_task_ref,
-                request_identity=identity,
-                selected_inputs=selected_inputs,
-                dependencies=dependencies,
+            prepared = await resolve()
+            if on_delta is None:
+                generated = await self.executor.execute(
+                    prepared, context=context, prepare_route=resolve
+                )
+            else:
+                async with self.executor.stream(
+                    prepared, context=context, prepare_route=resolve
+                ) as stream:
+                    async for delta in stream:
+                        on_delta(delta)
+                    if stream.result is None:
+                        raise NousError(
+                            "model.incomplete_stream", "The stream returned no completed result"
+                        )
+                    generated = stream.result
+            reading = generated.reading or prepared.compiled.reading
+            response_key = producer_key + ":response"
+            pending = PendingResponse(
+                generated,
+                None,
+                reading,
+                tuple(source.group for source in reading.sources if source.group),
+                request_identity or producer_key,
+                response_key,
+                frozen_task_ref,
+                selected_inputs,
+                tuple(dependencies),
+                self.executor.compiler.catalog.tasks[
+                    str(generated.request["contract_id"])
+                ].interpretation_contract(),
             )
+            self.responses.pending[response_key] = pending
+            return await self.responses.resume_in_lock(pending)
 
     async def run_input(
         self,
@@ -465,7 +393,6 @@ class GenerationOperations:
         input: InputValue | Sequence[InputValue],
         snapshot: ConfigSnapshot,
         *,
-        selection: SourceSelection | None = None,
         question: str = "",
         instructions: str = "",
         schema: dict[str, JsonValue] | None = None,
@@ -484,10 +411,6 @@ class GenerationOperations:
                 task,
                 input,
                 snapshot,
-                selection=selection,
-                question=question,
-                instructions=instructions,
-                schema=schema,
                 document_mode=document_mode,
                 without_audio=without_audio,
                 texts=texts,
@@ -495,8 +418,8 @@ class GenerationOperations:
             )
             completed.extend(prepared.preparations)
             try:
-                for plan in prepared.batches:
-                    result = await self.run_group(
+                for plan in prepared.input_plan.request_groups:
+                    produced = await self._produce_group(
                         prepared.frozen,
                         plan,
                         snapshot,
@@ -507,6 +430,11 @@ class GenerationOperations:
                         on_delta=on_delta,
                         on_prepared=on_prepared,
                     )
+                    response_key = produced.parameters.get("response_producer_key")
+                    assert isinstance(response_key, str) and response_key.endswith(":response")
+                    result = await self._adopt(
+                        produced, producer_key=response_key.removesuffix(":response") + ":result"
+                    )
                     results.append(result)
                     completed.append(result.ref.identifier)
                     if on_completed:
@@ -516,7 +444,8 @@ class GenerationOperations:
                     "artifacts": [artifact.ref.identifier for artifact in prepared.artifacts],
                     "completed_result_refs": list[JsonValue](completed),
                     "unfinished_coverage": [
-                        batch.coverage for batch in prepared.batches[len(results) :]
+                        batch.coverage
+                        for batch in prepared.input_plan.request_groups[len(results) :]
                     ],
                 }
                 record_completed(completed)
@@ -525,7 +454,10 @@ class GenerationOperations:
             return GenerationOutcome(
                 prepared.artifacts,
                 tuple(results),
-                {**prepared.coverage, "actual": [result.coverage for result in results]},
+                {
+                    **prepared.input_plan.requested_coverage,
+                    "actual": [result.coverage for result in results],
+                },
                 tuple(completed),
             )
 
@@ -551,28 +483,6 @@ class GenerationOperations:
                 return accepted
             produced = await self.produce(request, computation_key=key, snapshot=snapshot)
             return await self._adopt(produced, producer_key=key + ":result")
-
-    async def run_prepared(
-        self,
-        prepared: PreparedGeneration,
-        *,
-        inputs: Sequence[InputGroup] | None = None,
-        coverage: Mapping[str, object] | None = None,
-        context: OperationContext | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
-    ) -> ProcessingResult:
-        async with self.execution.operation("model.generate", prepared.snapshot):
-            return await self._adopt(
-                await self.produce_prepared(
-                    prepared,
-                    inputs=inputs,
-                    coverage=coverage,
-                    context=context,
-                    on_delta=on_delta,
-                    prepare_route=prepare_route,
-                )
-            )
 
     async def prepare_adoption(
         self, produced: ProducedTask, *, producer_key: str | None = None
@@ -603,7 +513,6 @@ class GenerationOperations:
             produced.parameters,
             produced.coverage,
             producer_key,
-            produced.completed_stage_refs,
             produced.dependencies,
             mappings,
         )
@@ -652,164 +561,6 @@ class GenerationOperations:
                 recovery=prepared or produced,
             )
             raise
-
-    async def produce_prepared(
-        self,
-        prepared: PreparedGeneration,
-        *,
-        inputs: Sequence[InputGroup] | None = None,
-        coverage: Mapping[str, object] | None = None,
-        context: OperationContext | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
-        producer_key: str | None = None,
-        frozen_task_ref: ArtifactRef | None = None,
-        request_identity: str | None = None,
-        selected_inputs: SelectedInputs | None = None,
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
-    ) -> ProducedTask:
-        """Execute or recover a prepared request under a stable semantic identity.
-
-        A keyed callback that can prepare fallback routes must supply a caller
-        identity covering its deferred inputs and behavior. Transport observers
-        and preview/configuration version metadata do not identify a computation.
-        """
-        key = producer_key or "generation:" + str(uuid4())
-        lock = self._computation_locks.setdefault(key, asyncio.Lock())
-        async with self.execution.keyed_operation(
-            "model.prepared_identity",
-            lock,
-            prepared.snapshot,
-            deadline=context.deadline if context is not None else None,
-        ):
-            definition = self.executor.compiler.catalog.tasks[
-                prepared.compiled.resource.manifest.contract_id
-            ]
-            invocation = await capture_invocation(
-                self.execution,
-                prepared,
-                definition=definition,
-                producer_key=producer_key,
-                caller_identity=request_identity,
-                prepare_route=prepare_route,
-                inputs=inputs,
-                coverage=coverage,
-                selected_inputs=selected_inputs,
-                dependencies=dependencies,
-                frozen_task_ref=frozen_task_ref,
-            )
-            captured = invocation.captured
-            return await self._produce_prepared_locked(
-                captured.prepared,
-                inputs=captured.inputs,
-                coverage=captured.coverage,
-                context=context,
-                on_delta=on_delta,
-                prepare_route=invocation.prepare_route,
-                producer_key=key,
-                frozen_task_ref=captured.frozen_task_ref,
-                request_identity=captured.identity,
-                selected_inputs=captured.selected_inputs,
-                dependencies=captured.dependencies,
-            )
-
-    async def _produce_prepared_locked(
-        self,
-        prepared: PreparedGeneration,
-        *,
-        inputs: Sequence[InputGroup] | None = None,
-        coverage: Mapping[str, object] | None = None,
-        context: OperationContext | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
-        producer_key: str | None = None,
-        frozen_task_ref: ArtifactRef | None = None,
-        request_identity: str,
-        selected_inputs: SelectedInputs | None = None,
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
-    ) -> ProducedTask:
-        async with self.execution.operation("model.generate", prepared.snapshot) as active:
-            producer_key = producer_key or "generation:" + str(uuid4())
-            response_key = producer_key + ":response"
-            identity = request_identity
-            accepted = await self.results.find_producer(response_key)
-            if accepted is not None:
-                expected_inputs = (
-                    [item.model_dump(mode="json") for item in inputs]
-                    if inputs is not None
-                    else None
-                )
-                if (
-                    accepted.parameters.get("request_identity") != identity
-                    or accepted.parameters.get("requested_inputs") != expected_inputs
-                    or accepted.parameters.get("requested_coverage")
-                    != (dict(coverage) if coverage is not None else None)
-                    or accepted.parameters.get("frozen_task_ref")
-                    != (frozen_task_ref.model_dump(mode="json") if frozen_task_ref else None)
-                    or accepted.parameters.get("selected_inputs")
-                    != (selected_inputs.model_dump(mode="json") if selected_inputs else None)
-                    or accepted.dependencies != tuple(dependencies)
-                ):
-                    raise NousError(
-                        "content.producer_conflict",
-                        "Saved response belongs to a different language request",
-                        details={"producer_key": producer_key},
-                    )
-                await self.responses.forget(response_key)
-                return await self.recover_response(accepted.ref, prepared.snapshot)
-            pending = await self.responses.pending_for(response_key)
-            if pending is not None:
-                if (
-                    pending.identity != identity
-                    or pending.requested_inputs != (tuple(inputs) if inputs is not None else None)
-                    or pending.requested_coverage
-                    != (dict(coverage) if coverage is not None else None)
-                    or pending.frozen_task_ref != frozen_task_ref
-                    or pending.selected_inputs != selected_inputs
-                    or pending.dependencies != tuple(dependencies)
-                ):
-                    raise NousError(
-                        "content.producer_conflict",
-                        "Saved response belongs to a different language request",
-                        details={"producer_key": producer_key},
-                    )
-                return await self.responses.resume_in_lock(
-                    pending, inputs=inputs, coverage=coverage
-                )
-            if on_delta is None:
-                generated = await self.executor.execute(
-                    prepared, context=context or active, prepare_route=prepare_route
-                )
-            else:
-                async with self.executor.stream(
-                    prepared, context=context or active, prepare_route=prepare_route
-                ) as stream:
-                    async for delta in stream:
-                        on_delta(delta)
-                    if stream.result is None:
-                        raise NousError(
-                            "model.incomplete_stream", "The stream returned no completed result"
-                        )
-                    generated = stream.result
-            reading = generated.reading or prepared.compiled.reading
-            pending = PendingResponse(
-                generated,
-                None,
-                reading,
-                tuple(source.group for source in reading.sources if source.group),
-                identity,
-                response_key,
-                frozen_task_ref,
-                selected_inputs,
-                tuple(dependencies),
-                self.executor.compiler.catalog.tasks[
-                    str(generated.request["contract_id"])
-                ].interpretation_contract(),
-                tuple(inputs) if inputs is not None else None,
-                cast(dict[str, JsonValue], dict(coverage)) if coverage is not None else None,
-            )
-            self.responses.pending[response_key] = pending
-            return await self.responses.resume_in_lock(pending, inputs=inputs, coverage=coverage)
 
     async def resume_response(
         self, pending: PendingResponse | str, snapshot: ConfigSnapshot

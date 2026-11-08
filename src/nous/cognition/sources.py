@@ -75,11 +75,13 @@ class SourceResolver:
                 if isinstance(source, SourceBinding):
                     binding = source if preserve_keys else source.model_copy(update={"key": key})
                 elif isinstance(source, RevisionSelection):
+                    _, revision, _ = await self.reader.resolve_in(tx, source.revision, ns.id)
                     binding = SourceBinding(
                         key=key,
                         selections=source.selections,
                         owner_revision=source.revision,
                         usage=selected_usage,
+                        name=revision["title"],
                     )
                 elif isinstance(source, ContentSelection):
                     binding = SourceBinding(key=key, selections=(source,), usage=selected_usage)
@@ -227,12 +229,24 @@ class SourceResolver:
             coordinates: list[ContentSelection] = []
             for part in group.parts:
                 for target in source.selections:
-                    try:
-                        origins = await self.artifacts.map_origins(part.content, target.artifact)
-                    except NousError as error:
-                        if error.code == "content.origin_unmapped":
-                            continue
-                        raise
+                    # Preparation already records the selected original range for
+                    # transformed media. Re-resolving from the whole converted
+                    # artifact loses that range because image/video bodies do not
+                    # expose text byte coordinates.
+                    origins = tuple(
+                        origin
+                        for origin in part.origins
+                        if origin.origin.artifact == target.artifact
+                    )
+                    if not origins:
+                        try:
+                            origins = await self.artifacts.map_origins(
+                                part.content, target.artifact
+                            )
+                        except NousError as error:
+                            if error.code == "content.origin_unmapped":
+                                continue
+                            raise
                     for origin in origins:
                         try:
                             target.selection.restrict(origin.origin.selection)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from time import perf_counter
 from typing import cast
@@ -36,8 +37,8 @@ from .contracts import (
     SnapshotRef,
     WaveQuery,
 )
-from .manifests import encode_json
 from .query import WaveQueries
+from .serialization import encode_json
 from .snapshots import WaveSnapshots, build_profile, view_profile
 
 
@@ -147,14 +148,11 @@ class WaveOperations:
                     "wave.space_conflict", "Manifest and command select different spaces"
                 )
             profile = self.resolve_build_profile(space or view.space)
-            prepared = await self.prepare_build(view, profile)
-            publish_started = perf_counter()
-            try:
+            async with self.prepare_build(view, profile) as prepared:
+                publish_started = perf_counter()
                 async with self.database.write() as tx:
                     descriptor = await self.accept_in(tx, prepared)
                     await self.promote_in(tx, descriptor.ref)
-            finally:
-                self.release_prepared(prepared)
             get_logger(__name__).info(
                 "wave.publish.completed",
                 extra={
@@ -192,20 +190,16 @@ class WaveOperations:
             }
         )
 
-    async def prepare_build(
+    def prepare_build(
         self, view: CorpusView, profile: ResolvedBuildProfile, *, build_key: str | None = None
-    ) -> PreparedSnapshot:
-        async with self.execution.operation("wave.prepare_build"):
-            return await self.snapshots.prepare_build(view, profile, build_key=build_key)
+    ) -> AbstractAsyncContextManager[PreparedSnapshot]:
+        return self.snapshots.prepare_build(view, profile, build_key=build_key)
 
     async def accept_in(self, tx: WriteTx, prepared: PreparedSnapshot) -> SnapshotDescriptor:
         return await self.snapshots.accept_in(tx, prepared)
 
     async def promote_in(self, tx: WriteTx, ref: SnapshotRef) -> None:
         await self.snapshots.promote_in(tx, ref)
-
-    def release_prepared(self, prepared: PreparedSnapshot) -> None:
-        self.snapshots.release_prepared(prepared)
 
     async def retain_in(
         self, tx: WriteTx, ref: SnapshotRef, *, owner_kind: str, owner_id: str

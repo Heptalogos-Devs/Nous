@@ -14,7 +14,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
-from nous.runtime.execution import ExecutionManager
+from nous.runtime.execution import ExecutionManager, acquire_owned, stop_process
 
 from .configuration import MediaConfig
 
@@ -41,10 +41,13 @@ class AudioVisual:
 
     async def process(self, *args: str) -> bytes:
         try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            process = await acquire_owned(
+                asyncio.create_subprocess_exec(
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                ),
+                stop_process,
             )
         except OSError as exc:
             raise NousError(
@@ -204,8 +207,9 @@ class AudioVisual:
             yield {}
             return
         await self.execution.blocking(temporary.mkdir, parents=True, exist_ok=True)
-        directory = await self.execution.blocking(
-            tempfile.TemporaryDirectory, prefix="frames-", dir=temporary
+        directory = await acquire_owned(
+            self.execution.blocking(tempfile.TemporaryDirectory, prefix="frames-", dir=temporary),
+            lambda value: self.execution.control_blocking(value.cleanup),
         )
         try:
             output = Path(directory.name)

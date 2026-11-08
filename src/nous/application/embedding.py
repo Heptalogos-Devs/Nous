@@ -14,20 +14,17 @@ import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.common.errors import NousError
-from nous.common.identifier import identifier_type
 from nous.common.operations import record_completed
-from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     ArtifactRef,
     ContentSelection,
     InputGroup,
     InputPart,
-    InputSpec,
     OutputContent,
     ResultRef,
+    TextInput,
 )
-from nous.content.input_access import current_input_access
 from nous.content.results import ResultStore
 from nous.models.contracts import EmbeddingResult
 from nous.models.embedding_store import EmbeddingSpaceRegistry, StoredVectorRow
@@ -75,44 +72,16 @@ class EmbeddingOperations:
         self.results, self.registry, self.executor = results, registry, executor
 
     async def _inputs(
-        self, inputs: Sequence[str], texts: Sequence[str], snapshot: ConfigSnapshot, *, adopt: bool
+        self, inputs: Sequence[TextInput], *, adopt: bool
     ) -> tuple[tuple[str, ...], tuple[ContentSelection, ...]]:
         values: list[str] = []
         selections: list[ContentSelection] = []
-        limit = snapshot.values.content.text_read_max_bytes
         for item in inputs:
             if adopt:
-                artifact = await self.artifacts.accept(
-                    InputSpec(kind="artifact", artifact=item)
-                    if identifier_type(item) == "art"
-                    else InputSpec(kind="file", path=item)
-                )
-                selections.append(ContentSelection(artifact=artifact.ref))
+                artifact = await self.artifacts.accept(item)
+                selections.append(ContentSelection(artifact=artifact.ref, selection=item.selection))
                 continue
-            if identifier_type(item) == "art":
-                artifact = await self.artifacts.get(item)
-                value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
-            else:
-                path = Path(item)
-                access = current_input_access.get()
-                if access is not None:
-                    path = await access.materialize(path)
-                if (await self.execution.blocking(path.stat)).st_size > limit:
-                    raise NousError(
-                        "content.too_large", "Input exceeds the configured text read limit"
-                    )
-                value = await self.execution.blocking(path.read_text, encoding="utf-8")
-                artifact = None
-            values.append(value)
-            if artifact is not None:
-                selections.append(ContentSelection(artifact=artifact.ref))
-        for value in texts:
-            if len(value.encode("utf-8")) > limit:
-                raise NousError("content.too_large", "Input exceeds the configured text read limit")
-            values.append(value)
-            if adopt:
-                artifact = await self.artifacts.ingest(value)
-                selections.append(ContentSelection(artifact=artifact.ref))
+            values.append(await self.artifacts.read_transient_text(item))
         return tuple(values), tuple(selections)
 
     @staticmethod
@@ -179,18 +148,16 @@ class EmbeddingOperations:
         record_completed(result.ref.identifier)
         return canonical
 
-    async def probe(
-        self, model_id: str, inputs: Sequence[str], texts: Sequence[str]
-    ) -> EmbeddingResult:
+    async def probe(self, model_id: str, inputs: Sequence[TextInput]) -> EmbeddingResult:
         async with self.execution.operation("embedding.probe") as context:
-            values, _ = await self._inputs(inputs, texts, context.settings, adopt=False)
+            values, _ = await self._inputs(inputs, adopt=False)
             return await self.executor.probe(model_id, values, context.settings, context=context)
 
     async def run(
-        self, space_id: str, purpose: Purpose, inputs: Sequence[str], texts: Sequence[str]
+        self, space_id: str, purpose: Purpose, inputs: Sequence[TextInput]
     ) -> EmbeddingOutcome:
-        async with self.execution.operation("embedding.run") as context:
-            _, sources = await self._inputs(inputs, texts, context.settings, adopt=True)
+        async with self.execution.operation("embedding.run"):
+            _, sources = await self._inputs(inputs, adopt=True)
             batch = await self.ensure(sources, space_id, purpose)
             results: dict[str, ResultRef] = {}
             artifacts: dict[str, ArtifactRef] = {}

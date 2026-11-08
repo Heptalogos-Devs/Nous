@@ -59,36 +59,36 @@ async def plan_inputs(
     contract: TaskDefinition | None = None,
 ) -> InputPlan:
     mode = "independent_batches" if per_batch else contract.input_mode if contract else "joint"
-    originals: list[tuple[Artifact, SourceSelection, SourceRole, str | None]] = []
+    originals: list[tuple[Artifact, SourceSelection, SourceRole, str, str | None]] = []
     for source in selected_inputs.sources:
         artifacts = await preparer.artifacts.get_many([item.artifact for item in source.selections])
         originals.extend(
-            (artifact, item.selection, source.role, source.slot_key)
+            (
+                artifact.model_copy(update={"display_name": source.display_name})
+                if source.display_name is not None
+                else artifact,
+                item.selection,
+                source.role,
+                source.slot_key,
+                source.display_name,
+            )
             for item, artifact in zip(source.selections, artifacts, strict=True)
         )
     facts = {item.artifact.id: item.details for item in selected_inputs.facts}
     plans: list[MediaPlan] = []
     batches: list[PreparedBatch] = []
-    chosen_inputs = tuple((artifact, supplied) for artifact, supplied, _, _ in originals)
+    chosen_inputs = tuple((artifact, supplied) for artifact, supplied, _, _, _ in originals)
     task_plans = (
         await contract.prepare_sources(chosen_inputs, preparer.artifacts) if contract else None
     )
-    explicit = {slot for _, _, _, slot in originals if slot is not None}
-    slots: list[str] = []
-    counter = 1
-    for _, _, _, declared in originals:
-        if declared is None:
-            while f"S{counter}" in explicit:
-                counter += 1
-            declared = f"S{counter}"
-            counter += 1
+    slots = [slot for _, _, _, slot, _ in originals]
+    for declared in slots:
         if any(char.isspace() for char in declared):
             raise NousError(
                 "model.invalid_source_slot", "Source slot keys cannot contain whitespace"
             )
-        slots.append(declared)
     roles: dict[str, SourceRole] = {}
-    for slot, (_, _, role, _) in zip(slots, originals, strict=True):
+    for slot, (_, _, role, _, _) in zip(slots, originals, strict=True):
         if slot in roles and roles[slot] != role:
             raise NousError(
                 "model.source_slot_conflict",
@@ -100,7 +100,7 @@ async def plan_inputs(
     fragments: Counter[str] = Counter()
     seen_keys: set[str] = set()
     route_batches: list[SelectedInputs] = []
-    for index, (artifact, supplied, role, _) in enumerate(originals, 1):
+    for index, (artifact, supplied, role, _, name) in enumerate(originals, 1):
         slot_key = slots[index - 1]
         fragments[slot_key] += 1
         chosen = supplied
@@ -149,7 +149,7 @@ async def plan_inputs(
                             selections=(
                                 ContentSelection(artifact=artifact.ref, selection=batch.selection),
                             ),
-                            display_name=artifact.display_name,
+                            display_name=name,
                         ),
                     ),
                     facts=selected_inputs.facts,
@@ -247,6 +247,10 @@ async def for_route(
         without_audio=request.without_audio,
         contract=request.contract,
     )
-    return replace(
-        request, batches=tuple(batch for group in plan.request_groups for batch in group.batches)
+    batches = tuple(batch for group in plan.request_groups for batch in group.batches)
+    coverage = (
+        plan.requested_coverage
+        if len(batches) != 1 or request.coverage.get("mode") == "joint"
+        else batches[0].coverage
     )
+    return replace(request, batches=batches, coverage=coverage)

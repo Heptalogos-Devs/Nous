@@ -1,7 +1,7 @@
-"""Bound keyed build locks to active or waiting work in the owning event loop."""
+"""Bound keyed locks to active or waiting work in the owning event loop."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Hashable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -12,12 +12,15 @@ class _Entry:
     users: int = 0
 
 
-class KeyedLocks:
+class KeyedLocks[K: Hashable]:
     def __init__(self) -> None:
-        self._entries: dict[str, _Entry] = {}
+        self._entries: dict[K, _Entry] = {}
+
+    def active_keys(self) -> set[K]:
+        return set(self._entries)
 
     @asynccontextmanager
-    async def hold(self, key: str) -> AsyncGenerator[None]:
+    async def hold(self, key: K) -> AsyncGenerator[None]:
         entry = self._entries.setdefault(key, _Entry())
         entry.users += 1
         try:

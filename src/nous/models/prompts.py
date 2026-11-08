@@ -36,7 +36,6 @@ from pydantic_ai.messages import (
 )
 
 from nous.common.errors import NousError
-from nous.content.input_access import current_input_access
 from nous.media.contracts import PreparedSource
 from nous.presentation import translate
 
@@ -600,19 +599,8 @@ class PromptCatalog:
         if "/" in prompt_id:
             raise NousError("prompt.invalid_id", "Prompt ID must be a single directory name")
         # Validate in its current directory before publishing the instance resource.
-        access = current_input_access.get()
-        if access is None:
-            source = source.resolve()
-            candidate = self._load(prompt_id, source, "import")
-        else:
-            # Fetch only the declared manifest and template dependencies from
-            # the client; unrelated files in the selected directory stay put.
-            source = source.absolute()
-
-            def read_client(path: Traversable) -> str:
-                return access.materialize_sync(Path(str(path))).read_text(encoding="utf-8")
-
-            candidate = self._load(prompt_id, source, "import", read_client)
+        source = source.resolve()
+        candidate = self._load(prompt_id, source, "import")
         target = self.directory / prompt_id
         target.mkdir(parents=True, exist_ok=True)
         (target / "prompt.toml").write_text(candidate.manifest_text, encoding="utf-8")

@@ -3,30 +3,27 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
+from pydantic import ConfigDict, ValidationError, model_validator
 
 from nous.common.errors import NousError
 from nous.runtime.execution import ExecutionManager
 
 from ..contracts import GenerationResult
+from .computation import SavedGeneration
 from .journal import RecoveryFiles
 
 
-class _SavedTranscription(BaseModel):
+class _SavedTranscription(SavedGeneration):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal[1] = 1
     producer_key: str
-    output: str
-    producer: dict[str, JsonValue]
-    usage: dict[str, JsonValue]
-    request: dict[str, JsonValue]
-    attempts: int
-    finish_reason: str | None
-    response: dict[str, JsonValue]
-    coverage: dict[str, JsonValue]
+
+    @model_validator(mode="after")
+    def validate_output(self) -> _SavedTranscription:
+        if not isinstance(self.output, str):
+            raise ValueError("saved transcription output must be text")
+        return self
 
     @classmethod
     def capture(cls, key: str, generated: GenerationResult) -> _SavedTranscription:
@@ -34,26 +31,7 @@ class _SavedTranscription(BaseModel):
             raise NousError("media.invalid_transcript", "Transcription returned an invalid result")
         return cls(
             producer_key=key,
-            output=generated.output,
-            producer=generated.producer,
-            usage=generated.usage,
-            request=generated.request,
-            attempts=generated.attempts,
-            finish_reason=generated.finish_reason,
-            response=generated.response,
-            coverage=generated.coverage,
-        )
-
-    def result(self) -> GenerationResult:
-        return GenerationResult(
-            output=self.output,
-            producer=self.producer,
-            usage=self.usage,
-            request=self.request,
-            attempts=self.attempts,
-            finish_reason=self.finish_reason,
-            response=self.response,
-            coverage=self.coverage,
+            **SavedGeneration.from_result(generated).model_dump(),
         )
 
 
@@ -74,7 +52,7 @@ class TranscriptionJournal:
         if raw is None:
             return None
         try:
-            return _SavedTranscription.model_validate(raw).result()
+            return _SavedTranscription.model_validate(raw).to_result()
         except ValidationError as error:
             raise self.files.invalid(error) from error
 

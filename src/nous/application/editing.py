@@ -10,9 +10,6 @@ from nous.cognition.contracts import RecordRef, RecordRevisionRef, RecordView
 from nous.cognition.writing.contracts import AfterWrite
 from nous.common.errors import NousError
 from nous.common.files import write_text
-from nous.configuration import Configuration
-from nous.content.input_access import current_input_access
-from nous.runtime.instance import InstanceLocator
 from nous.runtime.paths import ResolvedPaths
 
 
@@ -48,21 +45,16 @@ class EditSession(BaseModel):
         return session
 
     @classmethod
-    def resume(cls, path: Path, locator: InstanceLocator, kind: str) -> EditSession:
-        access = current_input_access.get()
-        descriptor = path.with_suffix(".json")
-        descriptor = access.resolve_sync(descriptor) if access is not None else descriptor.resolve()
+    def resume(cls, descriptor: Path, data: bytes, instance_id: str, kind: str) -> EditSession:
         try:
-            source = access.materialize_sync(descriptor) if access is not None else descriptor
-            session = cls.model_validate_json(source.read_bytes())
-        except (OSError, ValueError) as error:
+            session = cls.model_validate_json(data)
+        except ValueError as error:
             raise NousError(
                 "input.edit_session_invalid",
                 "Cannot read the edit recovery session.",
                 details={"session": str(descriptor)},
                 cause=error,
             ) from error
-        instance_id = Configuration(locator.config_file).snapshot.values.instance.id
         if (
             session.target.instance_id != instance_id
             or session.target.kind != kind
@@ -75,11 +67,6 @@ class EditSession(BaseModel):
                 details={"session": str(descriptor)},
             )
         return session.model_copy(update={"file": descriptor.with_suffix(".md")})
-
-    def read(self) -> str:
-        access = current_input_access.get()
-        source = access.materialize_sync(self.file) if access is not None else self.file
-        return source.read_bytes().decode("utf-8")
 
     def unchanged(self, body: str) -> bool:
         return hashlib.sha256(body.encode("utf-8")).hexdigest() == self.original_digest

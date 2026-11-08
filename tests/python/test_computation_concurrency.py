@@ -19,11 +19,11 @@ from nous.common.operations import exception_context
 from nous.content.contracts import OutputContent, SourceSelection
 from nous.media.audiovisual import AudioVisual
 from nous.media.derivatives import MediaDerivatives
-from nous.models.requests import PreparedGeneration
+from nous.models.generation import GenerationRequest
 from nous.runtime.bootstrap import open_instance
 
 
-def test_prepared_generation_same_key_reuses_and_checks_identity(tmp_path: Path) -> None:
+def test_generation_same_key_reuses_and_checks_identity(tmp_path: Path) -> None:
     requests: list[dict[str, object]] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -62,44 +62,26 @@ def test_prepared_generation_same_key_reuses_and_checks_identity(tmp_path: Path)
                 snapshot = runtime.configuration.snapshot
                 source = await runtime.artifacts.ingest("one source")
                 selected = await runtime.generation.accept_inputs(source, snapshot)
-                plan = await runtime.generation.prepare_input("read", selected, snapshot)
-                prepared = await runtime.generation.prepare_group(
-                    plan.frozen, plan.batches[0], snapshot
-                )
-                assert isinstance(prepared, PreparedGeneration)
+                request = GenerationRequest("read", selected)
                 values = await asyncio.gather(
                     *(
-                        runtime.generation.produce_prepared(prepared, producer_key="same")
+                        runtime.generation.produce(
+                            request, computation_key="same", snapshot=snapshot
+                        )
                         for _ in range(4)
                     )
                 )
                 assert len(requests) == 1
                 assert all(value.outputs["output"].data == b"successful output" for value in values)
-                await runtime.generation.produce_prepared(prepared, producer_key="same")
+                await runtime.generation.produce(request, computation_key="same", snapshot=snapshot)
                 assert len(requests) == 1
-                other_plan = await runtime.generation.prepare_input(
-                    "read", selected, snapshot, question="a different request"
-                )
-                other = await runtime.generation.prepare_group(
-                    other_plan.frozen,
-                    other_plan.batches[0],
-                    snapshot,
-                    question="a different request",
-                )
-                assert isinstance(other, PreparedGeneration)
+                other = GenerationRequest("read", selected, question="a different request")
                 with pytest.raises(NousError) as conflict:
-                    await runtime.generation.produce_prepared(other, producer_key="same")
+                    await runtime.generation.produce(
+                        other, computation_key="same", snapshot=snapshot
+                    )
                 assert conflict.value.code == "content.producer_conflict"
                 assert len(requests) == 1
-                await runtime.generation.produce_prepared(
-                    prepared, producer_key="explicit", request_identity="caller-supplied"
-                )
-                with pytest.raises(NousError) as explicit_conflict:
-                    await runtime.generation.produce_prepared(
-                        other, producer_key="explicit", request_identity="caller-supplied"
-                    )
-                assert explicit_conflict.value.code == "content.producer_conflict"
-                assert len(requests) == 2
                 prepare_outputs = runtime.results.prepare_outputs
 
                 async def fail_response(outputs: object) -> object:
@@ -109,13 +91,15 @@ def test_prepared_generation_same_key_reuses_and_checks_identity(tmp_path: Path)
 
                 with patch.object(runtime.results, "prepare_outputs", side_effect=fail_response):
                     with pytest.raises(OSError):
-                        await runtime.generation.produce_prepared(prepared, producer_key="pending")
-                assert len(requests) == 3
-                restored = await runtime.generation.produce_prepared(
-                    prepared, producer_key="pending"
+                        await runtime.generation.produce(
+                            request, computation_key="pending", snapshot=snapshot
+                        )
+                assert len(requests) == 2
+                restored = await runtime.generation.produce(
+                    request, computation_key="pending", snapshot=snapshot
                 )
                 assert restored.outputs["output"].data == b"successful output"
-                assert len(requests) == 3
+                assert len(requests) == 2
 
         asyncio.run(scenario())
 
@@ -346,7 +330,7 @@ main()
         assert details["artifact"] == retry_ref
         assert details["model_succeeded"] is True
         assert details["transcription_recovery_durable"] is True
-        assert details["producer_key"].startswith("transcription:")
+        assert details["producer_key"].startswith("transcription-response:")
         assert "original accepted Artifact" in details["recovery_instruction"]
         assert sum(path.endswith("/audio/transcriptions") for path in requests) == 2
         retried = subprocess.run(

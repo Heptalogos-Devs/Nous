@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
 from nous.content.contracts import ArtifactRef, ContentValue, InputGroup, OutputContent
@@ -73,31 +73,46 @@ def read_reading(value: Mapping[str, JsonValue]) -> ReadingInput:
     )
 
 
+class SavedGeneration(BaseModel):
+    """The model response fields shared by language and transcription recovery."""
+
+    output: JsonValue
+    producer: dict[str, JsonValue]
+    usage: dict[str, JsonValue]
+    request: dict[str, JsonValue]
+    attempts: int
+    finish_reason: str | None
+    response: dict[str, JsonValue]
+    coverage: dict[str, JsonValue]
+
+    @classmethod
+    def from_result(cls, generated: GenerationResult) -> SavedGeneration:
+        return cls.model_validate(generated, from_attributes=True)
+
+    def to_result(self, reading: ReadingInput | None = None) -> GenerationResult:
+        return GenerationResult(
+            output=self.output,
+            producer=self.producer,
+            usage=self.usage,
+            request=self.request,
+            attempts=self.attempts,
+            finish_reason=self.finish_reason,
+            response=self.response,
+            reading=reading,
+            coverage=self.coverage,
+        )
+
+
 def generated_value(generated: GenerationResult, reading: ReadingInput) -> dict[str, JsonValue]:
     return {
-        "output": generated.output,
-        "producer": generated.producer,
-        "usage": generated.usage,
-        "request": generated.request,
-        "attempts": generated.attempts,
-        "finish_reason": generated.finish_reason,
-        "response": generated.response,
-        "coverage": generated.coverage,
+        **SavedGeneration.from_result(generated).model_dump(mode="json"),
         "reading": reading_value(reading),
     }
 
 
 def read_generated(value: Mapping[str, JsonValue]) -> GenerationResult:
-    return GenerationResult(
-        output=value["output"],
-        producer=cast(dict[str, JsonValue], value["producer"]),
-        usage=cast(dict[str, JsonValue], value["usage"]),
-        request=cast(dict[str, JsonValue], value["request"]),
-        attempts=cast(int, value["attempts"]),
-        finish_reason=cast(str | None, value["finish_reason"]),
-        response=cast(dict[str, JsonValue], value["response"]),
-        reading=read_reading(cast(dict[str, JsonValue], value["reading"])),
-        coverage=cast(dict[str, JsonValue], value["coverage"]),
+    return SavedGeneration.model_validate(value).to_result(
+        read_reading(cast(dict[str, JsonValue], value["reading"]))
     )
 
 
@@ -157,7 +172,12 @@ async def freeze_task(
 
 
 async def load_task(
-    results: ResultStore, ref: ArtifactRef, snapshot: ConfigSnapshot, contracts: object
+    results: ResultStore,
+    ref: ArtifactRef,
+    snapshot: ConfigSnapshot,
+    contracts: object,
+    *,
+    check_bindings: bool = True,
 ) -> FrozenTask:
     import json
 
@@ -167,7 +187,7 @@ async def load_task(
         model = ModelConfig.model_validate(item["model"])
         current_model = snapshot.values.models.get(item["model_id"])
         current_provider = snapshot.values.providers.get(model.provider)
-        if (
+        if check_bindings and (
             current_model is None
             or current_model.model_dump(mode="json") != item["model"]
             or current_provider is None
@@ -178,7 +198,11 @@ async def load_task(
                 details={"model_id": item["model_id"]},
             )
         for key in ("endpoint", "protocol", "credential_ref"):
-            if current_provider.model_dump(mode="json")[key] != item["provider"][key]:
+            if (
+                check_bindings
+                and current_provider is not None
+                and current_provider.model_dump(mode="json")[key] != item["provider"][key]
+            ):
                 raise NousError(
                     "model.resource_binding",
                     "Frozen provider resource no longer matches the installed binding",
@@ -202,7 +226,7 @@ async def load_task(
         else None
     )
     # The installed task interpreter must still implement the frozen contract.
-    if resource is not None:
+    if resource is not None and check_bindings:
         from ..tasks import TaskCatalog
 
         catalog = cast(TaskCatalog, contracts)

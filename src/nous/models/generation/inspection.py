@@ -56,7 +56,6 @@ async def preview(
                 snapshot,
                 per_batch=per_batch,
             )
-            assert prepared.input_plan is not None
             plan, frozen = prepared.input_plan, prepared.frozen
         else:
             plan = await plan_inputs(
@@ -70,7 +69,7 @@ async def preview(
         previews: list[JsonValue] = []
         for group in plan.request_groups:
             if frozen:
-                request = await owner.prepare_group(
+                request = await owner.preparation.prepare_group(
                     frozen,
                     group,
                     snapshot,

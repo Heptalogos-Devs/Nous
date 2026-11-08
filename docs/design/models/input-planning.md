@@ -28,7 +28,7 @@ InputPlan 由 `models/input.py` 的完整规划能力拥有，GenerationOperatio
 
 TaskDefinition.text_input_mode 区分 lossless 与 structured。全文 rewrite 和 edit_target 采用 lossless；定义行、CRLF、间隙与尾部随实际输入保留。structured 任务可以附带块键与标题路径，其 TextView 仍持有完整所选原文。
 
-SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelection、role 和显示名称，SourceFacts 分别保存声明 MIME 与探测到的类型和已知形状。显示名称不进入请求身份。每一物理批次保留原始选择与该批范围；切换路线从这些值重新规划。
+SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelection、role 和显示名称，SourceFacts 分别保存声明 MIME 与探测到的类型和已知形状。模型可见的名称进入请求身份；每一物理批次保留原始选择与该批范围，切换路线从这些值重新规划。
 
 逻辑输入组保持用户输入顺序。固定局部键在计划形成后唯一分配，预览和实际执行一致；物化不重新编号。group 保存片段关系，不把一份 PDF 页图和文字当成两份独立来源。
 
@@ -42,7 +42,7 @@ SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelect
 
 选定路线成功时不准备其他路线的媒体或转写。ModelExecutor 只有在需要切换时才回调同一个 prepare_group；已知格式、能力或额度不足会跳过该路线并保留原因。文本主模型无法消费图片或缺少可用转写时，仍能选择有相应原生能力的备用模型。未选择的路线保持 deferred 状态。
 
-描述与结构化分别调用共同 run_group，消费同一个语义组。第二阶段从原件规划本路线表示，并显式附加已采用的 DESCRIPTION Artifact。配置的转写是所选路线需要时执行的语言前置阶段，结果独立采用；备用路线尚未选择时不运行它。
+描述与结构化分别调用共同生成操作，消费保存的原始分批选区。第二阶段从原件规划本路线表示，并显式附加已采用的 DESCRIPTION Artifact。配置的转写是所选路线需要时执行的语言前置阶段，结果独立采用；备用路线尚未选择时不运行它。
 
 preview 不发语言请求。所选路线依赖转写时返回 requires_transcription、路线与任务配置；可确定执行时展示一个实际准备值，后继路线列为 deferred_routes。task preview、run、probe 和媒体阶段共用同一选择与准备操作。
 

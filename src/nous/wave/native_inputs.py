@@ -13,7 +13,7 @@ from .assets import FrozenInputs
 from .contracts import (
     ResolvedBuildProfile,
 )
-from .manifests import (
+from .serialization import (
     encode_json,
 )
 

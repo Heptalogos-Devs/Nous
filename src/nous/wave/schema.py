@@ -42,6 +42,7 @@ snapshots = sa.Table(
     ),
     sa.Column("build_summary", sa.JSON, nullable=False),
     sa.Column("created_at", sa.String, nullable=False),
+    sa.Column("accepted", sa.Boolean, nullable=False, server_default=sa.true()),
 )
 
 projection_units = sa.Table(

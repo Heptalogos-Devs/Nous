@@ -25,6 +25,8 @@ ContentReadView (`content.contracts`):
 
 文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。没有可读表示也是正常的媒体视图，不尝试把二进制解为 UTF-8。表示由现有 inputs/parts/origins/outputs 查找，只选生产者在 parameters.representations 中按有名输出明确声明的已采用结果，并保留其实际覆盖；每项声明给出 kind，可用 sources 固定该输出的精确来源。转写、媒体描述、页图/媒体转换与确定性文本生产者声明实际表示，文稿写作和概念标注输出不进入已有表示。不能把另一页或较窄时段的描述冒充整个来源。表示的精确坐标换算使用生产者采用时登记的 OutputMapping，见[选区与正文](selection-and-text.md#已采用表示回原文)。
 
+内容读取、媒体准备和模型输出共用文本类型判断：`text/*`、JSON、XML 和 XHTML 按 UTF-8 文本处理，选区和原件身份贯穿各入口。
+
 默认阅读不运行新模型、不偷偷转写，也不为缺少描述标成失败。用户需要新解释时显式调用媒体操作。原件不存在或存储错误仍返回实际错误。
 
 RecordReader 和草稿的 `source_views` 按来源键保存有序 ContentReadView；ResultStore.read_view 的 `source_views` 与有名输出 `view` 使用同一形状。Wave 来源展开也使用该方法。CLI 只渲染 ContentReadView；无 PDF/audio/image 专属业务分支。程序可以持有正式引用，必要时通过现有 export/borrow_local 读取实际字节。

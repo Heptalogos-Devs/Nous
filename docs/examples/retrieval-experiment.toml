@@ -1,10 +1,6 @@
 # Paths and glob patterns are relative to the repository root.
 [corpus]
-text = [
-  "docs/**/*.md",
-  "src/**/*.md",
-  "temp/test-materials/Text/0-*.md",
-]
+text = ["docs/CURRENT.md", "docs/ARCHITECTURE.md", "docs/README.md", "docs/design/**/*.md", "docs/development/**/*.md", "docs/plans/*.md", "src/nous/*.md", "temp/test-materials/Text/0-*.md"]
 docstrings = ["src/nous/**/*.py"]
 
 [[draft]]
@@ -20,7 +16,7 @@ name = "猫咪视频"
 topic = "记录视频选段中观察到的互动"
 sources = [
   { path = "temp/test-materials/Video/0-cats-fighting.mp4", selection = { start_ms = 0, end_ms = 30000 } },
-  { path = "temp/test-materials/Image/Real/0-cats-fighting.jpg" },
+  { path = "temp/test-materials/Image/Photography/0-cats-fighting.jpg" },
 ]
 
 [[draft]]
@@ -41,18 +37,649 @@ topic = "概括报告所述问题、实现与结果"
 sources = [{ path = "temp/test-materials/PDF/01-code-report.pdf" }]
 
 [[query]]
-question = "一段话被多次转述，是否就成了许多独立的证人？"
+question = "谁能把模型写出的新内容变成正式记忆？"
 modes = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
-question = "搜索期间有人修改了文章，我读到的是哪个版本？"
+question = "有人在我查找期间修改了文章，我读到的是哪个版本？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
 
 [[query]]
-question = "总是觉得自己不够好，休息时害怕自己没有价值。"
+question = "旧文章已经收起来了，过去保存的引用还能打开吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
 
 [[query]]
-question = "怎么看到两只猫在浴室互相靠近的录像？"
+question = "一段话被多次转述，是否就成了许多彼此独立的证人？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
 
 [[query]]
-question = "音乐播放器截图里正在播放哪首歌，界面上有什么？"
+question = "为什么一篇长文章的很多相似片段不会挤满返回列表？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "两个人同时重试同一个失败任务，会重复调用模型吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "服务启动时进程里已经有别人的调度器，要怎样处理？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型请求失败，如何知道它重试过或改走其他路线？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型只收到视频的一部分时，如何告诉它看到的是哪一段？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "想改提示词时，从哪里知道模型会收到哪些字段和例子？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "正文改过以后，先前对旧段落的概念标注还会自动沿用吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "用户指出一段描述有误后，反馈如何和正文更正联系起来？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "素材放在不同数据域会发生什么，来源版本什么时候固定？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "如何只用自然语言修改文章中选定的局部而保留其他内容？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "搜索没有语言模型和向量服务时还能不能工作？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "上下文里展示来源链接，怎么避免机器地址干扰向量检索？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "持久任务重启后继续运行，如何保留完成过的阶段？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "应用如何保证后台任务结束之后才关闭正在使用的资源？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "有哪些功能已经可用，哪些认知能力还在后续计划？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "告诉我有哪些代码模块负责精确版本、草稿、来源与检索。"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "月亮并不自己发光，接受别人的帮助是否意味着软弱？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "总是觉得做得不够好，休息时害怕自己没有价值。"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "父母真心担心，但他们的关心逐渐替我决定了人生。"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "有些关系经得住时间，是因为艰难时依然陪在身边。"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "车库里那个迟迟不上楼的人，我后来怎样理解他？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "网页上的乱码故障被修好以后反而失去原来的美感。"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "个人网站为何是一处可以慢慢放入作品和生活的角落？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "技术改变生产却可能被少数人占有，这与理想社会有什么关系？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "A person afraid of resting thinks they must earn every ray of light."
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "A caring family member controls choices while believing this is love."
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "怎么看到猫互相追逐和对峙的录像？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "照片中两只猫彼此面对，它们的姿势是什么？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "哪段声音包含歌曲，人声和器乐有什么特点？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "代码报告涉及怎样的图结构和遍历算法？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "那次改完正文之后，旧的派生判断为什么需要重新审视？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "我要重新给这条笔记整理概念，但不想为了排队修改文章。"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "索引没更新成功，保存的东西是不是就丢了？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "从结果点回原文时，怎样保留原来的具体段落和版本？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "建立一个可以展示兴趣与项目的地方，但我知道自己还不成熟。"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "Someone remained beside another person quietly through the hardest times."
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "故事终于结束时，开头的期待和结尾的失落该如何相处？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "我不愿意把所有的帮助都当成需要偿还的债。"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "火星表面的岩石和探测车周围的景象是什么样？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "哪段老式录音有男声唱友谊和昔日时光？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "有没有没有人声的柔和独奏乐器录音？"
+modes = ["hybrid"]
+top_k = 8
+
+[[query]]
+question = "音乐播放器截图里正在播放哪首歌，界面上还有什么？"
+modes = ["hybrid", "lexical"]
+
+[[query]]
+question = "黑蓝色播放界面中央显示歌词，四周排列着专辑封面。"
+modes = ["hybrid", "lexical"]
+
+[[query]]
+question = "初始化新实例时，数据库和资源目录由谁建立？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "如何在多个实例之间选择当前实例，同时避免混用数据？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "两个进程同时打开同一个实例时会发生什么？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "哪些配置更改立即生效，哪些需要重启？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "如何判断配置值来自默认值、环境还是实例文件？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型网关的地址、凭据和模型能力分别在哪里配置？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "不改模型名称，怎样显式配置模型能处理的媒体类型？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型完成输出后保存失败，会不会重新请求模型？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "一个模型请求的超时、取消与备用路线由谁决定？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "成功响应已经保存，重启后如何继续解释和采用？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "如何查看失败操作对应的阶段、重试和错误？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "两个调用同时处理同一输入，结果如何复用？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "文件内容相同，但来源不同，系统如何保留它们的身份？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "保存文件之后，原始字节和业务记录分别由谁持有？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "引用多段不连续原文时，精确范围如何传递到模型？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "原文使用 CRLF 或多字节字符时，选区坐标如何保持准确？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "能不能只读取一篇长文中的几行而不读取整个文件？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "从模型生成的结论能否回溯到输入的具体片段？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型没有收到完整视频时，能否把抽样帧当成连续录像？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "音频选段和现实世界时间为什么不能混为一谈？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "PDF 页码和模型实际看到的页面如何对齐？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "内容导出后如何确认还是当初接纳的字节？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Embedding 探测和正式编码会不会采用不同的选区？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "已经保存的向量在什么条件下可以复用？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "向量空间维度或部署变化后，为什么不能沿用旧空间？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "查询向量会不会自动变成持久保存的内容？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Wave 快照、原文和向量资产各由什么部分负责？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "新索引准备期间，当前查询还可以读取旧快照吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "怎样清理旧快照，又不删掉仍被引用的来源？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "同一文章很多段命中时，检索如何按文章组织结果？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "一个候选由多个共同前提支持时，是否等于多个独立证据？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "现有图关系和反证如何进入检索结果？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "词项、向量和图传播分别给结果提供什么线索？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "不使用模型时如何搜索已经写入的记录？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "需要查回历史版本而非最新正文，应使用什么引用？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "一次文稿修订如何防止覆盖别人的并发修改？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "归档文稿后，之前保存的精确版本会怎样？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Note 默认会加入长期召回吗，如何更改？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "写作草稿与正式 Journal 的状态有什么区别？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "用多份资料写新篇时，来源角色和顺序如何保留？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "如何只修改指定段落，而让其他段落保持原样？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "文本编辑发生冲突时，尚未提交的稿件保存在哪里？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "重新打开编辑会话时，如何避免悄悄换成最新基准？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "文章已经改动，旧反馈怎样与新版本建立对应？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "一条查询结果可以作为反馈对象保存吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "概念名称改变与概念含义改变分别如何处理？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "模型提出概念标注后，什么时候才成为正式认识？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "对不参与召回的笔记，能否单独发起后台标注？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "保存文稿和登记后台维护如何保持事务一致？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "后台标注失败后，已经保存的正文还能否检索？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "后台任务的取消、恢复和重新尝试分别怎么操作？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "宿主退出时如何等待仍在运行的线程和子进程？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "普通程序内 Runtime 与持久工作宿主有什么区别？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "为什么查询旧快照时不能混入另一个命名空间的结果？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "查询期间有人保存了新版本，返回的来源是否会改变？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "反馈被记录之后，会自动修改正式文章吗？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "记录正文中已有的引用链接，导入后怎样保留它的原义？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "应用怎样确定一条输入的真实 MIME 和媒体表示？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "一个音频或视频分批处理时，尾部没有覆盖到怎么办？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "截图上的营业时间、汤和茶的价格分别是多少？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "浴室里的两只猫分别在哪里，它们做了什么？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "火星探测车照片里可见什么地貌和设备？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "视频最开始几秒中，猫咪之间有什么互动？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "报告中有哪些页面介绍图、顶点、边或遍历？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "音频选段里是否能听到人声，伴奏有什么特征？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "那段没有人声的音乐以什么乐器为主？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "播放器截图里的歌曲、歌词和封面墙是什么？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "在意一个人时，为什么善意也会变成替对方作决定？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "在车库停留的父亲承受什么，叙述者后来如何理解？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "当真实故障带来的视觉效果消失，作者选择留下什么？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "关于帮助与光，文章怎样表达人的价值并不需要偿还？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "为何个人网站能承载作品、兴趣和尚不成熟的自己？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "文章里的理想未来如何看待技术、生产和分配？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "The author keeps a broken visual effect as a record rather than a running bug."
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "How do exact source selections survive from an input file to a generated response?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "What happens to a saved record if its background indexing job fails?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Can a durable job resume without sending a previously completed model request again?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "What does the system do when a configured embedding space changes dimensions?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "How can I inspect the exact pages or time interval delivered to a model?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Where does the current architecture separate domain decisions from the native index?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Can a stale citation still open its original revision after a document is changed?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "Which task can revise a paragraph while leaving the rest of a journal untouched?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "When a cancelled caller stops waiting, who owns the still-running work?"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8

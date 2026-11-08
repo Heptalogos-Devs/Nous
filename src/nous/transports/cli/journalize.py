@@ -1,23 +1,18 @@
 """Writing and draft adoption commands over the shared Journalize operation."""
 
-import sys
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import typer
-from pydantic import TypeAdapter
 
+from nous.application.inputs import InputParameter
 from nous.cognition.retrieval.contracts import Mode
-from nous.cognition.writing.contracts import DraftOverride, SourceChanges, WritingOutcome
-from nous.common.errors import NousError
-from nous.content.contracts import ContentSelection
-from nous.content.text import BlockRef
+from nous.cognition.writing.contracts import DraftView, RecordOutcome, WritingOutcome
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 
-from . import cli, language_for, options, run_async
-from .cognition import after_write, emit_record, journal_cli, note_cli, read_body, source_requests
-from .input_files import input_bytes
+from . import application_action, cli, language_for, options
+from .cognition import after_write, emit_record, journal_cli, note_cli, source_requests
+from .input_files import body_parameter, json_parameter
 
 draft_cli = typer.Typer(help="Journal drafts", no_args_is_help=True)
 journal_cli.add_typer(draft_cli, name="draft")
@@ -71,29 +66,27 @@ def journalize(
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
+    def delta(text: str) -> None:
+        typer.echo(text, nl=False, err=True)
 
-            def delta(text: str) -> None:
-                typer.echo(text, nl=False, err=True)
-
-            try:
-                services = await runtime.cognition(namespace)
-                return await services.writing.journalize(
-                    sources=source_requests(source, current_basis, inspiration),
-                    topic=topic,
-                    purpose=purpose,
-                    author=author,
-                    viewpoint=viewpoint,
-                    adoption=("save" if save else "draft") if save is not None else None,
-                    on_delta=delta if stream else None,
-                    after=after_write(refresh, refresh_mode, background, inline, annotate),
-                )
-            finally:
-                if stream:
-                    typer.echo(err=True)
-
-    emit_outcome(ctx, run_async(run()))
+    try:
+        result = application_action(
+            ctx,
+            "writing.journalize",
+            scope=namespace,
+            sources=source_requests(source, current_basis, inspiration),
+            topic=topic,
+            purpose=purpose,
+            author=author,
+            viewpoint=viewpoint,
+            adoption=("save" if save else "draft") if save is not None else None,
+            on_delta=delta if stream else None,
+            after=after_write(refresh, refresh_mode, background, inline, annotate),
+        )
+    finally:
+        if stream:
+            typer.echo(err=True)
+    emit_outcome(ctx, cast(WritingOutcome, result))
 
 
 @draft_cli.command("read")
@@ -104,13 +97,10 @@ def draft_read(
     sources: bool = False,
     full_body: Annotated[bool, typer.Option("--body")] = False,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).writing.read_draft(
-                ref, sources=sources
-            )
-
-    result = run_async(run())
+    result = cast(
+        DraftView,
+        application_action(ctx, "writing.read_draft", ref, scope=namespace, sources=sources),
+    )
     if options(ctx).json_mode:
         typer.echo(result.model_dump_json())
     else:
@@ -138,11 +128,8 @@ def draft_read(
 def draft_recover(ctx: typer.Context, request: str, namespace: str | None = None):
     """Continue writing from a previously saved request reference."""
 
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).writing.recover(request)
-
-    emit_outcome(ctx, run_async(run()))
+    result = application_action(ctx, "writing.recover", request, scope=namespace)
+    emit_outcome(ctx, cast(WritingOutcome, result))
 
 
 @draft_cli.command("adopt")
@@ -161,34 +148,21 @@ def draft_adopt(
     inline: bool = False,
     annotate: bool = False,
 ):
-    body = (
-        read_body(text, file)
-        if text is not None or file is not None
-        else (sys.stdin.read() or None)
-        if not sys.stdin.isatty()
-        else None
+    parameters = [body_parameter("markdown", text, file, optional=True)]
+    if sources is not None:
+        parameters.append(json_parameter("source_changes", sources))
+    result = application_action(
+        ctx,
+        "records.adopt_draft",
+        ref,
+        scope=namespace,
+        source_changes=None,
+        title=title,
+        fork=fork,
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+        input_parameters=parameters,
     )
-    changes = (
-        SourceChanges.model_validate_json(input_bytes(sources)) if sources is not None else None
-    )
-    if body is None and changes is not None:
-        raise NousError(
-            "input.override_required",
-            "Source changes require an explicit complete Markdown override",
-        )
-    override = DraftOverride(markdown=body, source_changes=changes) if body is not None else None
-
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.adopt(
-                ref,
-                override=override,
-                title=title,
-                fork=fork,
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_record(ctx, run_async(run()))
+    emit_record(ctx, cast(RecordOutcome, result))
 
 
 @journal_cli.command("revise")
@@ -213,34 +187,28 @@ def propose_edit(
     inline: bool = False,
     annotate: bool = False,
 ):
-    selected = (
-        TypeAdapter(tuple[BlockRef | ContentSelection, ...]).validate_json(input_bytes(scopes))
-        if scopes is not None
-        else None
+    parameters: list[InputParameter] = []
+    if scopes is not None:
+        parameters.append(json_parameter("scopes", scopes))
+    if feedback_mappings:
+        parameters.append(json_parameter("feedback_mappings", feedback_mappings))
+    result = application_action(
+        ctx,
+        "writing.propose_edit",
+        ref,
+        instruction,
+        scope=namespace,
+        scopes=None,
+        blocks=tuple(blocks.split(",")) if blocks else (),
+        sources=source_requests(source, current_basis, inspiration),
+        feedback_refs=feedback or (),
+        feedback_mappings={},
+        intent=intent,
+        adoption="save" if save else "draft",
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+        input_parameters=parameters,
     )
-    mappings = (
-        TypeAdapter(dict[str, str]).validate_json(input_bytes(feedback_mappings))
-        if feedback_mappings
-        else {}
-    )
-
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            services = await runtime.cognition(namespace)
-            return await services.writing.propose_edit(
-                ref,
-                instruction,
-                scopes=selected,
-                blocks=tuple(blocks.split(",")) if blocks else (),
-                sources=source_requests(source, current_basis, inspiration),
-                feedback_refs=feedback or (),
-                feedback_mappings=mappings,
-                intent=intent,
-                adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_outcome(ctx, run_async(run()))
+    emit_outcome(ctx, cast(WritingOutcome, result))
 
 
 @journal_cli.command("rewrite")
@@ -260,18 +228,18 @@ def rewrite(
     inline: bool = False,
     annotate: bool = False,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).writing.rewrite(
-                ref,
-                instruction,
-                intent=intent,
-                sources=source_requests(source, current_basis, inspiration),
-                adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_outcome(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "writing.rewrite",
+        ref,
+        instruction,
+        scope=namespace,
+        intent=intent,
+        sources=source_requests(source, current_basis, inspiration),
+        adoption="save" if save else "draft",
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+    )
+    emit_outcome(ctx, cast(WritingOutcome, result))
 
 
 @journal_cli.command("reflect")
@@ -292,16 +260,16 @@ def reflect(
     inline: bool = False,
     annotate: bool = False,
 ):
-    async def run():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).writing.reflect(
-                journals,
-                topic,
-                sources=source_requests(source, current_basis, inspiration),
-                author=author,
-                viewpoint=viewpoint,
-                adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
-            )
-
-    emit_outcome(ctx, run_async(run()))
+    result = application_action(
+        ctx,
+        "writing.reflect",
+        journals,
+        topic,
+        scope=namespace,
+        sources=source_requests(source, current_basis, inspiration),
+        author=author,
+        viewpoint=viewpoint,
+        adoption="save" if save else "draft",
+        after=after_write(refresh, refresh_mode, background, inline, annotate),
+    )
+    emit_outcome(ctx, cast(WritingOutcome, result))

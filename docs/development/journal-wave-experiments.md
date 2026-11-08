@@ -68,6 +68,16 @@ python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/inst
 python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/results query
 ```
 
+示例计划包含项目架构、写作和恢复、来源与检索，以及多语言文本和媒体材料的查询。只运行部分问题或通道时，使用独立结果目录，例如：
+
+```powershell
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/selected query --contains 资源 --contains 取消 --mode hybrid --mode lexical
+```
+
+`--contains` 可重复，匹配任一问题文本；`--mode` 可重复，从计划中选择已有通道。`query` 会替换该结果目录的查询结果；`query --retry-failed` 保留既有结果，只重试失败项，也接受这些筛选条件。
+
+联合国官方材料的专项计划在[UN 检索实验示例](../examples/un-retrieval-experiment.toml)，它的[答案锚点与开放式相关性问题](../examples/un-retrieval-experiment.md)区分可核对事实和需要人工判断是否有帮助的问题。文件名使用 `un-` 前缀；下载、作者、许可、选区与原件链接记在 `temp/test-materials/Collections/un-material-sources.json`。
+
 `draft` 可在命令后指定一个或多个配置中的任务名；不指定时运行全部任务。草稿保存在实例和 `drafts.md`，阅读正文与来源后才执行 `adopt`。`--body` 用审阅后的 Markdown 覆盖草稿正文，未修改时省略；`--annotate` 明确请求概念标注。采用失败不会丢失草稿。`query` 将可读结果写入 `queries.md`，完整分组、片段和精确引用写入 `queries.json`；遇到上游限流时，本轮继续执行词项查询并保留未执行的语义查询，恢复后可运行 `query --retry-failed`，只重试未完成和失败的查询。用 `nous read "<修订标识符>" --sources` 回读原文和来源。根据实际结果判断相关性，不将某个预定文件名或排名当成唯一正确答案。
 
 `state.json` 记录本次导入、草稿、采用和实例身份。使用同一实例和输出目录重新运行 `ingest` 会跳过未变更文件，并按上次保存的精确版本修订已改变的来源；如果文稿已被其他操作修改，会报告版本冲突。材料中原有的 `source:` 链接作为原文示例保留，原文件始终可通过来源读取。输出目录属于特定实例和命名空间，不会被脚本删除或用于另一实例。模型配置和凭据由实例管理，素材与结果不需要进入 Git。

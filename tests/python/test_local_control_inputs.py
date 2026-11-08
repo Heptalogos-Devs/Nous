@@ -49,6 +49,73 @@ def _stop(host: subprocess.Popen[bytes]) -> None:
         host.wait(timeout=30)
 
 
+def test_embedding_probe_reads_selected_client_range_without_accepting_file(tmp_path: Path) -> None:
+    from nous.content.contracts import SourceSelection, TextInput
+    from nous.transports.cli.local_control import request_action
+
+    submissions: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            submissions.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            data = json.dumps(
+                {
+                    "object": "list",
+                    "model": "local-embedding",
+                    "data": [{"object": "embedding", "index": 0, "embedding": [0.5, 0.25]}],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    instance = tmp_path / "instance"
+    source = tmp_path / "large.txt"
+    prefix = b"x" * 100_000
+    source.write_bytes(prefix + b"\r\nkept\r\nignored")
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as config:
+                await config.update({"content.text_read_max_bytes": 16})
+
+        asyncio.run(configure())
+        path = endpoint(InstanceLocator(instance))
+        assert path is not None
+        host = _start(instance, tmp_path)
+        try:
+            _wait(lambda: path.exists() or host.poll() is not None)
+            selected = TextInput(
+                kind="file", path=str(source), selection=SourceSelection(start_line=2, end_line=2)
+            )
+            result = request_action(
+                InstanceLocator(instance),
+                "tools.embedding_probe",
+                None,
+                ("vectors", [selected]),
+                {},
+            )
+            assert result is not None and "error" not in result
+            assert submissions[-1]["input"] == ["kept\r\n"]
+            result = request_action(
+                InstanceLocator(instance),
+                "tools.embedding_run",
+                None,
+                ("test-space", "document", [selected]),
+                {},
+            )
+            assert result is not None and "error" not in result
+            assert submissions[-1]["input"] == ["kept\r\n"]
+        finally:
+            _stop(host)
+
+
 def test_idle_unauthenticated_connections_do_not_starve_cli(tmp_path: Path) -> None:
     instance = tmp_path / "instance"
     asyncio.run(_initialize(instance))
@@ -105,6 +172,7 @@ def test_fifo_timeout_does_not_block_host_or_shutdown(tmp_path: Path) -> None:
     assert path is not None
     host = _start(instance, tmp_path)
     client = None
+    probe = None
     try:
         _wait(lambda: path.exists() or host.poll() is not None)
         conflict = _command(
@@ -125,6 +193,36 @@ def test_fifo_timeout_does_not_block_host_or_shutdown(tmp_path: Path) -> None:
             blocked = _command(instance, *arguments, data="")
             assert blocked.returncode != 0 and "operation.timeout" in blocked.stdout, blocked.stdout
             assert _command(instance, "journal", "list").returncode == 0
+        # Load the real CLI and its request dependencies before measuring;
+        # release it only after the other request has reached the FIFO.
+        probe_program = """import sys
+from nous.transports.cli import main
+import nous.application.actions
+import nous.transports.cli.io
+import nous.transports.cli.local_control
+print("ready", flush=True)
+sys.stdin.buffer.read(1)
+main()
+"""
+        probe = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                probe_program,
+                "--instance",
+                str(instance),
+                "--json",
+                "journal",
+                "list",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert probe.stdout is not None
+        ready, _, _ = select.select([probe.stdout], [], [], 30)
+        assert ready and probe.stdout.readline() == b"ready\n"
+        _wait(lambda: not list(path.parent.glob(f".{path.stem}.input-*")), timeout=10)
         client = subprocess.Popen(
             [
                 sys.executable,
@@ -142,11 +240,14 @@ def test_fifo_timeout_does_not_block_host_or_shutdown(tmp_path: Path) -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        time.sleep(0.4)
+        _wait(lambda: bool(list(path.parent.glob(f".{path.stem}.input-*"))), timeout=10)
+        assert client.poll() is None
         started = time.monotonic()
-        check = _command(instance, "journal", "list")
-        assert check.returncode == 0, check.stderr
+        check_out, check_err = probe.communicate(input=b"x", timeout=10)
+        assert probe.returncode == 0, (check_out, check_err)
         assert time.monotonic() - started < 5
+        assert client.poll() is None
+        assert list(path.parent.glob(f".{path.stem}.input-*"))
         out, err = client.communicate(timeout=12)
         assert client.returncode != 0, (out, err)
         assert b"operation.timeout" in out + err
@@ -230,6 +331,9 @@ def test_fifo_timeout_does_not_block_host_or_shutdown(tmp_path: Path) -> None:
         assert not list(path.parent.glob(f".{path.stem}.input-*"))
         assert _command(instance, "journal", "list").returncode == 0
     finally:
+        if probe is not None and probe.poll() is None:
+            probe.kill()
+            probe.wait(timeout=10)
         if client is not None and client.poll() is None:
             client.kill()
             client.wait()
@@ -608,6 +712,15 @@ main()
         _wait(restarted)
         assert not list(endpoint_path.parent.glob(f".{endpoint_path.stem}.input-*"))
         assert _command(instance, "journal", "list").returncode == 0
+        exported = _command(
+            instance, "tools", "content", "export", artifact, "--output", str(target)
+        )
+        assert exported.returncode == 0, (exported.stdout, exported.stderr)
+        assert target.read_bytes() == b"payload"
+        repeated = _command(
+            instance, "tools", "content", "export", artifact, "--output", str(target)
+        )
+        assert repeated.returncode != 0 and target.read_bytes() == b"payload"
     finally:
         if client is not None and client.poll() is None:
             client.kill()

@@ -35,6 +35,9 @@ class OperationContext:
 _current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvars.ContextVar(
     "nous_operations", default=MappingProxyType({})
 )
+_requests: contextvars.ContextVar[Mapping[object, tuple[ConfigSnapshot, float | None]]] = (
+    contextvars.ContextVar("nous_requests", default=MappingProxyType({}))
+)
 _admitted: contextvars.ContextVar[frozenset[object]] = contextvars.ContextVar(
     "nous_admitted_durable", default=frozenset()
 )
@@ -57,6 +60,42 @@ async def complete_cleanup[T](work: Awaitable[T]) -> T:
             cancelled.add_note(f"Cleanup failed: {type(failure).__name__}: {failure}")
         raise cancelled
     return task.result()
+
+
+async def acquire_owned[T](work: Awaitable[T], release: Callable[[T], Awaitable[object]]) -> T:
+    """Acquire a resource or release it if cancellation interrupts its transfer."""
+    task = asyncio.ensure_future(work)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError as cancelled:
+
+        async def release_late() -> None:
+            try:
+                resource = await task
+            except BaseException:
+                return
+            await release(resource)
+
+        try:
+            await complete_cleanup(release_late())
+        except asyncio.CancelledError:
+            pass
+        except BaseException as error:
+            cancelled.add_note(f"Resource cleanup failed: {type(error).__name__}: {error}")
+        raise
+
+
+async def stop_process(process: asyncio.subprocess.Process) -> None:
+    """Terminate and reap an owned process, draining its pipes."""
+    if process.returncode is None:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+    if process.stdin is not None:
+        process.stdin.close()
+    readers = [stream.read() for stream in (process.stdout, process.stderr) if stream is not None]
+    await asyncio.gather(*readers, process.wait(), return_exceptions=True)
 
 
 async def _try_acquire(lock: asyncio.Lock) -> bool:
@@ -110,7 +149,10 @@ class ExecutionManager:
     @property
     def snapshot(self) -> ConfigSnapshot:
         current = _current.get().get(self._owner)
-        return current.settings if current is not None else self._snapshot()
+        request = _requests.get().get(self._owner)
+        return (
+            current.settings if current is not None else request[0] if request else self._snapshot()
+        )
 
     def status(self) -> dict[str, object]:
         return {
@@ -132,18 +174,58 @@ class ExecutionManager:
                 "A nested operation must use its parent's configuration snapshot.",
                 operation=name,
             )
+        request = _requests.get().get(self._owner)
+        if (
+            parent is None
+            and request is not None
+            and settings is not None
+            and settings is not request[0]
+        ):
+            raise NousError(
+                "operation.snapshot_conflict",
+                "An operation must use its request's configuration snapshot.",
+                operation=name,
+            )
         snapshot = (
             parent.settings
             if parent is not None
-            else (settings if settings is not None else self._snapshot())
+            else (settings if settings is not None else request[0] if request else self._snapshot())
         )
         if parent and parent.deadline is not None:
             deadline = min(deadline, parent.deadline) if deadline is not None else parent.deadline
+        elif parent is None and request is not None:
+            request_deadline = request[1]
+            if request_deadline is not None:
+                deadline = (
+                    min(deadline, request_deadline) if deadline is not None else request_deadline
+                )
         elif parent is None and deadline is None:
             timeout = snapshot.values.execution.default_timeout_seconds
             if timeout is not None:
                 deadline = asyncio.get_running_loop().time() + float(timeout)
         return parent, snapshot, deadline
+
+    @asynccontextmanager
+    async def request(self) -> AsyncGenerator[None]:
+        """Share one deadline and snapshot before entering a business admission slot."""
+        async with self.control():
+            snapshot = self.snapshot
+            timeout = snapshot.values.execution.default_timeout_seconds
+            deadline = (
+                asyncio.get_running_loop().time() + float(timeout) if timeout is not None else None
+            )
+            previous = _requests.get()
+            inherited = previous.get(self._owner)
+            if inherited is not None:
+                snapshot, deadline = inherited
+            elif (parent := _current.get().get(self._owner)) is not None:
+                deadline = parent.deadline
+            token = _requests.set(MappingProxyType({**previous, self._owner: (snapshot, deadline)}))
+            try:
+                async with asyncio.timeout_at(deadline):
+                    yield
+            finally:
+                _requests.reset(token)
 
     @asynccontextmanager
     async def keyed_operation(
@@ -312,11 +394,13 @@ class ExecutionManager:
         if not self._accepting:
             raise asyncio.CancelledError("Runtime is stopping")
         token = _current.set(MappingProxyType({}))
-        admission = _admitted.set(_admitted.get() | {self._owner})
+        request = _requests.set(MappingProxyType({}))
+        admission = _admitted.set(frozenset({self._owner}))
         try:
             yield
         finally:
             _admitted.reset(admission)
+            _requests.reset(request)
             _current.reset(token)
 
     def spawn(
@@ -333,6 +417,8 @@ class ExecutionManager:
         # retaining the OTel initiating context and other contextvars.
         context = contextvars.copy_context()
         context.run(_current.set, MappingProxyType({}))
+        context.run(_requests.set, MappingProxyType({}))
+        context.run(_admitted.set, frozenset())
         task = asyncio.create_task(self.run(name, action), name=name, context=context)
         self._tasks.add(task)
 

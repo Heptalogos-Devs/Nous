@@ -41,12 +41,16 @@ def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path)
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     from nous.application.configuration import open_configuration_operations
+    from nous.cognition.contracts import RevisionSelection
+    from nous.cognition.retrieval.contracts import CognitiveQuery
+    from nous.content.contracts import ContentSelection, SourceSelection
 
     answer = ""
+    requests: list[dict[str, object]] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            self.rfile.read(int(self.headers["Content-Length"]))
+            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             payload = json.dumps(
                 {
                     "id": "writing",
@@ -136,6 +140,36 @@ def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path)
             )
             retried = await c.records.adopt(invalid.draft.ref)
             assert retried.record.revision_ref == corrected.record.revision_ref
+
+            source = (await c.records.add_note("alpha\nskip\nomega", title="Named source")).record
+            source_view = await c.records.read(source.revision_ref)
+            selections = (
+                ContentSelection(
+                    artifact=source_view.body_artifact,
+                    selection=SourceSelection(start_byte=0, end_byte=5),
+                ),
+                ContentSelection(
+                    artifact=source_view.body_artifact,
+                    selection=SourceSelection(start_byte=11, end_byte=16),
+                ),
+            )
+            answer = "# Saved\n\nDistinctive recoverable memory."
+            saved_writing = await c.writing.journalize(
+                [RevisionSelection(revision=source.revision_ref, selections=selections)],
+                adoption="save",
+            )
+            assert saved_writing.record is not None
+            sent = json.dumps(requests[-1], ensure_ascii=False)
+            assert "Named source" in sent and "alpha" in sent and "omega" in sent
+            stored = await c.records.read(saved_writing.record.record.revision_ref)
+            assert (
+                tuple(item for binding in stored.sources for item in binding.selections)
+                == selections
+            )
+            result = await c.retrieval.query(
+                CognitiveQuery(text="recoverable memory", mode="lexical")
+            )
+            assert any(group.revision_ref == stored.revision_ref for group in result.groups)
 
     try:
         asyncio.run(scenario())

@@ -8,6 +8,7 @@ import mmap
 import os
 import threading
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -20,7 +21,7 @@ from nous.cognition.retrieval.contracts import CognitiveQuery
 from nous.common.errors import NousError
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.wave import schema
-from nous.wave.contracts import WaveQuery
+from nous.wave.contracts import PreparedSnapshot, WaveQuery
 
 if TYPE_CHECKING:
     import nous_native
@@ -130,68 +131,92 @@ def test_prepared_recovery_conflict_and_native_component_reuse(tmp_path: Path) -
             async with runtime.execution.operation("test.wave"):
                 view = await runtime.wave.snapshots.import_manifest(manifest)
                 profile = runtime.wave.resolve_build_profile(None)
-                prepared, concurrent = await asyncio.gather(
-                    runtime.wave.prepare_build(view, profile, build_key="recover-example"),
-                    runtime.wave.prepare_build(view, profile, build_key="recover-example"),
-                )
-                assert prepared == concurrent
-                with pytest.raises(RuntimeError):
-                    async with runtime.database.write() as tx:
-                        await runtime.wave.accept_in(tx, prepared)
-                        raise RuntimeError("abort adoption")
-                recovered = await runtime.wave.prepare_build(
-                    view, profile, build_key="recover-example"
-                )
-                assert recovered == prepared
-                component = runtime.wave.snapshots.paths.resolve_owned(
-                    "index", prepared.index_location
-                )
-                marker = component / "manifest.json"
-                hidden_marker = component / "manifest.saved"
-                marker.rename(hidden_marker)
-                try:
-                    with pytest.raises(NousError) as protected:
-                        await runtime.wave.prepare_build(view, profile, build_key="another-key")
-                    assert protected.value.code == "wave.snapshot_invalid"
-                    assert component.is_dir() and hidden_marker.is_file()
-                finally:
-                    hidden_marker.rename(marker)
-                meta = runtime.wave.snapshots.paths.resolve_owned(
-                    "index", f"{prepared.index_location}/lexical/meta.json"
-                )
-                original = meta.read_bytes()
-                try:
-                    meta.write_bytes(original + b" ")
-                    with pytest.raises(NousError) as invalid:
-                        await runtime.wave.prepare_build(view, profile, build_key="recover-example")
-                    assert invalid.value.code == "wave.snapshot_invalid"
-                finally:
-                    meta.write_bytes(original)
-                with pytest.raises(NousError) as error:
-                    await runtime.wave.prepare_build(
-                        view.model_copy(update={"metadata": {"changed": True}}),
-                        profile,
-                        build_key="recover-example",
+                async with AsyncExitStack() as builds:
+                    prepared, concurrent = await asyncio.gather(
+                        builds.enter_async_context(
+                            runtime.wave.prepare_build(view, profile, build_key="recover-example")
+                        ),
+                        builds.enter_async_context(
+                            runtime.wave.prepare_build(view, profile, build_key="recover-example")
+                        ),
                     )
-                assert error.value.code == "wave.build_key_conflict"
-                async with runtime.database.write() as tx:
-                    first = await runtime.wave.accept_in(tx, recovered)
-                    await runtime.wave.promote_in(tx, first.ref)
-                runtime.wave.release_prepared(prepared)
-                runtime.wave.release_prepared(concurrent)
-                runtime.wave.release_prepared(recovered)
+                    assert isinstance(prepared, PreparedSnapshot)
+                    assert isinstance(concurrent, PreparedSnapshot)
+                    assert prepared == concurrent
+                    with pytest.raises(RuntimeError):
+                        async with runtime.database.write() as tx:
+                            await runtime.wave.accept_in(tx, prepared)
+                            raise RuntimeError("abort adoption")
+                    recovered = await builds.enter_async_context(
+                        runtime.wave.prepare_build(view, profile, build_key="recover-example")
+                    )
+                    assert isinstance(recovered, PreparedSnapshot)
+                    assert recovered == prepared
+                    async with runtime.database.read() as tx:
+                        location = await tx.connection.scalar(
+                            sa.select(schema.snapshots.c.index_location).where(
+                                schema.snapshots.c.id == prepared.ref.id
+                            )
+                        )
+                    assert location is not None
+                    component = runtime.wave.snapshots.paths.resolve_owned("index", location)
+                    marker = component / "manifest.json"
+                    hidden_marker = component / "manifest.saved"
+                    marker.rename(hidden_marker)
+                    try:
+                        with pytest.raises(NousError) as protected:
+                            async with runtime.wave.prepare_build(
+                                view, profile, build_key="another-key"
+                            ):
+                                pass
+                        assert protected.value.code == "wave.snapshot_invalid"
+                        assert component.is_dir() and hidden_marker.is_file()
+                    finally:
+                        hidden_marker.rename(marker)
+                    meta = runtime.wave.snapshots.paths.resolve_owned(
+                        "index", f"{location}/lexical/meta.json"
+                    )
+                    original = meta.read_bytes()
+                    try:
+                        meta.write_bytes(original + b" ")
+                        with pytest.raises(NousError) as invalid:
+                            async with runtime.wave.prepare_build(
+                                view, profile, build_key="recover-example"
+                            ):
+                                pass
+                        assert invalid.value.code == "wave.snapshot_invalid"
+                    finally:
+                        meta.write_bytes(original)
+                    with pytest.raises(NousError) as error:
+                        async with runtime.wave.prepare_build(
+                            view.model_copy(update={"metadata": {"changed": True}}),
+                            profile,
+                            build_key="recover-example",
+                        ):
+                            pass
+                    assert error.value.code == "wave.build_key_conflict"
+                    async with runtime.database.write() as tx:
+                        first = await runtime.wave.accept_in(tx, recovered)
+                        await runtime.wave.promote_in(tx, first.ref)
                 changed = view.model_copy(update={"metadata": {"changed": True}})
-                other = await runtime.wave.prepare_build(changed, profile)
-                assert other.component_signature == recovered.component_signature
-                assert other.index_location == recovered.index_location
-                assert (
-                    cast(dict[str, object], other.summary["statistics"])["reused_native_component"]
-                    is True
-                )
-                async with runtime.database.write() as tx:
-                    second = await runtime.wave.accept_in(tx, other)
-                    await runtime.wave.promote_in(tx, second.ref)
-                runtime.wave.release_prepared(other)
+                async with runtime.wave.prepare_build(changed, profile) as other:
+                    assert isinstance(other, PreparedSnapshot)
+                    async with runtime.database.read() as tx:
+                        other_location = await tx.connection.scalar(
+                            sa.select(schema.snapshots.c.index_location).where(
+                                schema.snapshots.c.id == other.ref.id
+                            )
+                        )
+                    assert other_location == location
+                    assert (
+                        cast(dict[str, object], other.summary["statistics"])[
+                            "reused_native_component"
+                        ]
+                        is True
+                    )
+                    async with runtime.database.write() as tx:
+                        second = await runtime.wave.accept_in(tx, other)
+                        await runtime.wave.promote_in(tx, second.ref)
                 await runtime.wave.cleanup()
                 inspection = await runtime.wave.inspect(second.ref.identifier)
                 assert cast(dict[str, str], inspection["snapshot"])["id"] == second.ref.id
@@ -199,6 +224,63 @@ def test_prepared_recovery_conflict_and_native_component_reuse(tmp_path: Path) -
                     WaveQuery(snapshot=second.ref.identifier, text="资源", mode="lexical")
                 )
                 assert result["hits"]
+
+    asyncio.run(scenario())
+
+
+def test_build_freezes_mutable_inputs_before_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "frozen-build"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            async with runtime.execution.operation("test.wave"):
+                view = (
+                    await runtime.wave.snapshots.import_manifest(
+                        Path("docs/examples/wave/collection.json")
+                    )
+                ).model_copy(update={"metadata": {"label": {"value": "original"}}})
+                profile = runtime.wave.resolve_build_profile(None)
+                original_view, original_profile = (
+                    view.model_copy(deep=True),
+                    profile.model_copy(deep=True),
+                )
+                entered, release = asyncio.Event(), asyncio.Event()
+                time_service = runtime.wave.snapshots.time
+                validate = time_service.validate
+
+                async def wait_for_mutation(values: object) -> None:
+                    entered.set()
+                    await release.wait()
+                    await validate(values)  # type: ignore[arg-type]
+
+                monkeypatch.setattr(time_service, "validate", wait_for_mutation)
+
+                async def publish() -> object:
+                    async with runtime.wave.prepare_build(
+                        view, profile, build_key="frozen-input"
+                    ) as prepared:
+                        async with runtime.database.write() as tx:
+                            descriptor = await runtime.wave.accept_in(tx, prepared)
+                            await runtime.wave.promote_in(tx, descriptor.ref)
+                        return prepared
+
+                task = asyncio.create_task(publish())
+                try:
+                    await asyncio.wait_for(entered.wait(), 15)
+                    cast(dict[str, str], view.metadata["label"])["value"] = "changed"
+                    profile.build_config["candidate_grouping"] = "changed"
+                finally:
+                    release.set()
+                prepared = await task
+                monkeypatch.setattr(time_service, "validate", validate)
+                async with runtime.wave.prepare_build(
+                    original_view, original_profile, build_key="frozen-input"
+                ) as recovered:
+                    assert recovered.ref == prepared.ref  # type: ignore[union-attr]
+                    descriptor = await runtime.wave.describe(recovered.ref)
+                    assert descriptor.metadata == {"label": {"value": "original"}}
 
     asyncio.run(scenario())
 
@@ -366,31 +448,46 @@ def test_semantic_whole_hit_delivers_local_candidate(
                 async with runtime.execution.operation("test.semantic_recovery"):
                     view = await runtime.wave.snapshots.import_manifest(manifest)
                     profile = runtime.wave.resolve_build_profile("test-space")
-                    prepared = await runtime.wave.prepare_build(
-                        view, profile, build_key="semantic-recovery"
-                    )
-                    recovered = await runtime.wave.prepare_build(
-                        view, profile, build_key="semantic-recovery"
-                    )
-                    assert recovered == prepared
-                    assert {cast(str, item["kind"]) for item in recovered.vector_mappings} == {
-                        "candidate",
-                        "concept",
-                    }
-                    async with runtime.database.write() as tx:
-                        first = await runtime.wave.accept_in(tx, recovered)
-                        await runtime.wave.promote_in(tx, first.ref)
-                    runtime.wave.release_prepared(prepared)
-                    runtime.wave.release_prepared(recovered)
-                    another = await runtime.wave.prepare_build(
+                    async with (
+                        runtime.wave.prepare_build(
+                            view, profile, build_key="semantic-recovery"
+                        ) as prepared,
+                        runtime.wave.prepare_build(
+                            view, profile, build_key="semantic-recovery"
+                        ) as recovered,
+                    ):
+                        assert isinstance(recovered, PreparedSnapshot)
+                        assert recovered == prepared
+                        async with runtime.database.write() as tx:
+                            first = await runtime.wave.accept_in(tx, recovered)
+                            await runtime.wave.promote_in(tx, first.ref)
+                        async with runtime.database.read() as tx:
+                            assert await tx.connection.scalar(
+                                sa.select(sa.func.count()).select_from(schema.projection_vectors)
+                            )
+                            assert await tx.connection.scalar(
+                                sa.select(sa.func.count()).select_from(
+                                    schema.projection_graph_vectors
+                                )
+                            )
+                    async with runtime.wave.prepare_build(
                         view.model_copy(update={"metadata": {"updated": True}}), profile
-                    )
-                    assert another.graph_signature == recovered.graph_signature
-                    assert another.units[0].signature == recovered.units[0].signature
-                    async with runtime.database.write() as tx:
-                        second = await runtime.wave.accept_in(tx, another)
-                        await runtime.wave.promote_in(tx, second.ref)
-                    runtime.wave.release_prepared(another)
+                    ) as another:
+                        assert isinstance(another, PreparedSnapshot)
+                        async with runtime.database.read() as tx:
+                            graphs = (
+                                await tx.connection.scalars(
+                                    sa.select(schema.snapshots.c.graph_signature).where(
+                                        schema.snapshots.c.id.in_(
+                                            [another.ref.id, recovered.ref.id]
+                                        )
+                                    )
+                                )
+                            ).all()
+                            assert len(set(graphs)) == 1
+                        async with runtime.database.write() as tx:
+                            second = await runtime.wave.accept_in(tx, another)
+                            await runtime.wave.promote_in(tx, second.ref)
                     candidate = view.candidates[0]
                     updated = view.model_copy(
                         update={
@@ -400,15 +497,14 @@ def test_semantic_whole_hit_delivers_local_candidate(
                             )
                         }
                     )
-                    derived = await runtime.wave.prepare_build(updated, profile)
-                    stats = cast(dict[str, object], derived.summary["statistics"])
-                    timing = cast(dict[str, object], stats["timings"])
-                    ann = cast(dict[str, object], timing["ann_delta"])
-                    assert timing["math_reused"] is True and ann["incremental"] is True
-                    async with runtime.database.write() as tx:
-                        third = await runtime.wave.accept_in(tx, derived)
-                        await runtime.wave.promote_in(tx, third.ref)
-                    runtime.wave.release_prepared(derived)
+                    async with runtime.wave.prepare_build(updated, profile) as derived:
+                        stats = cast(dict[str, object], derived.summary["statistics"])
+                        timing = cast(dict[str, object], stats["timings"])
+                        ann = cast(dict[str, object], timing["ann_delta"])
+                        assert timing["math_reused"] is True and ann["incremental"] is True
+                        async with runtime.database.write() as tx:
+                            third = await runtime.wave.accept_in(tx, derived)
+                            await runtime.wave.promote_in(tx, third.ref)
                     await runtime.wave.cleanup()
                     async with runtime.database.read() as tx:
                         candidate_vectors = await tx.connection.scalar(
@@ -450,16 +546,19 @@ def test_publication_failure_and_cancellation_release_prepared_leases(tmp_path: 
                     await cognition.retrieval.query(
                         CognitiveQuery(text="observation", mode="lexical")
                     )
-                assert not runtime.wave.snapshots._prepared_counts  # pyright: ignore[reportPrivateUsage]
                 with pytest.raises(asyncio.CancelledError):
                     await runtime.wave.build(Path("docs/examples/wave/collection.json"))
-                assert not runtime.wave.snapshots._prepared_counts  # pyright: ignore[reportPrivateUsage]
             finally:
                 runtime.wave.accept_in = original  # type: ignore[method-assign]
             found = await cognition.retrieval.query(
                 CognitiveQuery(text="observation", mode="lexical")
             )
             assert found.groups
+            await cognition.records.add_note("A later view.", remember=True)
+            await cognition.retrieval.query(CognitiveQuery(text="later", mode="lexical"))
+            assert found.context.snapshot_ref.identifier in cast(
+                list[str], (await runtime.wave.cleanup())["snapshots"]
+            )
 
     asyncio.run(scenario())
 

@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert
 
 from nous.common.errors import NousError
-from nous.runtime.execution import ExecutionManager
+from nous.runtime.execution import ExecutionManager, acquire_owned
 
 from .content_schema import blobs, references
 from .content_types import BlobRef
@@ -93,7 +93,17 @@ class ContentStore:
             self.temporary.mkdir(parents=True, exist_ok=True)
             return tempfile.mkstemp(dir=self.temporary, suffix=".part")
 
-        descriptor, name = await self.execution.blocking(create)
+        async def release_created(resource: tuple[int, str]) -> None:
+            def release() -> None:
+                descriptor, name = resource
+                try:
+                    os.close(descriptor)
+                finally:
+                    Path(name).unlink(missing_ok=True)
+
+            await self.execution.control_blocking(release)
+
+        descriptor, name = await acquire_owned(self.execution.blocking(create), release_created)
         path = Path(name)
         digest = hashlib.sha256()
         length = 0

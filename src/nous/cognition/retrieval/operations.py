@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from time import perf_counter
 from typing import cast
@@ -11,6 +10,7 @@ import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
+from nous.common.keyed_locks import KeyedLocks
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ContentSelection
 from nous.content.results import ResultStore
@@ -76,14 +76,14 @@ class CognitiveRetrieval:
         annotations: AnnotationOperations,
         *,
         namespace: NamespaceRef | None = None,
-        locks: dict[tuple[str, str], asyncio.Lock] | None = None,
+        locks: KeyedLocks[tuple[str, str]] | None = None,
     ):
         self.database, self.execution, self.scope = database, execution, scope
         self.records, self.artifacts, self.results, self.wave = records, artifacts, results, wave
         self.annotations, self.namespace = annotations, namespace
         self.capture = CorpusCapture(scope, records, artifacts, annotations)
         self.projection = ProjectionBuilder(results)
-        self._locks = locks if locks is not None else {}
+        self._locks = locks if locks is not None else KeyedLocks[tuple[str, str]]()
 
     def bind(self, namespace: NamespaceRef) -> CognitiveRetrieval:
         """Return a namespace-bound retrieval service sharing the build locks."""
@@ -167,7 +167,7 @@ class CognitiveRetrieval:
         ):
             self._check_owner(existing, ns)
             return ns, existing
-        async with self._locks.setdefault((ns.id, profile), asyncio.Lock()):
+        async with self._locks.hold((ns.id, profile)):
             async with self.database.read() as tx:
                 ns = await self.scope.get_in(tx, ns.id)
             existing = await self.wave.current(collection)
@@ -204,7 +204,7 @@ class CognitiveRetrieval:
             )
 
             try:
-                prepared = await self.wave.prepare_build(
+                async with self.wave.prepare_build(
                     view,
                     self.wave.resolve_build_profile(selected.space, build_config=build_config),
                     build_key=(
@@ -212,17 +212,14 @@ class CognitiveRetrieval:
                         if build_key
                         else None
                     ),
-                )
-                publish_started = perf_counter()
-                try:
+                ) as prepared:
+                    publish_started = perf_counter()
                     async with self.database.write() as tx:
                         descriptor = await self.wave.accept_in(tx, prepared)
                         if (
                             await self.scope.get_in(tx, ns.id)
                         ).content_generation == captured.namespace.content_generation:
                             await self.wave.promote_in(tx, descriptor.ref)
-                finally:
-                    self.wave.release_prepared(prepared)
                 get_logger(__name__).info(
                     "wave.publish.completed",
                     extra={

@@ -3,19 +3,18 @@
 import asyncio
 import json
 import sys
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 import click
 import typer
 from rich.console import Console
 from typer.exceptions import TyperException
 
-from nous.application.configuration import ConfigurationOperations
 from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import exception_context
 from nous.configuration import Configuration
@@ -84,10 +83,7 @@ def options(ctx: typer.Context) -> Options:
 def run_async[T](action: Awaitable[T]) -> T:
     """Translate cancellation after owners have released their actual workers and resources."""
     try:
-        from nous.runtime.local_context import current_call
-
-        call = current_call.get()
-        return call.run(action) if call is not None else asyncio.run(action)
+        return asyncio.run(action)
     except (asyncio.CancelledError, KeyboardInterrupt, TimeoutError) as error:
         details = exception_context(error)
         cancelled = isinstance(error, (asyncio.CancelledError, KeyboardInterrupt))
@@ -99,6 +95,90 @@ def run_async[T](action: Awaitable[T]) -> T:
             trace_id=cast(str | None, details.get("trace_id")),
             cause=error,
         ) from error
+
+
+def application_action(
+    ctx: typer.Context,
+    name: str,
+    *args: object,
+    scope: str | None = None,
+    on_delta: Callable[[str], None] | None = None,
+    on_event: Callable[[str, object], None] | None = None,
+    input_parameters: Sequence[object] = (),
+    **kwargs: object,
+) -> object:
+    """Run the same application operation locally or in the instance host."""
+    from nous.application.actions import ACTIONS, perform, perform_configuration, write_schema
+    from nous.application.configuration import open_configuration_operations
+    from nous.application.inputs import InputParameter
+    from nous.runtime.bootstrap import open_instance
+
+    from .io import read_stream, write_text
+    from .local_control import request_action
+
+    events: dict[str, Callable[..., object]] = {"on_delta": on_delta} if on_delta else {}
+    if on_event is not None:
+        events["on_event"] = on_event
+    response = request_action(
+        options(ctx).locator,
+        name,
+        scope,
+        args,
+        kwargs,
+        on_delta,
+        inputs=input_parameters,
+        on_event=on_event,
+    )
+    if response is not None:
+        return ACTIONS[name].result(response.get("value"))
+
+    async def local() -> object:
+        if name == "configuration.write_schema":
+            events["on_write"] = write_text
+            if not options(ctx).locator.config_file.exists():
+                return await write_schema(cast(Path, args[0]), cast(str, args[1]), write_text)
+        if ACTIONS[name].scope == "configuration_read":
+            configuration = Configuration(options(ctx).locator.config_file)
+            return await perform_configuration(
+                configuration,
+                name,
+                args,
+                kwargs,
+                tuple(cast(InputParameter, item) for item in input_parameters),
+                events=events,
+                read_stream=read_stream,
+            )
+        if ACTIONS[name].scope == "configuration":
+            async with open_configuration_operations(options(ctx).locator) as configuration:
+                return await perform_configuration(
+                    configuration,
+                    name,
+                    args,
+                    kwargs,
+                    tuple(cast(InputParameter, item) for item in input_parameters),
+                    events=events,
+                    read_stream=read_stream,
+                )
+        async with open_instance(options(ctx).locator) as runtime:
+            value = await perform(
+                runtime,
+                name,
+                scope,
+                args,
+                kwargs,
+                events=events,
+                inputs=tuple(cast(InputParameter, item) for item in input_parameters),
+                read_stream=read_stream,
+            )
+        if name == "runtime.check":
+            cast(dict[str, object], value).update(
+                state=runtime.state,
+                execution=runtime.execution.status(),
+                in_flight=runtime.execution.in_flight,
+            )
+        return value
+
+    return run_async(local())
 
 
 def language_for(selected: Options | None) -> str:
@@ -145,34 +225,6 @@ def emit_content_view(view: ContentReadView) -> None:
             typer.echo(f"  {translate('Source', language)}: {source.artifact.identifier}{suffix}")
         if representation.body_text is not None:
             typer.echo(representation.body_text)
-
-
-def configuration(ctx: typer.Context) -> Configuration:
-    return Configuration(options(ctx).locator.config_file)
-
-
-async def offline_change(
-    ctx: typer.Context,
-    operation: Literal["update", "unset", "remove_resource"],
-    argument: Mapping[str, object] | str,
-) -> Object:
-    from nous.application.configuration import open_configuration_operations
-    from nous.runtime.local_context import current_call
-
-    async def apply(service: ConfigurationOperations) -> Object:
-        if operation == "update":
-            assert isinstance(argument, Mapping)
-            return await service.update(argument)
-        assert isinstance(argument, str)
-        if operation == "unset":
-            return await service.unset(argument)
-        return await service.remove_resource(argument)
-
-    call = current_call.get()
-    if call is not None:
-        return await apply(call.runtime.configuration)
-    async with open_configuration_operations(options(ctx).locator) as service:
-        return await apply(service)
 
 
 @cli.command("init")
@@ -235,7 +287,7 @@ def config_list(
     ] = "standard",
 ) -> None:
     """列出类型、默认、作用域与生效方式 / List configuration fields."""
-    fields = configuration(ctx).catalog(level)
+    fields = cast(list[Object], application_action(ctx, "configuration.inspect", "catalog", level))
     if options(ctx).json_mode:
         emit(ctx, {"fields": fields})
         return
@@ -268,22 +320,13 @@ def config_show(
     """显示保存值或下次启动值 / Show saved or prospective values."""
     if saved and effective:
         raise NousError("configuration.invalid_option", "Choose either --saved or --effective")
-    service = configuration(ctx)
-    emit(
-        ctx,
-        {
-            "state": "saved" if saved else "prospective",
-            "file": str(service.config_file),
-            "values": service.saved() if saved else service.snapshot.to_dict(),
-            "version": service.snapshot.version,
-        },
-    )
+    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "show", saved=saved)))
 
 
 @config_cli.command("explain")
 def config_explain(ctx: typer.Context, path: str) -> None:
     """解释来源、覆盖和生效状态 / Explain value sources and application."""
-    emit(ctx, configuration(ctx).explain(path))
+    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "explain", path)))
 
 
 @config_cli.command("set")
@@ -301,9 +344,7 @@ def config_set(
         raise NousError("configuration.value_required", "Provide a value, --null, or --value-file")
     parsed: object
     if value_file is not None:
-        from .input_files import input_text
-
-        parsed = json.loads(input_text(value_file))
+        parsed = None
     elif null:
         parsed = None
     else:
@@ -312,25 +353,34 @@ def config_set(
             parsed = json.loads(value)
         except ValueError:
             parsed = value
-    emit(ctx, run_async(offline_change(ctx, "update", {path: parsed})))
+    from .input_files import json_parameter
+
+    result = application_action(
+        ctx,
+        "configuration.set",
+        path,
+        value=parsed,
+        input_parameters=(json_parameter("value", value_file),) if value_file else (),
+    )
+    emit(ctx, cast(Object, result))
 
 
 @config_cli.command("unset")
 def config_unset(ctx: typer.Context, path: str) -> None:
     """删除本层覆盖并恢复继承 / Restore inheritance."""
-    emit(ctx, run_async(offline_change(ctx, "unset", path)))
+    emit(ctx, cast(Object, application_action(ctx, "configuration.unset", path)))
 
 
 @config_cli.command("remove-resource")
 def config_remove_resource(ctx: typer.Context, path: str) -> None:
     """检查引用后删除资源 / Remove an unreferenced resource."""
-    emit(ctx, run_async(offline_change(ctx, "remove_resource", path)))
+    emit(ctx, cast(Object, application_action(ctx, "configuration.remove_resource", path)))
 
 
 @config_cli.command("validate")
 def config_validate(ctx: typer.Context) -> None:
     """校验语法、字段及资源引用 / Validate syntax, fields and references."""
-    emit(ctx, configuration(ctx).validate())
+    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "validate")))
 
 
 @config_cli.command("schema")
@@ -343,16 +393,9 @@ def config_schema(
     if output is None:
         emit(ctx, schema)
     else:
-        from nous.runtime.local_context import current_call
-
         text = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
-        call = current_call.get()
-        if call is not None:
-            call.write_text_sync(output, text)
-        else:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(text, encoding="utf-8")
-        emit(ctx, {"file": str(output), "state": "saved"})
+        result = application_action(ctx, "configuration.write_schema", output, text)
+        emit(ctx, cast(Object, result))
 
 
 @runtime_cli.command("check")
@@ -360,17 +403,7 @@ def runtime_check(
     ctx: typer.Context, details: Annotated[bool, typer.Option("--details")] = False
 ) -> None:
     """打开资源并报告本地能力 / Inspect actual local owners."""
-    from nous.runtime.bootstrap import open_instance
-
-    async def run() -> Object:
-        async with open_instance(options(ctx).locator) as runtime:
-            result = await runtime.check()
-        result["state"] = runtime.state
-        result["execution"] = runtime.execution.status()
-        result["in_flight"] = runtime.execution.in_flight
-        return result
-
-    result = run_async(run())
+    result = cast(Object, application_action(ctx, "runtime.check"))
     if options(ctx).json_mode or details:
         emit(ctx, result)
         return
@@ -556,22 +589,10 @@ def time_parse(
     fold: Annotated[int | None, typer.Option(help="DST 重复时刻 / DST fold: 0 or 1")] = None,
 ) -> None:
     """保留原文、精度和不确定性 / Preserve precision and uncertainty."""
-    from nous.temporal.values import parse_explicit_time
-
-    service = configuration(ctx)
-    if domain not in service.snapshot.values.time.domains:
-        raise NousError("time.domain_unknown", f"Unknown time domain: {domain}")
-    zone = timezone or service.snapshot.values.localization.timezone
-    parsed = parse_explicit_time(value, domain=domain, timezone=zone, fold=fold)
-    emit(
-        ctx,
-        {
-            "input": value,
-            "domain": domain,
-            "timezone": zone,
-            "value": parsed.model_dump(mode="json"),
-        },
+    result = application_action(
+        ctx, "configuration.inspect", "time", value, domain=domain, timezone=timezone, fold=fold
     )
+    emit(ctx, cast(Object, result))
 
 
 from .jobs import job_cli  # noqa: E402
@@ -581,18 +602,12 @@ cli.add_typer(tools_cli, name="tools")
 cli.add_typer(job_cli, name="job")
 
 
-def main(*, args: list[str] | None = None, forwarded: bool = False) -> None:
+def main(*, args: list[str] | None = None) -> None:
     _current.set(None)
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
     try:
-        if not forwarded:
-            from .local_control import try_forward
-
-            status = try_forward(cli, args if args is not None else sys.argv[1:])
-            if status is not None:
-                raise SystemExit(status)
         exit_code = cli(args=args, standalone_mode=False)
         if isinstance(exit_code, int):
             raise SystemExit(exit_code)

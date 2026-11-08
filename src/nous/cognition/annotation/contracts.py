@@ -7,7 +7,7 @@ from nous.common.operations import OperationIssue
 from nous.content.contracts import ResultRef
 from nous.models.generation import FrozenLanguageTask
 
-from ..concept_contracts import AnnotationRef, ConceptView
+from ..concept_contracts import AnnotationRef, ConceptRevisionRef, ConceptView
 from ..contracts import CognitiveValue, NamespaceRef, RecordRevisionRef, RevisionSelection
 
 
@@ -35,6 +35,15 @@ class AnnotationPlan(CognitiveValue):
     candidates: tuple[ConceptCandidate, ...]
     expected_active: AnnotationRef | None
     eligibility: Literal["current_recalled", "current_any", "historical"]
+
+
+class AnnotationOperation(CognitiveValue):
+    """The frozen plan and adoption choices needed to continue a foreground request."""
+
+    plan: AnnotationPlan
+    bindings: dict[str, ConceptRevisionRef | None] = {}
+    draft_only: bool = False
+    activate_for_current: bool = True
 
 
 @dataclass(frozen=True)

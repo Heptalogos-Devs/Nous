@@ -24,12 +24,12 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 从源码运行需要 Python 3.14、uv、稳定版 Rust 1.97 及系统 C/C++ 编译工具链。Windows 使用 Visual Studio Build Tools 的 C++ 桌面开发组件；Linux/macOS 使用对应平台的 C++ 编译器。`uv sync --locked` 会通过 maturin 构建包含 Python 主应用、Tantivy/Jieba、USearch 和 Wave 数值内核的 `nous-server` 包。在仓库目录先设置开发环境，使缓存和虚拟环境位于 `temp/`：
 
 ```powershell
-. ./scripts/workspace.ps1
+. ./scripts/workspace.ps1 env
 ```
 
-Linux 和 macOS 使用 `source scripts/workspace.sh`。该入口同时准备 CodeGraph、Zvec-grep、项目索引和 Codex MCP；首次运行需要 Node.js/npm、uv 和 Codex CLI，Codex 需重连 MCP 或重启后读取新配置。随后安装依赖，初始化一个独立实例并检查运行资源：
+Linux 和 macOS 使用 `source scripts/workspace.sh env`。随后安装依赖，初始化一个独立实例并检查运行资源：
 
-检查工作区索引时运行 `. ./scripts/workspace.ps1 status` 或 `source scripts/workspace.sh status`；再次初始化会复用已有工具并同步索引。
+需要代码检索工具时，可以运行 `. ./scripts/workspace.ps1 init` 或 `source scripts/workspace.sh init`。该命令准备 CodeGraph、Zvec-grep 和项目索引，并更新用户的 Codex MCP 配置；首次运行需要 Node.js/npm、uv 和 Codex CLI，Codex 需重连 MCP 或重启后读取新配置。检查索引时将 `init` 换成 `status`。
 
 ```sh
 uv sync --locked --no-dev
@@ -42,7 +42,7 @@ nous tools prompt list
 nous tools content add ./notes.md
 ```
 
-工作区初始化会将虚拟环境中的 `nous` 加入当前终端的 PATH。登记并选择实例后，后续命令使用该实例；显式 `--instance` 或环境变量 `NOUS_INSTANCE` 优先。实例切换见[实例选择](docs/design/interfaces/instance-selection.md)。开发和测试时使用 `uv sync --locked` 安装开发依赖。
+工作区环境设定会将虚拟环境中的 `nous` 加入当前终端的 PATH。登记并选择实例后，后续命令使用该实例；显式 `--instance` 或环境变量 `NOUS_INSTANCE` 优先。实例切换见[实例选择](docs/design/interfaces/instance-selection.md)。开发和测试时使用 `uv sync --locked` 安装开发依赖。
 
 记录一段经历或手写一篇 Journal 后，可以直接用自然语言查询当前认识：
 

@@ -410,22 +410,6 @@ async def open_instance(
     waits for operations before closing connections, storage and locks. Opening
     does not initialize a missing instance; call ``initialize_instance`` first.
     """
-    from .local_context import current_call
-
-    call = current_call.get()
-    if call is not None:
-        selected = InstanceLocator.resolve(locator, environment)
-        if (
-            selected.directory != call.locator.directory
-            or environment is not None
-            or overrides is not None
-        ):
-            raise NousError(
-                "instance.selection_conflict", "A local host request can only use its own instance"
-            )
-        yield call.runtime
-        return
-
     startup_id = str(uuid4())
     logs = LoggingSession(startup_id)
     runtime: Runtime | None = None

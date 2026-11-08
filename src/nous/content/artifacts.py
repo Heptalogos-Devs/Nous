@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import codecs
 import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -36,6 +35,8 @@ from .contracts import (
     ResultRef,
     SelectedText,
     SourceSelection,
+    TextInput,
+    is_text_media_type,
 )
 from .input_access import current_input_access
 from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
@@ -386,10 +387,7 @@ class ArtifactStore:
             texts: dict[str, str] = {}
             views: list[ContentReadView] = []
             for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
-                is_text = (
-                    artifact.media_type.startswith("text/")
-                    or artifact.media_type == "application/json"
-                )
+                is_text = is_text_media_type(artifact.media_type)
                 async with self.content.borrow_local(blob) as path:
                     if is_text:
                         data, _, _ = await self.content.execution.blocking(
@@ -422,10 +420,7 @@ class ArtifactStore:
                     output = derived_map[str(row["artifact_id"])]
                     if output.ref.id == artifact.ref.id:
                         continue
-                    if (
-                        output.media_type.startswith("text/")
-                        or output.media_type == "application/json"
-                    ):
+                    if is_text_media_type(output.media_type):
                         if output.ref.id not in texts:
                             texts[output.ref.id] = await self.read_text(output.ref)
                         text = texts[output.ref.id]
@@ -508,105 +503,61 @@ class ArtifactStore:
             await self.blob(ref), self.text_read_max_bytes() if max_bytes is None else max_bytes
         )
 
-    async def accept(self, spec: InputSpec) -> Artifact:
+    async def accept(self, spec: TextInput) -> Artifact:
         """Accept a declared user input through the same immutable-content path."""
         if spec.kind == "artifact":
             assert spec.artifact is not None
             return await self.get(spec.artifact)
+        name = spec.display_name if isinstance(spec, InputSpec) else None
         if spec.kind == "file":
             assert spec.path is not None
-            return await self.ingest(Path(spec.path), display_name=spec.display_name)
+            return await self.ingest(Path(spec.path), display_name=name)
         assert spec.text is not None
-        return await self.ingest(spec.text, display_name=spec.display_name)
+        return await self.ingest(spec.text, display_name=name)
+
+    async def read_transient_text(self, spec: TextInput) -> str:
+        """Read a selected text range without accepting a new Artifact."""
+        if spec.kind == "artifact":
+            assert spec.artifact is not None
+            artifact = await self.get(spec.artifact)
+            return await self.read_selection(
+                ContentSelection(artifact=artifact.ref, selection=spec.selection)
+            )
+        from .text_selection import TextSelection
+
+        selected = TextSelection(spec.selection, self.text_read_max_bytes())
+        if spec.kind == "text":
+            assert spec.text is not None
+            selected.feed(spec.text.encode("utf-8"))
+        else:
+            assert spec.path is not None
+            path = Path(spec.path)
+            access = current_input_access.get()
+            if access is not None:
+                return await access.read_text(path, spec.selection, self.text_read_max_bytes())
+            chunks = self.content.file_readers.chunks(
+                path,
+                self.content.io_chunk_bytes,
+                selection=spec.selection,
+                limit=self.text_read_max_bytes(),
+            )
+            try:
+                async for chunk in chunks:
+                    selected.output.extend(chunk)
+            finally:
+                await chunks.aclose()
+            return bytes(selected.output).decode("utf-8")
+        data, _, _ = selected.finish()
+        return data.decode("utf-8")
 
     @staticmethod
     def _selected_bytes(
         path: Path, selection: SourceSelection, limit: int, byte_length: int
     ) -> tuple[bytes, int, int]:
-        if selection.pages or any(
-            value is not None
-            for value in (selection.start_ms, selection.end_ms, selection.frame, selection.crop)
-        ):
-            raise NousError(
-                "content.selection_requires_preparation",
-                "Media coordinates require media preparation",
-            )
-        if selection.start_byte is not None or selection.end_byte is not None:
-            start, end = (
-                selection.start_byte or 0,
-                selection.end_byte if selection.end_byte is not None else byte_length,
-            )
-            if not 0 <= start <= end <= byte_length:
-                raise NousError("content.invalid_selection", "Byte selection exceeds the artifact")
-            if end - start > limit:
-                raise NousError(
-                    "content.too_large", "Text selection exceeds the configured read limit"
-                )
-            first_line = 1
-            previous_cr = False
-            decoder = codecs.getincrementaldecoder("utf-8")()
-            with path.open("rb") as stream:
-                remaining = start
-                try:
-                    while remaining:
-                        prefix = stream.read(min(65536, remaining))
-                        if not prefix:
-                            raise NousError("content.corrupt", "Stored content is incomplete")
-                        remaining -= len(prefix)
-                        decoded = decoder.decode(prefix, final=remaining == 0)
-                        for character in decoded:
-                            if character == "\r":
-                                first_line += 1
-                            elif character == "\n" and not previous_cr:
-                                first_line += 1
-                            previous_cr = character == "\r"
-                except UnicodeDecodeError as error:
-                    raise NousError(
-                        "content.invalid_selection", "Selection splits a UTF-8 character"
-                    ) from error
-                data = stream.read(end - start)
-                try:
-                    data.decode("utf-8")
-                except UnicodeDecodeError as error:
-                    raise NousError(
-                        "content.invalid_selection", "Selection splits a UTF-8 character"
-                    ) from error
-            if len(data) != end - start:
-                raise NousError("content.corrupt", "Stored content is incomplete")
-            return data, start, first_line
-        if selection.start_line is None and selection.end_line is None:
-            if byte_length > limit:
-                raise NousError(
-                    "content.too_large", "Text exceeds the configured read limit; select a range"
-                )
-            return path.read_bytes(), 0, 1
-        first, last = selection.start_line or 1, selection.end_line
-        parts: list[bytes] = []
-        offset = start = size = count = 0
-        try:
-            with path.open("r", encoding="utf-8", newline="") as stream:
-                for number, line in enumerate(stream, 1):
-                    count = number
-                    data = line.encode("utf-8")
-                    if number < first:
-                        offset += len(data)
-                        continue
-                    if number == first:
-                        start = offset
-                    size += len(data)
-                    if size > limit:
-                        raise NousError(
-                            "content.too_large", "Text selection exceeds the configured read limit"
-                        )
-                    parts.append(data)
-                    offset += len(data)
-                    if last is not None and number == last:
-                        break
-        except UnicodeDecodeError as error:
-            raise NousError("content.not_text", "Stored content is not UTF-8 text") from error
-        if first > count or last is not None and last > count:
-            raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
-        return b"".join(parts), start, first
+        from .text_selection import read_seekable
+
+        with path.open("rb", buffering=0) as stream:
+            return read_seekable(stream.fileno(), selection, limit)
 
     async def read_selections(self, values: Sequence[ContentSelection]) -> tuple[SelectedText, ...]:
         """Read exact bounded text ranges in order using one metadata snapshot."""
@@ -651,44 +602,10 @@ class ArtifactStore:
     def _normalize_text(
         path: Path, selection: SourceSelection, byte_length: int
     ) -> SourceSelection:
-        """Resolve coordinates without retaining or limiting unrequested source bytes."""
-        if selection.pages or any(
-            value is not None
-            for value in (selection.start_ms, selection.end_ms, selection.frame, selection.crop)
-        ):
-            raise NousError("content.invalid_selection", "Text requires byte or line coordinates")
-        if selection.start_line is None and selection.end_line is None:
-            start = selection.start_byte or 0
-            end = selection.end_byte if selection.end_byte is not None else byte_length
-            if not 0 <= start <= end <= byte_length:
-                raise NousError("content.invalid_selection", "Byte selection exceeds the artifact")
-            with path.open("rb") as stream:
-                for position in (start, end):
-                    if position < byte_length:
-                        stream.seek(position)
-                        character = stream.read(1)
-                        if not character:
-                            raise NousError("content.corrupt", "Stored content is incomplete")
-                        if character[0] & 0xC0 == 0x80:
-                            raise NousError(
-                                "content.invalid_selection", "Selection splits a UTF-8 character"
-                            )
-            return SourceSelection(start_byte=start, end_byte=end)
-        first, last = selection.start_line or 1, selection.end_line
-        count = offset = start = 0
-        try:
-            with path.open("r", encoding="utf-8", newline="") as stream:
-                for count, line in enumerate(stream, 1):
-                    if count == first:
-                        start = offset
-                    offset += len(line.encode("utf-8"))
-                    if last is not None and count == last:
-                        break
-        except UnicodeDecodeError as error:
-            raise NousError("content.not_text", "Stored content is not UTF-8 text") from error
-        if first > count or last is not None and last > count:
-            raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
-        return SourceSelection(start_byte=start, end_byte=offset)
+        from .text_selection import normalize_seekable
+
+        with path.open("rb", buffering=0) as stream:
+            return normalize_seekable(stream.fileno(), selection, byte_length)
 
     async def normalize_selections(
         self, values: Sequence[ContentSelection], *, media_types: Mapping[str, str] | None = None
@@ -710,15 +627,7 @@ class ArtifactStore:
                         value.selection.crop,
                     )
                 )
-                if not media_coordinates and (
-                    media_type.startswith("text/")
-                    or media_type
-                    in {
-                        "application/json",
-                        "application/xml",
-                        "application/xhtml+xml",
-                    }
-                ):
+                if not media_coordinates and is_text_media_type(media_type):
                     async with self.content.borrow_local(blob) as path:
                         selected = await self.content.execution.blocking(
                             self._normalize_text, path, value.selection, blob.byte_length

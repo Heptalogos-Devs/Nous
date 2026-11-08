@@ -9,6 +9,15 @@ from nous.common.errors import NousError
 from nous.storage.content_types import BlobRef as BlobRef
 
 
+def is_text_media_type(media_type: str) -> bool:
+    """Identify formats whose contents are handled as UTF-8 text."""
+    return media_type.startswith("text/") or media_type in {
+        "application/json",
+        "application/xml",
+        "application/xhtml+xml",
+    }
+
+
 class ContentValue(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -238,7 +247,7 @@ class SelectedInputs(ContentValue):
     facts: tuple[SourceFacts, ...] = ()
 
     def identity(self) -> list[dict[str, JsonValue]]:
-        return [source.model_dump(mode="json", exclude={"display_name"}) for source in self.sources]
+        return [source.model_dump(mode="json") for source in self.sources]
 
 
 class SourceContext(ContentValue):
@@ -266,24 +275,29 @@ class InputGroup(ContentValue):
     context: SourceContext | None = None
 
 
-class InputSpec(ContentValue):
-    role: SourceRole = "source"
-    slot_key: str | None = Field(default=None, min_length=1)
+class TextInput(ContentValue):
+    """A file, text or artifact and its exact selection for text operations."""
+
     kind: Literal["file", "text", "artifact"]
     path: str | None = None
     text: str | None = None
     artifact: ArtifactRef | str | None = None
     selection: SourceSelection = Field(default_factory=SourceSelection)
-    display_name: str | None = None
 
     @model_validator(mode="after")
-    def matching_payload(self) -> InputSpec:
+    def matching_payload(self) -> TextInput:
         payload = {"file": self.path, "text": self.text, "artifact": self.artifact}
         if payload[self.kind] is None or any(
             value is not None for key, value in payload.items() if key != self.kind
         ):
             raise ValueError("An input must contain exactly its declared payload")
         return self
+
+
+class InputSpec(TextInput):
+    role: SourceRole = "source"
+    slot_key: str | None = Field(default=None, min_length=1)
+    display_name: str | None = None
 
 
 class OutputContent(ContentValue):

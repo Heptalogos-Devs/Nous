@@ -7,18 +7,6 @@ use tantivy::{
 };
 use tantivy_jieba::JiebaTokenizer;
 
-/// Token overlap for a bounded authority delta, using the exact same Chinese/Latin analyzer.
-/// Index BM25 and this local score share matching semantics; the app owns rank fusion.
-pub fn match_score(query: &str, text: &str) -> Option<f32> {
-    let query = tokenize(query);
-    if query.is_empty() {
-        return None;
-    }
-    let document = tokenize(text);
-    let matched = query.intersection(&document).count();
-    (matched > 0).then_some(matched as f32 / query.len() as f32)
-}
-
 pub(super) fn analyzer() -> TextAnalyzer {
     TextAnalyzer::builder(JiebaTokenizer::new())
         .filter(RemoveLongFilter::limit(80))

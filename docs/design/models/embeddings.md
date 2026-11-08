@@ -18,7 +18,7 @@ read(batch_ref) -> MatrixWithRows
 probe(model_selection, input, context) -> ProbeOutcome
 ```
 
-EmbeddingInput 是精确 ContentSelection 或已接纳的文本 Artifact。返回 batch_ref、每行输入引用、row_index、space definition、purpose 和向量 Artifact。Wave 通过该能力取得矩阵，不直接查询 embedding 私有表、读取 Provider SDK 或按结果数量猜顺序。
+run 和 probe 使用 `TextInput` 表达文件、文字或 Artifact 及其文本选区；ensure 接受已接纳的精确 ContentSelection。probe 临时读取选区，run 接纳正式原件后读取相同范围。返回 batch_ref、每行输入引用、row_index、space definition、purpose 和向量 Artifact。Wave 通过该能力取得矩阵，不直接查询 embedding 私有表、读取 Provider SDK 或按结果数量猜顺序。
 
 exact 复用键包含实际编码文字/媒体摘要、空间完整签名、purpose 和已采用输出。相同模型重复调用可能产生不同数值；复用已采用向量使快照可重开。不使用模糊文本相似缓存，不凭内容近似代替精确向量身份。
 

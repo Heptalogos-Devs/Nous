@@ -75,7 +75,7 @@ def process_references() -> tuple[list[ProcessReference], list[str]]:
             if name_match is None:
                 raise ValueError("missing process name")
             name = name_match[1]
-        except OSError, TypeError, ValueError:
+        except (OSError, TypeError, ValueError):
             try:
                 if proc.stat().st_uid == os.getuid():
                     errors.append(f"无法检查当前用户进程 {proc.name}")
@@ -115,7 +115,7 @@ def process_references() -> tuple[list[ProcessReference], list[str]]:
             try:
                 entries = (proc / "environ").read_bytes().split(b"\0")
                 wanted = {*tool_paths[name], "XDG_CACHE_HOME", "HOME"}
-                values = {}
+                values: dict[str, str] = {}
                 for entry in entries:
                     key, separator, value = entry.partition(b"=")
                     decoded_key = os.fsdecode(key)
@@ -179,7 +179,7 @@ def busy_paths() -> BusyPaths:
                 # mountinfo uses octal escapes, including spaces and backslashes.
                 field = line.split()[4]
                 mounts.append((re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), field), False))
-        except OSError, IndexError:
+        except (OSError, IndexError):
             errors.append("无法检查当前挂载点")
     docker = shutil.which("docker")
     if docker:
@@ -194,7 +194,7 @@ def busy_paths() -> BusyPaths:
                         for mount in container["Mounts"]
                         if mount["Type"] == "bind"
                     )
-        except Unsafe, ValueError, KeyError, TypeError:
+        except (Unsafe, ValueError, KeyError, TypeError):
             errors.append("无法检查运行中的 Docker bind mount")
     return processes, mounts, errors
 
@@ -256,7 +256,7 @@ def windows_busy_paths() -> BusyPaths:
                     arguments,
                 )
             )
-    except Unsafe, ValueError, KeyError, TypeError:
+    except (Unsafe, ValueError, KeyError, TypeError):
         errors.append("无法读取 Windows CIM 进程信息")
     docker = shutil.which("docker")
     if docker:
@@ -274,6 +274,6 @@ def windows_busy_paths() -> BusyPaths:
                                 mount["Source"],
                             )
                             mounts.append((source, True))
-        except Unsafe, ValueError, KeyError, TypeError:
+        except (Unsafe, ValueError, KeyError, TypeError):
             errors.append("无法检查运行中的 Docker bind mount")
     return processes, mounts, errors

@@ -16,7 +16,13 @@ from nous.common.errors import NousError
 from nous.storage.database import WriteTx
 
 from . import schema
-from .contracts import PreparedSnapshot, SnapshotDescriptor, SnapshotOwner, SnapshotRef
+from .contracts import (
+    PreparedSnapshot,
+    SnapshotDescriptor,
+    SnapshotDraft,
+    SnapshotOwner,
+    SnapshotRef,
+)
 
 
 @dataclass(frozen=True)
@@ -25,9 +31,6 @@ class CleanupSelection:
 
     removed: list[tuple[str, str]]
     remaining_assets: set[str]
-    removed_assets: set[str]
-    unused_units: set[str]
-    unused_graphs: set[str]
 
 
 class SnapshotRegistry:
@@ -36,7 +39,7 @@ class SnapshotRegistry:
     def __init__(self, instance_id: str) -> None:
         self.instance_id = instance_id
 
-    async def accept_in(self, tx: WriteTx, prepared: PreparedSnapshot) -> SnapshotDescriptor:
+    async def prepare_in(self, tx: WriteTx, prepared: SnapshotDraft) -> SnapshotDescriptor:
         """Register exactly the prepared files and their dependencies in the caller's transaction."""
         if prepared.ref.instance_id != self.instance_id:
             raise NousError(
@@ -142,7 +145,6 @@ class SnapshotRegistry:
                         "name",
                         "owner",
                         "metadata",
-                        "roots",
                         "concepts",
                         "associations",
                         "support_groups",
@@ -156,6 +158,7 @@ class SnapshotRegistry:
                 graph_signature=prepared.graph_signature,
                 build_summary=prepared.summary,
                 created_at=prepared.created_at,
+                accepted=False,
             )
         )
         if prepared.units:
@@ -169,7 +172,7 @@ class SnapshotRegistry:
                         "input_signature": unit.input_signature,
                         "document_key": unit.document_key,
                         "document": unit.document,
-                        "roots": unit.input_payload["roots"],
+                        "roots": unit.roots,
                         "candidates": unit.candidates,
                         "candidate_data": unit.candidate_data,
                     }
@@ -226,13 +229,11 @@ class SnapshotRegistry:
                 await tx.connection.execute(
                     insert(schema.projection_vectors).on_conflict_do_nothing(), unit_vectors
                 )
-        if prepared.artifact_ids:
+        artifacts = {ref.id for refs in prepared.view.evidence.roots.values() for ref in refs}
+        if artifacts:
             await tx.connection.execute(
                 schema.snapshot_artifacts.insert(),
-                [
-                    {"snapshot_id": prepared.ref.id, "artifact_id": ref}
-                    for ref in prepared.artifact_ids
-                ],
+                [{"snapshot_id": prepared.ref.id, "artifact_id": ref} for ref in sorted(artifacts)],
             )
         return SnapshotDescriptor(
             ref=prepared.ref,
@@ -246,6 +247,33 @@ class SnapshotRegistry:
             metadata=prepared.view.metadata,
         )
 
+    async def accept_in(self, tx: WriteTx, prepared: PreparedSnapshot) -> SnapshotDescriptor:
+        row = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.snapshots, schema.collections.c.name)
+                    .join(schema.collections)
+                    .where(schema.snapshots.c.id == prepared.ref.id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None or row["identifier"] != prepared.ref.identifier:
+            raise NousError("wave.snapshot_not_found", "Prepared snapshot does not exist")
+        if (
+            prepared.ref.instance_id != self.instance_id
+            or row["build_signature"] != prepared.build_signature
+        ):
+            raise NousError("wave.build_key_conflict", "Prepared snapshot identity differs")
+        if not row["accepted"]:
+            await tx.connection.execute(
+                schema.snapshots.update()
+                .where(schema.snapshots.c.id == prepared.ref.id)
+                .values(accepted=True)
+            )
+        return self.descriptor(row)
+
     async def promote_in(self, tx: WriteTx, ref: SnapshotRef) -> None:
         """Point the owning collection to an already accepted snapshot."""
         if ref.instance_id != self.instance_id:
@@ -255,7 +283,7 @@ class SnapshotRegistry:
                 await tx.connection.execute(
                     sa.select(
                         schema.snapshots.c.collection_id, schema.snapshots.c.identifier
-                    ).where(schema.snapshots.c.id == ref.id)
+                    ).where(schema.snapshots.c.id == ref.id, schema.snapshots.c.accepted.is_(True))
                 )
             )
             .mappings()
@@ -280,7 +308,9 @@ class SnapshotRegistry:
         if ref.instance_id != self.instance_id or not owner_kind or not owner_id:
             raise NousError("wave.invalid_reference", "Invalid snapshot retention reference")
         identifier = await tx.connection.scalar(
-            sa.select(schema.snapshots.c.identifier).where(schema.snapshots.c.id == ref.id)
+            sa.select(schema.snapshots.c.identifier).where(
+                schema.snapshots.c.id == ref.id, schema.snapshots.c.accepted.is_(True)
+            )
         )
         if identifier != ref.identifier:
             raise NousError("wave.snapshot_not_found", "Snapshot is no longer available")
@@ -332,6 +362,7 @@ class SnapshotRegistry:
                         schema.snapshots.c.identifier,
                         schema.snapshots.c.index_location,
                         schema.snapshots.c.collection_id,
+                        schema.snapshots.c.accepted,
                         schema.collections.c.current_snapshot_id,
                     )
                     .join(schema.collections)
@@ -346,24 +377,26 @@ class SnapshotRegistry:
             if (
                 ref.instance_id != self.instance_id
                 or ref.id not in by_id
+                or not by_id[ref.id]["accepted"]
                 or by_id[ref.id]["identifier"] != ref.identifier
             ):
                 raise NousError("wave.snapshot_not_found", "Retained snapshot does not exist")
         protected = set(protected) | {ref.id for ref in retain}
         protected.update(row["current_snapshot_id"] for row in rows)
+        protected.update(row["id"] for row in rows if not row["accepted"])
         protected.update(
             (await tx.connection.scalars(sa.select(schema.snapshot_references.c.snapshot_id))).all()
         )
         per_collection: dict[str, int] = {}
         for row in rows:
+            if not row["accepted"]:
+                continue
             count = per_collection.get(row["collection_id"], 0)
             if count < keep_recent:
                 protected.add(row["id"])
             per_collection[row["collection_id"]] = count + 1
         obsolete = [row for row in rows if row["id"] not in protected]
         ids = [row["id"] for row in obsolete]
-        unused_units: set[str] = set()
-        unused_graphs: set[str] = set()
         if ids:
             for table in (
                 schema.snapshot_candidates,
@@ -413,7 +446,4 @@ class SnapshotRegistry:
         remaining_assets = {
             row["index_location"] for row in rows if row["id"] not in ids
         } | pending_assets
-        removed_assets = {row["index_location"] for row in obsolete} - remaining_assets
-        return CleanupSelection(
-            removed, remaining_assets, removed_assets, unused_units, unused_graphs
-        )
+        return CleanupSelection(removed, remaining_assets)

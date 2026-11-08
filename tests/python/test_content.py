@@ -349,6 +349,52 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
     asyncio.run(scenario())
 
 
+def test_xml_text_remains_available_across_content_and_model_inputs(tmp_path: Path) -> None:
+    import json
+
+    from nous.application.tools import content_read
+    from nous.models.contracts import ReadingInput
+    from nous.models.tasks import builtin_tasks
+
+    async def scenario() -> None:
+        instance = tmp_path / "xml-content"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            for media_type in ("application/xml", "application/xhtml+xml"):
+                text = "<root>一行</root>\n<next>二行</next>\n"
+                artifact = await runtime.artifacts.ingest(text, media_type=media_type)
+                selected = ContentSelection(
+                    artifact=artifact.ref, selection=SourceSelection(start_line=2, end_line=2)
+                )
+                view = (await runtime.artifacts.read_view_many((selected,)))[0]
+                assert view.body_text == "<next>二行</next>\n"
+                assert (await content_read(runtime, artifact.ref.identifier))["text"] == text
+                plan = await runtime.media.preparer.prepare(
+                    artifact,
+                    selected.selection,
+                    settings=runtime.configuration.snapshot.values.media,
+                )
+                source = (await runtime.media.preparer.materialize(plan.batches[0])).sources[0]
+                assert source.text == view.body_text
+                assert not source.media
+                assert source.group is not None
+                assert source.group.parts[0].content.artifact == artifact.ref
+                task = builtin_tasks()["passage-selection"]
+                outputs = await task.outputs(
+                    {"keys": [source.key]},
+                    ReadingInput("", "", (source,)),
+                    runtime.artifacts,
+                    structured=True,
+                )
+                passages = json.loads(outputs["passages"].data)
+                assert passages[0]["text"] == view.body_text
+                assert passages[0]["content"] == source.group.parts[0].content.model_dump(
+                    mode="json"
+                )
+
+    asyncio.run(scenario())
+
+
 def test_image_preparation_validates_selection_before_direct_or_normalized_input(
     tmp_path: Path,
 ) -> None:

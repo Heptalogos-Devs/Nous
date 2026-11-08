@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import errno
 import hmac
 import json
@@ -11,25 +10,19 @@ import os
 import secrets
 import shutil
 import socket
-import stat
 import sys
 import tempfile
 import threading
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import click
-from typer.main import get_command
-
 from nous.common.errors import NousError
 from nous.content.input_access import current_input_access
 from nous.runtime.instance import InstanceLocator
-from nous.runtime.local_context import current_call
 
 from .control_files import ClientFiles
-from .control_streams import ClientInput, ForwardOutput, isolated_cli_streams
 from .control_wire import (
     MAX_FRAME,
     encode,
@@ -42,17 +35,7 @@ from .control_wire import (
 )
 
 if TYPE_CHECKING:
-    import typer
-
     from nous.runtime.bootstrap import Runtime
-
-
-def _allowed_command(command: Sequence[str]) -> bool:
-    return (
-        bool(command)
-        and command[0] not in {"init", "instance", "job"}
-        and command[:2] != ["runtime", "run"]
-    )
 
 
 class HostCall:
@@ -61,8 +44,6 @@ class HostCall:
         runtime: Runtime,
         locator: InstanceLocator,
         cwd: str,
-        stdin: str | None,
-        stdin_tty: bool,
         writer: asyncio.StreamWriter,
     ) -> None:
         self.runtime, self.locator, self.writer = runtime, locator, writer
@@ -70,13 +51,9 @@ class HostCall:
         self.cwd = Path(cwd)
         if not self.cwd.is_absolute():
             raise ValueError("Client working directory must be absolute")
-        self.stdin = ClientInput(stdin, stdin_tty, self.read_stdin)
-        self.stdout = ForwardOutput(lambda value: self.output("stdout", value))
-        self.stderr = ForwardOutput(lambda value: self.output("stderr", value))
         self.closed = False
         self.cancelled = False
         self.task: asyncio.Task[object] | None = None
-        self.editor_waiter: asyncio.Future[object] | None = None
         self.input_waiter: asyncio.Future[object] | None = None
         self.input_id: str | None = None
         self.input_lock = asyncio.Lock()
@@ -86,15 +63,8 @@ class HostCall:
         self.resolved_sources: dict[Path, Path] = {}
 
     def original(self, path: Path) -> Path:
-        return self.staged.get(path, path)
-
-    def _require_worker(self) -> None:
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        if running is self.loop:
-            raise RuntimeError("Synchronous client I/O cannot run on the host event loop")
+        original = self.staged.get(path, path)
+        return original if original.is_absolute() else self.cwd / original
 
     async def _request_input(self, message: dict[str, object]) -> object:
         async with self.input_lock:
@@ -104,19 +74,14 @@ class HostCall:
             self.input_id = secrets.token_hex(16)
             try:
                 await send(self.writer, {**message, "request_id": self.input_id})
-                timeout = (
-                    self.runtime.configuration.snapshot.values.execution.default_timeout_seconds
-                )
+                timeout = self.runtime.execution.snapshot.values.execution.default_timeout_seconds
                 return await asyncio.wait_for(self.input_waiter, timeout)
             finally:
                 self.input_waiter = None
                 self.input_id = None
 
-    def read_stdin(self) -> str:
-        self._require_worker()
-        value = asyncio.run_coroutine_threadsafe(
-            self._request_input({"kind": "stdin"}), self.loop
-        ).result()
+    async def read_stream(self) -> str:
+        value = await self._request_input({"kind": "stdin"})
         if not isinstance(value, str):
             raise ValueError("Invalid client standard input")
         return value
@@ -154,9 +119,26 @@ class HostCall:
         self.resolved_sources[path] = canonical
         return target
 
-    def materialize_sync(self, path: Path) -> Path:
-        self._require_worker()
-        return asyncio.run_coroutine_threadsafe(self.materialize(path), self.loop).result()
+    async def read_text(self, path: Path, selection: object, limit: int) -> str:
+        if self.closed or self.cancelled:
+            raise NousError("instance.control_lost", "The client input session has ended")
+        if not path.is_absolute():
+            path = self.cwd / path
+        target = self._staging_file("selection.txt")
+        from nous.content.contracts import SourceSelection
+
+        if not isinstance(selection, SourceSelection):
+            raise ValueError("Invalid text selection")
+        await self._request_input(
+            {
+                "kind": "selected_text",
+                "source": str(path),
+                "target": str(target),
+                "selection": selection.model_dump(mode="json"),
+                "limit": limit,
+            }
+        )
+        return (await self.runtime.execution.blocking(target.read_bytes)).decode("utf-8")
 
     async def resolve(self, path: Path) -> Path:
         if not path.is_absolute():
@@ -169,26 +151,8 @@ class HostCall:
         self.resolved_sources[path] = Path(value)
         return Path(value)
 
-    def resolve_sync(self, path: Path) -> Path:
-        self._require_worker()
-        return asyncio.run_coroutine_threadsafe(self.resolve(path), self.loop).result()
-
-    def path_info_sync(self, path: Path, *, resolve: bool) -> dict[str, object]:
-        self._require_worker()
-        value = asyncio.run_coroutine_threadsafe(
-            self._request_input({"kind": "stat", "source": str(path), "resolve": resolve}),
-            self.loop,
-        ).result()
-        if not isinstance(value, dict):
-            raise ValueError("Invalid client path information")
-        return cast(dict[str, object], value)
-
-    def write_text_sync(self, target: Path, text: str) -> None:
-        self._require_worker()
-        asyncio.run_coroutine_threadsafe(
-            self._request_input({"kind": "write_text", "target": str(target), "text": text}),
-            self.loop,
-        ).result()
+    async def write_text(self, target: Path, text: str) -> None:
+        await self._request_input({"kind": "write_text", "target": str(target), "text": text})
 
     async def export_file(self, source: Path, target: Path, digest: str, length: int) -> None:
         key = secrets.token_hex(16)
@@ -206,95 +170,86 @@ class HostCall:
         )
         await self._request_input({"kind": "export_commit", "key": key})
 
-    def output(self, stream: str, value: str) -> None:
-        """Write from either the host event loop or its CLI worker thread."""
-        message = {"kind": "output", "stream": stream, "text": value}
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-        if running is self.loop:
-            if self.writer.transport.get_write_buffer_size() > MAX_FRAME:
-                raise ValueError("Local control output backpressure limit exceeded")
-            self.writer.write(encode(message))
-        else:
-            asyncio.run_coroutine_threadsafe(send(self.writer, message), self.loop).result()
+    def event(self, name: str, value: object) -> None:
+        from nous.application.actions import encode as encode_value
 
-    def run[T](self, action: Awaitable[T]) -> T:
-        result: concurrent.futures.Future[T] = concurrent.futures.Future()
-
-        async def execute() -> T:
-            return await action
-
-        def start() -> None:
-            task = self.loop.create_task(execute())
-            self.task = cast(asyncio.Task[object], task)
-            if self.cancelled:
-                task.cancel()
-
-            def finish(done: asyncio.Task[T]) -> None:
-                self.task = None
-                try:
-                    result.set_result(done.result())
-                except BaseException as error:
-                    result.set_exception(error)
-
-            task.add_done_callback(finish)
-
-        self.loop.call_soon_threadsafe(start)
-        return result.result()
+        if self.writer.transport.get_write_buffer_size() > MAX_FRAME:
+            raise ValueError("Local control output backpressure limit exceeded")
+        self.writer.write(encode({"kind": "event", "name": name, "value": encode_value(value)}))
 
     def cancel(self) -> None:
         self.cancelled = True
         if self.task is not None:
             self.task.cancel()
-        if self.editor_waiter is not None and not self.editor_waiter.done():
-            self.editor_waiter.cancel()
         if self.input_waiter is not None and not self.input_waiter.done():
             self.input_waiter.cancel()
 
-    def edit(self, filename: str) -> None:
-        self._require_worker()
+    async def invoke_action(self, request: dict[str, object]) -> dict[str, object]:
+        from pydantic import TypeAdapter
 
-        async def request() -> None:
-            if self.cancelled:
-                raise asyncio.CancelledError
-            self.editor_waiter = self.loop.create_future()
-            await send(self.writer, {"kind": "editor", "filename": filename})
-            try:
-                await self.editor_waiter
-            finally:
-                self.editor_waiter = None
+        from nous.application.actions import encode as encode_value
+        from nous.application.actions import perform
+        from nous.application.inputs import InputParameter
+        from nous.common.errors import failure_code, failure_message
+        from nous.common.operations import exception_context
 
-        asyncio.run_coroutine_threadsafe(request(), self.loop).result()
-
-    def invoke(self, args: list[str]) -> dict[str, object]:
-        from . import cli, main
-
-        token = current_call.set(self)
-        input_token = current_input_access.set(self)
+        name, namespace = request.get("action"), request.get("namespace")
+        args, kwargs, event_names = (
+            request.get("args"),
+            request.get("kwargs"),
+            request.get("events"),
+        )
+        if (
+            not isinstance(name, str)
+            or (namespace is not None and not isinstance(namespace, str))
+            or not isinstance(args, list)
+            or not isinstance(kwargs, dict)
+            or not isinstance(event_names, list)
+        ):
+            raise ValueError("Invalid application operation")
+        if any(event not in {"on_delta", "on_event"} for event in cast(list[object], event_names)):
+            raise ValueError("Invalid application operation event")
+        token = current_input_access.set(self)
+        self.task = cast(asyncio.Task[object], asyncio.current_task())
         try:
-            parsed = get_command(cli).make_context("nous", args.copy(), resilient_parsing=True)
-            command = [*parsed._protected_args, *parsed.args]  # pyright: ignore[reportPrivateUsage]
-            selected = InstanceLocator.resolve(
-                parsed.params.get("instance"), profile=parsed.params.get("profile")
+            events: dict[str, Callable[..., object]] = {}
+            if "on_delta" in event_names:
+
+                def on_delta(value: str) -> None:
+                    self.event("delta", value)
+
+                events["on_delta"] = on_delta
+            if "on_event" in event_names:
+                events["on_event"] = self.event
+            if name == "configuration.write_schema":
+                events["on_write"] = self.write_text
+            if name == "tools.content_export":
+                events["on_export"] = self.export_file
+            value = await perform(
+                self.runtime,
+                name,
+                namespace,
+                cast(list[object], args),
+                cast(dict[str, object], kwargs),
+                events=events,
+                inputs=TypeAdapter(tuple[InputParameter, ...]).validate_python(
+                    request.get("inputs", [])
+                ),
+                read_stream=self.read_stream,
             )
-            if selected.directory != self.locator.directory or not _allowed_command(command):
-                raise ValueError("Local host request exceeds its instance or command boundary")
-            try:
-                main(args=args, forwarded=True)
-                status = 0
-            except SystemExit as error:
-                status = (
-                    error.code if isinstance(error.code, int) else 0 if error.code is None else 1
+            return {"kind": "result", "value": encode_value(value)}
+        except Exception as error:
+            failure = (
+                error
+                if isinstance(error, NousError)
+                else NousError(
+                    failure_code(error), failure_message(error), details=exception_context(error)
                 )
-            return {
-                "kind": "result",
-                "status": status,
-            }
+            )
+            return {"kind": "result", "error": failure.to_dict()}
         finally:
-            current_input_access.reset(input_token)
-            current_call.reset(token)
+            self.task = None
+            current_input_access.reset(token)
 
 
 class LocalControl:
@@ -399,21 +354,11 @@ class LocalControl:
             try:
                 request = await asyncio.wait_for(receive(reader), 600)
                 args, cwd = request.get("args"), request.get("cwd")
-                stdin, stdin_tty = request.get("stdin"), request.get("stdin_tty")
-                if (
-                    not isinstance(args, list)
-                    or not isinstance(cwd, str)
-                    or (stdin is not None and not isinstance(stdin, str))
-                    or not isinstance(stdin_tty, bool)
-                ):
-                    raise ValueError("Invalid local CLI request")
-                raw_args = cast(list[object], args)
-                if not all(isinstance(a, str) for a in raw_args):
-                    raise ValueError("Invalid local CLI arguments")
-                arguments = [cast(str, a) for a in raw_args]
-                call = HostCall(self.runtime, self.locator, cwd, stdin, stdin_tty, writer)
+                if not isinstance(args, list) or not isinstance(cwd, str):
+                    raise ValueError("Invalid local application request")
+                call = HostCall(self.runtime, self.locator, cwd, writer)
                 self.handlers[task] = (writer, call)
-                worker = asyncio.create_task(asyncio.to_thread(call.invoke, arguments))
+                worker = asyncio.create_task(call.invoke_action(request))
                 incoming = asyncio.create_task(receive(reader))
                 try:
                     while True:
@@ -427,10 +372,7 @@ class LocalControl:
                             break
                         message = incoming.result()
                         kind = message.get("kind")
-                        if kind == "editor_result" and call.editor_waiter is not None:
-                            waiter = call.editor_waiter
-                            value = None
-                        elif kind in {
+                        if kind in {
                             "file_result",
                             "stdin_result",
                             "output_result",
@@ -461,7 +403,12 @@ class LocalControl:
                             incoming = asyncio.create_task(receive(reader))
                             continue
                         if message.get("error") is not None:
-                            waiter.set_exception(OSError(str(message["error"])))
+                            code = message.get("code")
+                            waiter.set_exception(
+                                NousError(code, str(message["error"]))
+                                if isinstance(code, str)
+                                else OSError(str(message["error"]))
+                            )
                         else:
                             waiter.set_result(value)
                         incoming = asyncio.create_task(receive(reader))
@@ -508,36 +455,73 @@ class LocalControl:
 @asynccontextmanager
 async def serve_cli(runtime: Runtime, locator: InstanceLocator) -> AsyncGenerator[None]:
     control = LocalControl(runtime, locator)
-    with isolated_cli_streams():
-        await control.start()
-        try:
-            yield
-        finally:
-            from nous.runtime.execution import complete_cleanup
-
-            await complete_cleanup(control.stop())
-
-
-def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
-    """Forward only after connecting; never retry an indeterminate request locally."""
-    if "--help" in argv or current_call.get() is not None:
-        return None
+    await control.start()
     try:
-        context = get_command(cli).make_context("nous", argv.copy(), resilient_parsing=True)
-        command = [*context._protected_args, *context.args]  # pyright: ignore[reportPrivateUsage]
-        if not _allowed_command(command):
-            return None
-        locator = InstanceLocator.resolve(
-            context.params.get("instance"), profile=context.params.get("profile")
+        yield
+    finally:
+        from nous.runtime.execution import complete_cleanup
+
+        await complete_cleanup(control.stop())
+
+
+def request_action(
+    locator: InstanceLocator,
+    action: str,
+    namespace: str | None,
+    args: Sequence[object],
+    kwargs: Mapping[str, object],
+    on_delta: Callable[[str], None] | None = None,
+    *,
+    inputs: Sequence[object] = (),
+    on_event: Callable[[str, object], None] | None = None,
+) -> dict[str, object] | None:
+    from nous.application.actions import encode as encode_value
+
+    response = _control_request(
+        locator,
+        {
+            "action": action,
+            "namespace": namespace,
+            "args": encode_value(args),
+            "kwargs": encode_value(kwargs),
+            "events": (["on_delta"] if on_delta is not None else [])
+            + (["on_event"] if on_event is not None else []),
+            "inputs": encode_value(inputs),
+            "cwd": os.getcwd(),
+            "stdin_tty": sys.stdin.isatty(),
+        },
+        on_delta=on_delta,
+        on_event=on_event,
+    )
+    if response is not None and isinstance(response.get("error"), dict):
+        error = cast(dict[str, object], response["error"])
+        raise NousError(
+            str(error["code"]),
+            str(error["message"]),
+            details=cast(dict[str, object], error.get("details", {})),
+            retryable=bool(error.get("retryable", False)),
+            operation=cast(str | None, error.get("operation")),
+            retry_after=cast(float | None, error.get("retry_after")),
+            operation_id=cast(str | None, error.get("operation_id")),
+            trace_id=cast(str | None, error.get("trace_id")),
         )
-        path = endpoint(locator)
-        info = read_endpoint(path) if path is not None else None
-        if info is None:
-            return None
-    except click.ClickException, ValueError:
+    return response
+
+
+def _control_request(
+    locator: InstanceLocator,
+    request: dict[str, object],
+    *,
+    on_delta: Callable[[str], None] | None = None,
+    on_event: Callable[[str, object], None] | None = None,
+) -> dict[str, object] | None:
+    path = endpoint(locator)
+    info = read_endpoint(path) if path is not None else None
+    if info is None:
         return None
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     files = ClientFiles()
+    session_done = threading.Event()
     sock.settimeout(10)
     try:
         try:
@@ -569,14 +553,6 @@ def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
             encode({"kind": "auth", "proof": proof(info["secret"], "client", nonce, server_nonce)})
         )
         sock.settimeout(None)
-        prefix = ["--instance", str(locator.directory)]
-        if context.params.get("json_mode"):
-            prefix.append("--json")
-        if language := context.params.get("language"):
-            prefix.extend(("--language", language))
-        if context.params.get("debug"):
-            prefix.append("--debug")
-        stdin_tty = sys.stdin.isatty()
         send_lock = threading.Lock()
 
         def send_from_thread(message: dict[str, object]) -> None:
@@ -606,31 +582,52 @@ def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
                     if len(text.encode("utf-8")) > MAX_FRAME:
                         raise ValueError("CLI standard input exceeds the local control limit")
                     result: dict[str, object] = {"kind": "stdin_result", "text": text}
-                elif kind == "stat":
-                    source, resolve = message.get("source"), message.get("resolve")
-                    if not isinstance(source, str) or not isinstance(resolve, bool):
-                        raise ValueError("Invalid local path inspection request")
-                    source = os.path.realpath(source) if resolve else source
-                    try:
-                        info = os.stat(source)
-                    except OSError:
-                        value: dict[str, object] = {"path": source, "exists": False}
-                    else:
-                        value = {
-                            "path": source,
-                            "exists": True,
-                            "regular": stat.S_ISREG(info.st_mode),
-                            "directory": stat.S_ISDIR(info.st_mode),
-                            "readable": os.access(source, os.R_OK),
-                            "writable": os.access(source, os.W_OK),
-                            "executable": os.access(source, os.X_OK),
-                        }
-                    result = {"kind": "stat_result", "value": value}
                 elif kind == "resolve":
                     source = message.get("source")
                     if not isinstance(source, str):
                         raise ValueError("Invalid local path resolution request")
                     result = {"kind": "resolve_result", "resolved": str(Path(source).resolve())}
+                elif kind == "selected_text":
+                    source, target, limit = (
+                        message.get("source"),
+                        message.get("target"),
+                        message.get("limit"),
+                    )
+                    if (
+                        not isinstance(source, str)
+                        or not isinstance(target, str)
+                        or not isinstance(limit, int)
+                    ):
+                        raise ValueError("Invalid selected input request")
+                    from nous.content.contracts import SourceSelection
+                    from nous.storage.file_input import FileReaderPool
+
+                    async def select_text() -> bytes:
+                        selection = SourceSelection.model_validate(message.get("selection"))
+                        pool = FileReaderPool(1)
+                        chunks = pool.chunks(
+                            Path(source), 1024 * 1024, selection=selection, limit=limit
+                        )
+
+                        async def consume() -> bytes:
+                            return b"".join([chunk async for chunk in chunks])
+
+                        task = asyncio.create_task(consume())
+                        try:
+                            while not task.done():
+                                await asyncio.wait((task,), timeout=0.1)
+                                if session_done.is_set():
+                                    task.cancel()
+                            return await task
+                        finally:
+                            await chunks.aclose()
+                            await pool.aclose()
+
+                    data = asyncio.run(select_text())
+                    if session_done.is_set():
+                        return
+                    Path(target).write_bytes(data)
+                    result = {"kind": "file_result", "resolved": source}
                 elif kind in {"write_text", "export_prepare", "export_commit"}:
                     files.perform(message)
                     result = {"kind": "output_result"}
@@ -650,19 +647,13 @@ def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
                     if kind in {"write_text", "export_prepare", "export_commit"}
                     else "resolve_result"
                     if kind == "resolve"
-                    else "stat_result"
-                    if kind == "stat"
                     else "file_result",
                     "error": str(error),
+                    "code": error.code if isinstance(error, NousError) else None,
                 }
             result["request_id"] = message.get("request_id")
             send_from_thread(result)
 
-        request = {
-            "args": [*prefix, *command],
-            "cwd": os.getcwd(),
-            "stdin_tty": stdin_tty,
-        }
         try:
             sock.sendall(encode(request))
             while True:
@@ -671,37 +662,29 @@ def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
                     "stdin",
                     "file",
                     "resolve",
-                    "stat",
+                    "selected_text",
                     "write_text",
                     "export_prepare",
                     "export_commit",
                 }:
                     threading.Thread(target=input_worker, args=(response,), daemon=True).start()
                     continue
-                if response.get("kind") == "editor":
-                    filename = response.get("filename")
-                    if not isinstance(filename, str):
-                        raise ValueError("Invalid local editor request")
-                    try:
-                        click.edit(filename=filename)
-                        answer: dict[str, object] = {"kind": "editor_result"}
-                    except Exception as error:
-                        answer = {"kind": "editor_result", "error": str(error)}
-                    with send_lock:
-                        sock.sendall(encode(answer))
+                if response.get("kind") == "event":
+                    name, value = response.get("name"), response.get("value")
+                    if not isinstance(name, str):
+                        raise ValueError("Invalid local event")
+                    if name == "delta" and on_delta is not None:
+                        if not isinstance(value, str):
+                            raise ValueError("Invalid local delta")
+                        on_delta(value)
+                    elif on_event is not None:
+                        on_event(name, value)
+                    else:
+                        raise ValueError("Unexpected local event")
                     continue
-                if response.get("kind") == "output":
-                    stream, value = response.get("stream"), response.get("text")
-                    if stream not in ("stdout", "stderr") or not isinstance(value, str):
-                        raise ValueError("Invalid local output")
-                    destination = sys.stdout if stream == "stdout" else sys.stderr
-                    destination.write(value)
-                    destination.flush()
-                    continue
-                status = response.get("status")
-                if response.get("kind") != "result" or not isinstance(status, int):
+                if response.get("kind") != "result":
                     raise ValueError("Invalid local host response")
-                return status
+                return response
         except (EOFError, OSError, ValueError) as error:
             raise NousError(
                 "instance.control_lost",
@@ -709,5 +692,6 @@ def try_forward(cli: typer.Typer, argv: list[str]) -> int | None:
                 cause=error,
             ) from error
     finally:
+        session_done.set()
         sock.close()
         files.cleanup()

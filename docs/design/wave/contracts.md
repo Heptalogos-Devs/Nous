@@ -20,7 +20,7 @@ Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须�
 
 认知 owner 从同一读事务捕获的正式 revision/source bindings 解释独立来源。实验清单适配器以 ResultStore.support_roots 校验 derived_from 后产生同一份投影。Wave 的资产构建只消费这份固定投影，Native 只接收数值集合与行号。
 
-`resolve_build_profile` 固定空间和构建配置；`prepare_build` 返回可恢复的 PreparedSnapshot。`accept_in` 在调用者的 WriteTx 登记结果，`promote_in` 在领域资格成立后切换指针；事务成功后释放准备结果的临时持有。
+`resolve_build_profile` 固定空间和构建配置；`prepare_build` 在异步作用域中借出可恢复的 PreparedSnapshot，并在退出时释放临时持有。`accept_in` 在调用者的 WriteTx 将已持久准备的快照切换为已采用，`promote_in` 在领域资格成立后切换指针。
 
 ## 查询请求
 

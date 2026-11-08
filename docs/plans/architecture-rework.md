@@ -44,7 +44,7 @@
 
 - `AnnotationPlan`、`AnnotationCommit`、`MaintenancePlan` 见维护专题；类型归认知，非 Job 模块。
 - `prepare_adoption(...) -> PreparedAnnotationAdoption`、`adopt_in(tx, prepared) -> AnnotationCommit`；prepared 包含提案、正文和绑定决定，调用者不读标注私表。
-- `prepare_build(...) -> PreparedSnapshot`、`accept_in(tx, prepared) -> SnapshotDescriptor`、`promote_in(tx, ref)`；各自合同见 Wave 专题。
+- `async with prepare_build(...) as prepared`、`accept_in(tx, prepared) -> SnapshotDescriptor`、`promote_in(tx, ref)`；各自合同见 Wave 专题。
 - `RecordOutcome` 与 `CommittedRecord` 保留正式引用、提交代次和部分完成语义。
 
 ### 完成条件

@@ -2,7 +2,7 @@
 
 ## 工作区
 
-迁入当前 `native/vcp`、`native/retrieval`、`native/python`。VCP crate 保存来源可追溯的纯计算；retrieval 组织 Tantivy、USearch、查询通道和 Nous 数值扩展；python 是薄 PyO3 绑定。现有 legacy 解耦成果有用就迁移，删除被取代副本和专属构建支撑，不恢复旧业务层。
+`native/vcp` 保存来源可追溯的纯计算；`native/retrieval` 组织 Tantivy、USearch、查询通道和 Nous 数值扩展；`native/python` 提供薄 PyO3 绑定。
 
 Python 使用包 `nous_native`，maturin 构建与 CPython 3.14/NumPy 兼容的发行物。Rust 采用可支持现有依赖的稳定工具链，沿用可用锁定依赖并更新必要版本；不依赖 nightly，也不声称 Rust/Python 有项目自行发明的 LTS。
 
