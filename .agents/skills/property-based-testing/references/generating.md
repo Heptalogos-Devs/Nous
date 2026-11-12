@@ -16,10 +16,10 @@ def test_positive(x):
     assume(x > 0)
     ...
 
+
 # Generates only what you want
 @given(st.integers(min_value=1))
-def test_positive(x):
-    ...
+def test_positive(x): ...
 ```
 
 Reserve `assume()` for conditions you genuinely cannot express as a generator — a

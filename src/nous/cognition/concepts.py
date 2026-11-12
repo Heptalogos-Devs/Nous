@@ -5,19 +5,55 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
+from nous.application.contracts import BasicEvents, CallContext, define_operation
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier, split_revision
-from nous.common.operations import record_completed
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 from nous.temporal.values import Clock
 
 from . import concept_schema as schema
-from .concept_contracts import ConceptRef, ConceptRevisionRef, ConceptView
+from .concept_contracts import (
+    ConceptRef,
+    ConceptRevisionRef,
+    ConceptTarget,
+    ConceptView,
+    CreateConcept,
+    FindConcepts,
+    ReadConcept,
+    ReviseConcept,
+)
 from .contracts import Namespace, NamespaceRef
 from .scope import NamespaceOperations
 
-ConceptTarget = str | ConceptRef | ConceptRevisionRef
+CREATE_CONCEPT = define_operation(
+    "concepts.create",
+    request=CreateConcept,
+    result=ConceptView,
+    events=BasicEvents,
+    description="Create a concept and its first meaning.",
+)
+READ_CONCEPT = define_operation(
+    "concepts.read",
+    request=ReadConcept,
+    result=ConceptView,
+    events=BasicEvents,
+    description="Read a concept and its selected meaning.",
+)
+REVISE_CONCEPT = define_operation(
+    "concepts.revise",
+    request=ReviseConcept,
+    result=ConceptView,
+    events=BasicEvents,
+    description="Revise the meaning of a concept.",
+)
+FIND_CONCEPTS = define_operation(
+    "concepts.find",
+    request=FindConcepts,
+    result=tuple[ConceptView, ...],
+    events=BasicEvents,
+    description="Find concepts by label or alias.",
+)
 
 
 class ConceptOperations:
@@ -45,7 +81,7 @@ class ConceptOperations:
         return await self.scope.bound_in(tx, self.bound_namespace, namespace)
 
     async def read_in(
-        self, tx: ReadTx, target: ConceptTarget, namespace: str | None = None
+        self, tx: ReadTx, target: ConceptTarget, namespace: str | NamespaceRef | None = None
     ) -> ConceptView:
         """Resolve a Concept or exact meaning revision in the caller's read view.
 
@@ -248,15 +284,7 @@ class ConceptOperations:
         )
         return await self.read_in(tx, identifier, ns.id)
 
-    async def create(
-        self,
-        namespace: str | None,
-        label: str,
-        description: str,
-        aliases: Sequence[str] = (),
-        *,
-        author: str | None = None,
-    ) -> ConceptView:
+    async def create(self, request: CreateConcept, call: CallContext) -> ConceptView:
         """Commit a new Concept and first meaning in the selected namespace.
 
         Raises:
@@ -267,32 +295,22 @@ class ConceptOperations:
             async with self.database.write() as tx:
                 view = await self.create_in(
                     tx,
-                    (await self.namespace_in(tx, namespace)).id,
-                    label,
-                    description,
-                    aliases,
-                    author=author,
+                    (await self.namespace_in(tx, request.namespace)).id,
+                    request.label,
+                    request.description,
+                    request.aliases,
+                    author=request.author,
                 )
-            record_completed(view.ref.identifier)
+            await call.saved(view.ref)
             return view
 
-    async def read(self, target: ConceptTarget, namespace: str | None = None) -> ConceptView:
+    async def read(self, request: ReadConcept, call: CallContext) -> ConceptView:
         """Read the current meaning or an explicitly addressed historical revision."""
         async with self.execution.operation("concept.read"):
             async with self.database.read() as tx:
-                return await self.read_in(tx, target, namespace)
+                return await self.read_in(tx, request.target, request.namespace)
 
-    async def revise(
-        self,
-        target: ConceptTarget,
-        expected_revision: ConceptRevisionRef | str,
-        label: str,
-        description: str,
-        aliases: Sequence[str] = (),
-        *,
-        namespace: str | None = None,
-        author: str | None = None,
-    ) -> ConceptView:
+    async def revise(self, request: ReviseConcept, call: CallContext) -> ConceptView:
         """Commit a new meaning if the supplied exact revision is still the head.
 
         ``expected_revision`` must identify a revision, including ``@N`` for a string.
@@ -302,6 +320,9 @@ class ConceptOperations:
             NousError: The expected revision is not exact or the current head changed
                 (``cognition.concept_conflict``); reread before choosing a new base.
         """
+        target, expected_revision = request.target, request.expected_revision
+        label, description, aliases = request.label, request.description, request.aliases
+        namespace, author = request.namespace, request.author
         self.validate(label, description, aliases)
         if isinstance(expected_revision, str) and "@" not in expected_revision:
             raise NousError("input.expected_required", "Expected Concept revision must be exact")
@@ -346,17 +367,21 @@ class ConceptOperations:
                 updated = await self.read_in(
                     tx, current.ref.concept_ref, current.ref.concept_ref.namespace_id
                 )
-            record_completed(updated.ref.identifier)
+            await call.saved(updated.ref)
             return updated
 
-    async def find(
-        self, namespace: str | None = None, text: str = "", *, offset: int = 0, limit: int = 20
-    ) -> tuple[ConceptView, ...]:
+    async def find(self, request: FindConcepts, call: CallContext) -> tuple[ConceptView, ...]:
         """Find current meanings by case-insensitive text in label, description or aliases.
 
         An empty text lists all meanings. Results are ordered by label and identifier;
         ``offset`` must be nonnegative and ``limit`` must be between 1 and 100.
         """
+        namespace, text, offset, limit = (
+            request.namespace,
+            request.text,
+            request.offset,
+            request.limit,
+        )
         if offset < 0 or not 1 <= limit <= 100:
             raise NousError("input.invalid", "Use a nonnegative offset and a limit from 1 to 100")
         async with self.execution.operation("concept.find"):
@@ -403,12 +428,6 @@ class ConceptOperations:
                 return tuple(
                     [await self.read_in(tx, identifier, ns.id) for identifier in identifiers]
                 )
-
-    async def list(
-        self, namespace: str | None = None, *, offset: int = 0, limit: int = 20
-    ) -> tuple[ConceptView, ...]:
-        """List current meanings in label and identifier order using the given page."""
-        return await self.find(namespace, offset=offset, limit=limit)
 
     async def candidates(self, namespace: str, body: str, limit: int) -> tuple[ConceptView, ...]:
         """Discover current meanings whose label or alias occurs in the body.

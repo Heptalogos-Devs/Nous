@@ -62,4 +62,4 @@ u=(1-\alpha)s+\alpha(P^q)^T u.
 
 ## 首次落实的位置
 
-Journal owner 提供版本/知情/适用视图；Social/Episode 提供各自关系时间；Wave 消费合法资产。共同 TimeService 只解释时间值与域，不能决定一个人格或关系是否成立。DBOS 在后续需要恢复构建时调度相同操作，不参与时间语义。
+Journal owner 提供版本/知情/适用视图；Social/Episode 提供各自关系时间；Wave 消费合法资产。共同 TimeService 只解释时间值与域，不能决定一个人格或关系是否成立。

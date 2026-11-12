@@ -2,32 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
 from nous.content.contracts import (
-    Artifact,
-    ArtifactRef,
     ContentSelection,
-    InputSpec,
+    ResultRef,
     SelectedInputs,
     SelectedSource,
     SourceFacts,
-    SourceRole,
-    SourceSelection,
+    SourceTarget,
 )
 from nous.content.results import ResultStore
-from nous.media.contracts import PreparedSource
 from nous.models.configuration import ModelRoute
 from nous.runtime.execution import ExecutionManager
 
 from ..contracts import ReadingInput
-from ..input import RequestGroup, for_route, materialize, plan_inputs
+from ..input import RoutePlan, SemanticUnit, for_route, materialize, plan_inputs
 from ..policy import route_unavailable
 from ..requests import FrozenTask, PreparedGeneration
 from .contracts import (
@@ -37,12 +32,11 @@ from .contracts import (
 from .transcription import TranscriptionOperations
 
 if TYPE_CHECKING:
+    from nous.application.contracts import CallContext
     from nous.configuration import ConfigSnapshot
     from nous.media.preparation import MediaPreparer
 
     from ..executor import ModelExecutor
-
-InputValue = InputSpec | Path | Artifact | ArtifactRef | str
 
 
 class GenerationPreparation:
@@ -64,96 +58,21 @@ class GenerationPreparation:
         )
         self.transcription = transcription
 
-    async def _accept(
-        self, inputs: InputValue | Sequence[InputValue], texts: Sequence[str]
-    ) -> list[tuple[Artifact, SourceSelection, SourceRole, str | None]]:
-        values = (
-            [inputs]
-            if isinstance(inputs, (InputSpec, Path, Artifact, ArtifactRef, str))
-            else inputs
-        )
-        originals: list[tuple[Artifact, SourceSelection, SourceRole, str | None]] = []
-        for value in values:
-            if isinstance(value, Artifact):
-                originals.append((value, SourceSelection(), "source", None))
-            else:
-                spec = (
-                    value
-                    if isinstance(value, InputSpec)
-                    else (
-                        InputSpec(kind="file", path=str(value))
-                        if isinstance(value, Path)
-                        else InputSpec(kind="artifact", artifact=value)
-                    )
-                )
-                artifact = await self.results.artifacts.accept(spec)
-                if spec.display_name is not None:
-                    artifact = artifact.model_copy(update={"display_name": spec.display_name})
-                originals.append((artifact, spec.selection, spec.role, spec.slot_key))
-        for ordinal, text in enumerate(texts, 1):
-            originals.append(
-                (
-                    await self.results.artifacts.accept(
-                        InputSpec(kind="text", text=text, display_name=f"text-{ordinal}.txt")
-                    ),
-                    SourceSelection(),
-                    "source",
-                    None,
+    async def accept_targets(
+        self, targets: Sequence[SourceTarget], call: CallContext
+    ) -> SelectedInputs:
+        """Accept caller bindings once and capture exact source slots."""
+        sources: list[SelectedSource] = []
+        for index, target in enumerate(targets, 1):
+            artifact, selection = await call.inputs.accept_target(target)
+            sources.append(
+                SelectedSource(
+                    slot_key=f"S{index}",
+                    selections=(ContentSelection(artifact=artifact.ref, selection=selection),),
+                    display_name=artifact.display_name,
                 )
             )
-        if not originals:
-            raise NousError("model.input_required", "Provide an input artifact, file or text")
-        return originals
-
-    async def accept_inputs(
-        self,
-        inputs: SelectedInputs | InputValue | Sequence[InputValue],
-        snapshot: ConfigSnapshot,
-        *,
-        texts: Sequence[str] = (),
-    ) -> SelectedInputs:
-        """Accept and normalize original selections without deriving physical representations."""
-        if isinstance(inputs, SelectedInputs):
-            if texts:
-                raise NousError("input.invalid", "Texts cannot be added to selected inputs")
-            return await self._inspect_selected(inputs, snapshot)
-        originals = await self._accept(inputs, texts)
-        explicit = {slot for _, _, _, slot in originals if slot is not None}
-        grouped: dict[str, tuple[SourceRole, list[ContentSelection], str | None]] = {}
-        counter = 1
-        for artifact, selection, role, slot in originals:
-            if slot is None:
-                while f"S{counter}" in explicit or f"S{counter}" in grouped:
-                    counter += 1
-                slot = f"S{counter}"
-                counter += 1
-            if any(char.isspace() for char in slot):
-                raise NousError(
-                    "model.invalid_source_slot", "Source slot keys cannot contain whitespace"
-                )
-            if slot in grouped and grouped[slot][0] != role:
-                raise NousError(
-                    "model.source_slot_conflict",
-                    "One source slot cannot have different roles",
-                    details={"slot_key": slot},
-                )
-            if slot not in grouped:
-                grouped[slot] = (role, [], artifact.display_name)
-            grouped[slot][1].append(ContentSelection(artifact=artifact.ref, selection=selection))
-        return await self._inspect_selected(
-            SelectedInputs(
-                sources=tuple(
-                    SelectedSource(
-                        slot_key=slot,
-                        role=role,
-                        selections=tuple(selections),
-                        display_name=name,
-                    )
-                    for slot, (role, selections, name) in grouped.items()
-                )
-            ),
-            snapshot,
-        )
+        return await self._inspect_selected(SelectedInputs(sources=tuple(sources)), call.settings)
 
     async def _inspect_selected(
         self, selected: SelectedInputs, snapshot: ConfigSnapshot
@@ -165,8 +84,6 @@ class GenerationPreparation:
             )
         )
         missing = tuple(ref for ref in references if ref.id not in existing)
-        if not missing:
-            return selected
         for artifact in await self.results.artifacts.get_many(missing):
             info = await self.preparer.inspect(artifact, snapshot.values.media)
             existing[artifact.ref.id] = SourceFacts(
@@ -194,17 +111,19 @@ class GenerationPreparation:
     async def prepare_input(
         self,
         task: str | FrozenTask,
-        input: SelectedInputs | InputValue | Sequence[InputValue],
+        input: SelectedInputs,
         snapshot: ConfigSnapshot,
         *,
         document_mode: str = "auto",
         without_audio: bool = False,
-        texts: Sequence[str] = (),
-        per_batch: bool = False,
+        input_mode: Literal["joint", "independent"] = "joint",
+        unit: SemanticUnit | None = None,
     ) -> PreparedRun:
         async with self.execution.operation("model.prepare_input", snapshot):
             frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-            selected_inputs = await self.accept_inputs(input, snapshot, texts=texts)
+            selected_inputs = await self._inspect_selected(input, snapshot)
+            if unit is not None:
+                unit = replace(unit, inputs=selected_inputs)
             unavailable: dict[str, JsonValue] = {}
             routes = frozen.routes
             if any(fact.kind == "video" for fact in selected_inputs.facts):
@@ -232,7 +151,8 @@ class GenerationPreparation:
                         requirements=route.model.input_formats,
                         document_mode=document_mode,
                         without_audio=without_audio,
-                        per_batch=per_batch,
+                        input_mode=input_mode,
+                        unit=unit,
                         contract=self.executor.compiler.catalog.tasks[
                             frozen.resource.manifest.contract_id
                         ]
@@ -277,18 +197,16 @@ class GenerationPreparation:
     async def prepare_group(
         self,
         frozen: FrozenTask,
-        group: RequestGroup,
+        group: RoutePlan,
         snapshot: ConfigSnapshot,
         *,
         question: str = "",
         instructions: str = "",
         schema: dict[str, JsonValue] | None = None,
-        extra_sources: Sequence[PreparedSource] = (),
         preview: bool = False,
         streaming: bool = False,
         route: ModelRoute | None = None,
-        completed: list[str] | None = None,
-        on_prepared: Callable[[PreparedGeneration], None] | None = None,
+        completed: list[ResultRef] | None = None,
     ) -> PreparedGeneration | PendingGeneration:
         """Select and prepare one route; unused alternatives perform no conversion or language work."""
         completed = completed if completed is not None else []
@@ -303,21 +221,26 @@ class GenerationPreparation:
                         routes=frozen.routes[frozen.routes.index(candidate) :],
                         ineligible_routes=unavailable,
                     )
-                    batch = await materialize(
-                        self.preparer,
-                        await for_route(
+                    planned = (
+                        group
+                        if route is None and candidate == candidates[0]
+                        else await for_route(
                             self.preparer,
                             group,
                             candidate.model.input_formats,
                             (frozen.media_settings or snapshot.values.media),
-                        ),
+                        )
+                    )
+                    batch = await materialize(
+                        self.preparer,
+                        planned,
                         min(
                             (frozen.media_settings or snapshot.values.media).max_inline_bytes,
                             snapshot.values.media.max_inline_bytes,
                         ),
                     )
                     completed.extend(batch.completed_result_refs)
-                    reading = ReadingInput(question, instructions, (*batch.sources, *extra_sources))
+                    reading = ReadingInput(question, instructions, batch.sources)
                     missing = tuple(
                         medium.media_type
                         for source in reading.sources
@@ -341,8 +264,6 @@ class GenerationPreparation:
                         stage_refs=tuple(dict.fromkeys(completed)),
                         coverage=batch.coverage,
                     )
-                    if on_prepared:
-                        on_prepared(prepared)
                     return prepared
                 except NousError as error:
                     if not route_unavailable(error):

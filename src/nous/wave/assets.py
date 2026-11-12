@@ -106,6 +106,7 @@ async def freeze_inputs(
     embedding: EmbeddingOperations,
     preparer: MediaPreparer,
     cached_units: dict[str, list[dict[str, object]]],
+    cached_layouts: dict[str, list[dict[str, object]]],
 ) -> FrozenInputs:
     """Admit documents once and preserve independent roots through all derived candidates."""
     prepared_at = perf_counter()
@@ -164,9 +165,9 @@ async def freeze_inputs(
     await preparation.prime()
     annotations: dict[str, tuple[Artifact, AnnotationSet, TextView]] = {}
     async for candidate, prepared, cached in prepare_candidates(
-        manifest, documents, accepted, preparation, cached_units
+        manifest, documents, accepted, preparation, cached_units, cached_layouts
     ):
-        if cached is not None:
+        if cached is not None and candidate is None:
             mapping = cast(CandidateMapping, cached["mapping"])
             positions = cast(list[list[int]], cached["path_positions"])
             candidate_mapping.append(mapping)
@@ -188,18 +189,35 @@ async def freeze_inputs(
             candidate_path_counts.append(len(positions))
             candidate_roots.append([root_rows[key] for key in mapping["roots"]])
             continue
-        assert candidate is not None and prepared is not None
+        assert candidate is not None
         document = documents[candidate.content.document]
-        origin_contents = prepared.origin_contents
-        selection = prepared.view.body
-        if not prepared.text.strip():
+        if cached is None:
+            assert prepared is not None
+            origin_contents = prepared.origin_contents
+            selection = prepared.view.body
+            text = prepared.text
+        else:
+            previous = cast(CandidateMapping, cached["mapping"])
+            selection = ContentSelection.model_validate(previous["content"])
+            origin_contents = tuple(
+                ContentSelection.model_validate(value) for value in previous["origin_contents"]
+            )
+            text = cast(str, cached["text"])
+        if not text.strip():
             continue
         candidate_contents.append(selection)
-        fresh_indices.append(len(candidate_mapping))
-        semantic_slots.append(None)
-        prepared_candidates.append(prepared)
-        retrieval_content = selection
-        candidate_texts.append(prepared.text)
+        if cached is None:
+            assert prepared is not None
+            fresh_indices.append(len(candidate_mapping))
+            semantic_slots.append(None)
+            prepared_candidates.append(prepared)
+            retrieval_content = selection
+        else:
+            retrieval_content = ContentSelection.model_validate(
+                cast(CandidateMapping, cached["mapping"])["retrieval_content"]
+            )
+            semantic_slots.append(retrieval_content)
+        candidate_texts.append(text)
         candidate_titles.append(document.title or "")
         indexed_titles.append((document.title or "") if candidate.content.selector.is_whole else "")
         inherited = document_sequences.get(candidate.content.document, [])
@@ -215,10 +233,11 @@ async def freeze_inputs(
         if candidate.occurrences:
             covered_concepts = []
             for occurrence in candidate.occurrences:
-                if await covers(prepared, occurrence.selections, preparation):
+                if await covers(selection, occurrence.selections, preparation):
                     covered_concepts.append(occurrence.concept)
             annotation_memberships = tuple(dict.fromkeys(covered_concepts))
         if candidate.annotation_ref is not None:
+            assert prepared is not None
             cached_annotation = annotations.get(candidate.annotation_ref)
             if cached_annotation is None:
                 annotation_artifact = await artifacts.get(candidate.annotation_ref)
@@ -285,7 +304,7 @@ async def freeze_inputs(
         for path in paths:
             current: list[tuple[int, PathStep]] = []
             for position, step in enumerate(path.steps, 1):
-                inside = await covers(prepared, step.selections, preparation)
+                inside = await covers(selection, step.selections, preparation)
                 if inside:
                     current.append((position, step))
                 elif current:
@@ -345,10 +364,10 @@ async def freeze_inputs(
                 "content_document": candidate.content.document,
                 "document": candidate.document,
                 "group_key": candidate.group_key or candidate.document,
+                "local": not candidate.content.selector.is_whole,
                 "roots": list(roots_for_candidate),
                 "concepts": list(dict.fromkeys(memberships)),
                 "paths": path_mapping,
-                "metadata": candidate.metadata,
                 "annotation": annotation_artifact.ref.model_dump(mode="json")
                 if annotation_artifact is not None
                 else None,
@@ -487,6 +506,7 @@ async def freeze_inputs(
             "embedding_ms": embedding_ms,
             "embedding_ensure_calls": embedding_ensure_calls,
             "reused_projection_units": len(cached_units),
+            "reused_layout_units": len(cached_layouts),
         },
         candidate_metadata={
             "keys": [item["key"] for item in candidate_mapping],
@@ -494,6 +514,7 @@ async def freeze_inputs(
             "titles": indexed_titles,
             "group_keys": group_keys,
             "group_rows": [candidate_group_rows[item["group_key"]] for item in candidate_mapping],
+            "local": [item["local"] for item in candidate_mapping],
         },
         candidate_texts=tuple(candidate_texts),
         candidate_vectors=candidate_vectors,
@@ -571,6 +592,7 @@ async def freeze_inputs(
             "name": manifest.name,
             "owner": cast(dict[str, JsonValue], manifest.owner.model_dump(mode="json")),
             "metadata": manifest.metadata,
+            "groups": {},
             "root_order": root_keys,
             "documents": {
                 item.key: {

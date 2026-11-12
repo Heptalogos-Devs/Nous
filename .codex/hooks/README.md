@@ -25,13 +25,14 @@ handwritten stub as generated. Recursive
 `**` matches both zero directory levels and nested directories. Add paths or
 rules for other generators as needed; an empty rule list disables this filter.
 
-Handwritten stubs without a matching marker remain checked, including files in
-`typings/pypdfium2/`. Python `.py` files remain checked even if they contain the
-same marker. Git-ignored untracked files and files outside this worktree are not
+Handwritten stubs without a matching marker remain checked outside the
+generated snapshot. `typings/pypdfium2` is ignored by BasedPyright and excluded
+from Ruff, so files there are not diagnosed. Python `.py` files remain checked
+even if they contain the same marker. Git-ignored untracked files and files outside this worktree are not
 selected. Diagnostics from imported files outside the selected Git scope are
 not included in the hook response.
 
 BasedPyright resolves dependency stubs from `typings/`, as set by its `stubPath`.
-Generated snapshots can supply dependency types; their generator-marked files
-remain excluded from hook diagnostics. Handwritten `.pyi` files in any
-Git-visible location still receive explicit hook checks when changed.
+Generated snapshots can supply dependency types. Generator-marked files and
+everything under `typings/pypdfium2` stay out of these diagnostics. Other
+changed handwritten `.pyi` files still receive explicit hook checks.

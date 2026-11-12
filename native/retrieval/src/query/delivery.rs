@@ -14,6 +14,7 @@ pub(super) struct RankedCandidates {
     pub skipped: Vec<Value>,
     pub started: std::time::Instant,
     pub readout_max_union_candidates: usize,
+    pub local_vector: Option<Vec<f32>>,
 }
 
 impl Snapshot {
@@ -40,6 +41,7 @@ impl Snapshot {
             skipped,
             started,
             readout_max_union_candidates,
+            local_vector,
         } = ranked;
         cancel.check()?;
         if o.grouping == "document"
@@ -206,7 +208,7 @@ impl Snapshot {
                         continue;
                     }
                     group_indices.insert(group, groups.len());
-                    groups.push(json!({"group_row":group,"group_key":self.inner.candidates.group_keys[group as usize],"group_rank":groups.len()+1,"representative_row":row,"passage_rows":[]}));
+                    groups.push(json!({"group_row":group,"group_key":self.inner.candidates.group_keys[group as usize],"group_rank":groups.len()+1,"rank_basis_row":row,"passage_rows":[]}));
                 }
                 let group_index = group_indices[&group];
                 let passages = groups[group_index]["passage_rows"].as_array_mut().unwrap();
@@ -220,6 +222,138 @@ impl Snapshot {
                 selected.push(hit);
             }
             kept = selected;
+            // A group's rank and its readable location are separate facts. Inspect only
+            // allowed local rows of selected groups; never rerun global recall or VCP.
+            let selected_groups = groups
+                .iter()
+                .filter_map(|group| group["group_row"].as_u64())
+                .collect::<BTreeSet<_>>();
+            let mut local_rows = BTreeMap::<u64, Vec<u64>>::new();
+            for row in allowed {
+                let group = self.inner.candidates.group_rows[*row as usize];
+                if selected_groups.contains(&group) && self.inner.candidates.local[*row as usize] {
+                    let rows = local_rows.entry(group).or_default();
+                    if rows.len() < o.group_scan_limit {
+                        rows.push(*row);
+                    }
+                }
+            }
+            for group in &mut groups {
+                cancel.check()?;
+                let group_row = group["group_row"].as_u64().unwrap();
+                let basis_row = group["rank_basis_row"].as_u64().unwrap();
+                let basis = kept
+                    .iter()
+                    .find(|hit| hit["row"].as_u64() == Some(basis_row))
+                    .unwrap();
+                let evidence = basis["lexical_evidence"].clone();
+                let fields = evidence["matched_fields"].as_array().unwrap();
+                let reason = if !evidence["body_range"].is_null() {
+                    "body_match"
+                } else if fields.iter().any(|field| field.as_str() == Some("title")) {
+                    "title_preview"
+                } else if self.inner.candidates.local[basis_row as usize] {
+                    "local_score"
+                } else {
+                    "preview"
+                };
+                let mut passages = vec![
+                    json!({"row":basis_row,"reason":reason,"lexical_evidence":evidence,"evidence_row":basis_row}),
+                ];
+                if reason == "preview" {
+                    let ranked_local = group["passage_rows"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter_map(Value::as_u64)
+                        .find(|row| self.inner.candidates.local[*row as usize]);
+                    if let Some(row) = ranked_local {
+                        let hit = kept
+                            .iter()
+                            .find(|hit| hit["row"].as_u64() == Some(row))
+                            .unwrap();
+                        let lexical = hit["lexical_evidence"].clone();
+                        let selection_reason = if lexical["body_range"].is_null() {
+                            "local_score"
+                        } else {
+                            "body_match"
+                        };
+                        passages[0] = json!({"row":row,"reason":selection_reason,"lexical_evidence":lexical,"evidence_row":row});
+                    }
+                    let mut best: Option<(u64, f64, Value, &str)> = None;
+                    for candidate in local_rows
+                        .get(&group_row)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(|_| ranked_local.is_none())
+                    {
+                        cancel.check()?;
+                        let row = candidate as usize;
+                        let lexical = self.inner.lexical.evidence(
+                            text,
+                            &self.inner.input.candidates.texts[row],
+                            &self.inner.candidates.titles[row],
+                        );
+                        if !lexical["body_range"].is_null() {
+                            best = Some((candidate, 0.0, lexical, "body_match"));
+                            break;
+                        }
+                        if matches!(mode, "dense" | "tagmemo") {
+                            if let (Some(query), Some(vectors)) =
+                                (local_vector.as_ref(), self.inner.candidate_units.as_ref())
+                            {
+                                let score: f64 = vectors[row]
+                                    .iter()
+                                    .zip(query)
+                                    .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                                    .sum();
+                                if best.as_ref().is_none_or(|(_, old, _, _)| score > *old) {
+                                    best = Some((candidate, score, lexical, "local_score"));
+                                }
+                            }
+                        }
+                    }
+                    if let Some((row, _, lexical, selection_reason)) = best {
+                        let ranked = kept.iter().find(|hit| hit["row"].as_u64() == Some(row));
+                        passages[0] = json!({"row":row,"reason":selection_reason,"lexical_evidence":lexical,"evidence_row":ranked.map(|_|row)});
+                    }
+                }
+                for row in group["passage_rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(Value::as_u64)
+                {
+                    if passages.len() >= o.passages_per_group {
+                        break;
+                    }
+                    if passages
+                        .iter()
+                        .any(|part| part["row"].as_u64() == Some(row))
+                    {
+                        continue;
+                    }
+                    if reason == "preview" && row == basis_row && passages[0]["row"] != basis_row {
+                        continue;
+                    }
+                    let hit = kept
+                        .iter()
+                        .find(|hit| hit["row"].as_u64() == Some(row))
+                        .unwrap();
+                    let lexical = hit["lexical_evidence"].clone();
+                    let reason = if !lexical["body_range"].is_null() {
+                        "body_match"
+                    } else if self.inner.candidates.local[row as usize] {
+                        "local_score"
+                    } else {
+                        "preview"
+                    };
+                    passages.push(json!({"row":row,"reason":reason,"lexical_evidence":lexical,"evidence_row":row}));
+                }
+                group["passages"] = json!(passages);
+                group.as_object_mut().unwrap().remove("passage_rows");
+            }
         } else {
             kept.truncate(o.top_k);
         }

@@ -7,16 +7,17 @@ from pypdfium2_cfg.stl import cached_property
 
 __all__ = ("PdfObject", "PdfImage", "PdfTextObj", "PdfFont")
 logger = ...
+
 class PdfObject(pdfium_i.AutoCloseable):
     """
     Pageobject helper class.
-    
+
     When constructing a :class:`.PdfObject`, an instance of a more specific subclass may be returned instead, depending on the object's :attr:`.type` (e.g. :class:`.PdfImage`, :class:`.PdfTextObj`).
-    
+
     Note:
         :meth:`.PdfObject.close` only takes effect on loose pageobjects.
         It is a no-op otherwise, because pageobjects that are part of a page are owned by pdfium, not the caller.
-    
+
     Attributes:
         raw (FPDF_PAGEOBJECT):
             The underlying PDFium pageobject handle.
@@ -33,74 +34,68 @@ class PdfObject(pdfium_i.AutoCloseable):
             Nesting level signifying the number of parent Form XObjects, at the time of construction.
             Zero if the object is not nested in a Form XObject.
     """
-    def __new__(cls, raw, *args, **kwargs) -> Self:
-        ...
-    
-    def __init__(self, raw, page=..., pdf=..., container=..., level=..., textpage=..., tracked=...) -> None:
-        ...
-    
+    def __new__(cls, raw, *args, **kwargs) -> Self: ...
+    def __init__(
+        self, raw, page=..., pdf=..., container=..., level=..., textpage=..., tracked=...
+    ) -> None: ...
     @property
-    def parent(self) -> None:
-        ...
-    
+    def parent(self) -> None: ...
     def get_bounds(self) -> tuple[float, float, float, float]:
         """
         Get the bounds of the object on the page.
-        
+
         Returns:
             tuple[float * 4]: Left, bottom, right and top, in PDF page coordinates.
         """
         ...
-    
-    def get_quad_points(self) -> tuple[tuple[Any, Any], tuple[Any, Any], tuple[Any, Any], tuple[Any, Any]]:
+
+    def get_quad_points(
+        self,
+    ) -> tuple[tuple[Any, Any], tuple[Any, Any], tuple[Any, Any], tuple[Any, Any]]:
         """
         Get the object's quadriliteral points (i.e. the positions of its corners).
         For transformed objects, this may provide tighter bounds than a rectangle (e.g. rotation by a non-multiple of 90°, shear).
-        
+
         Note:
             This function only supports image and text objects.
-        
+
         Returns:
             tuple[tuple[float*2] * 4]: Corner positions as (x, y) tuples, counter-clockwise from origin, i.e. bottom-left, bottom-right, top-right, top-left, in PDF page coordinates.
         """
         ...
-    
+
     def get_matrix(self) -> PdfMatrix:
         """
         Returns:
             PdfMatrix: The pageobject's current transform matrix.
         """
         ...
-    
+
     def set_matrix(self, matrix) -> None:
         """
         Parameters:
             matrix (PdfMatrix): Set this matrix as the pageobject's transform matrix.
         """
         ...
-    
+
     def transform(self, matrix) -> None:
         """
         Parameters:
             matrix (PdfMatrix): Multiply the pageobject's current transform matrix by this matrix.
         """
         ...
-    
-
 
 class PdfTextObj(PdfObject):
     """
     Textobject helper class.
-    
+
     You may want to call :meth:`.PdfPage.get_objects` or :meth:`.PdfTextPage.get_textobj` to obtain an instance of this class.
-    
+
     Attributes:
         textpage (PdfTextPage | None):
             The parent textpage, or None if not set.
     """
-    def __init__(self, *args, textpage=..., **kwargs) -> None:
-        ...
-    
+    def __init__(self, *args, textpage=..., **kwargs) -> None: ...
     def extract(self) -> str:
         """
         Returns:
@@ -110,30 +105,26 @@ class PdfTextObj(PdfObject):
             For textobjects obtained through :meth:`.PdfPage.get_objects`, use the ``textpage`` passthrough parameter.
         """
         ...
-    
+
     def get_font(self) -> PdfFont:
         """
         Returns:
             PdfFont: Handle to the object's font. Provides name and weight info.
         """
         ...
-    
+
     def get_font_size(self) -> float:
         """
         Returns:
             float: Font size used by the object's text, in PDF canvas units (typically 1/72in).
         """
         ...
-    
-
 
 class PdfFont(pdfium_i.AutoCloseable):
     """
     Font helper class.
     """
-    def __init__(self, raw, parent=..., needs_free=...) -> None:
-        ...
-    
+    def __init__(self, raw, parent=..., needs_free=...) -> None: ...
     @cached_property
     def is_embedded(self) -> Any:
         """
@@ -141,38 +132,38 @@ class PdfFont(pdfium_i.AutoCloseable):
         This is a cached property.
         """
         ...
-    
+
     def get_base_name(self, errors=...) -> str:
         """
         Returns:
             str: The base font name.
         """
         ...
-    
+
     def get_family_name(self, errors=...) -> str:
         """
         Returns:
             str: The font family name.
         """
         ...
-    
+
     def get_weight(self) -> Any:
         """
         Returns:
             int: The font's weight. Typical values are 400 (normal) and 700 (bold).
         """
         ...
-    
+
     STANDARD_FONTS = ...
     @classmethod
     def load_standard(cls, pdf, name) -> Self:
         """
         Load one of the Standard 14 fonts defined above into a PDF.
-        
+
         If the font is not available in the system, a substitute may be used.
         Checking :meth:`.get_family_name` should give a clue about internal substitution (e.g. "Chrom Sans OTF", "Chrom Serif OTF").
         For system substitution, consider intercepting what goes through the :class:`.PdfSysfontBase` callbacks.
-        
+
         Parameters:
             pdf (PdfDocument):
                 The document to which the font shall be loaded.
@@ -180,13 +171,12 @@ class PdfFont(pdfium_i.AutoCloseable):
                 The font name. Must be one of :attr:`.STANDARD_FONTS`.
         """
         ...
-    
-
 
 class PdfImage(PdfObject):
     """
     Image object helper class (specific kind of pageobject).
     """
+
     SIMPLE_FILTERS = ...
     @classmethod
     def new(cls, pdf) -> Self:
@@ -200,32 +190,32 @@ class PdfImage(PdfObject):
             Use :class:`.PdfMatrix` and :meth:`.set_matrix` to adjust size and position.
         """
         ...
-    
+
     def get_metadata(self) -> struct_FPDF_IMAGEOBJ_METADATA:
         """
         Retrieve image metadata including DPI, bits per pixel, color space, and size.
         If the image does not belong to a page yet, bits per pixel and color space will be unset (0).
-        
+
         Note:
             * The DPI values signify the resolution of the image on the PDF page, not the DPI metadata embedded in the image file.
             * Due to issues in pdfium, this function might be slow on some kinds of images. If you only need size, prefer :meth:`.get_px_size` instead.
-        
+
         Returns:
             FPDF_IMAGEOBJ_METADATA: Image metadata structure
         """
         ...
-    
+
     def get_px_size(self) -> tuple[int, int]:
         """
         Returns:
             (int, int): Image dimension in pixels as a tuple of (width, height).
         """
         ...
-    
+
     def load_jpeg(self, source, pages=..., inline=..., autoclose=...) -> None:
         """
         Set a JPEG as the image object's content.
-        
+
         Parameters:
             source (str | pathlib.Path | typing.BinaryIO):
                 Input JPEG, given as file path or readable byte stream.
@@ -240,12 +230,12 @@ class PdfImage(PdfObject):
                 If the input is a buffer, whether it should be automatically closed once not needed by the PDF anymore.
         """
         ...
-    
+
     def set_bitmap(self, bitmap, pages=...) -> None:
         """
         Set a bitmap as the image object's content.
         The pixel data will be flate compressed (as of PDFium 5418).
-        
+
         Parameters:
             bitmap (PdfBitmap):
                 The bitmap to inject into the image object.
@@ -253,11 +243,11 @@ class PdfImage(PdfObject):
                 A list of loaded pages that might contain the image object. See :meth:`.load_jpeg`.
         """
         ...
-    
+
     def get_bitmap(self, render=..., scale_to_original=...) -> PdfBitmap:
         """
         Get a bitmap rasterization of the image.
-        
+
         Parameters:
             render (bool):
                 Whether the image should be rendered, thereby applying possible transform matrices and alpha masks.
@@ -267,7 +257,7 @@ class PdfImage(PdfObject):
             PdfBitmap: Image bitmap (with a buffer allocated by PDFium).
         """
         ...
-    
+
     def get_data(self, decode_simple=...) -> Any:
         """
         Parameters:
@@ -278,7 +268,7 @@ class PdfImage(PdfObject):
             ctypes.Array: The data of the image stream (as :class:`~ctypes.c_ubyte` array).
         """
         ...
-    
+
     def get_filters(self, skip_simple=...) -> list[Any]:
         """
         Parameters:
@@ -288,21 +278,21 @@ class PdfImage(PdfObject):
             list[str]: A list of image filters, to be applied in order (from lowest to highest index).
         """
         ...
-    
+
     def extract(self, dest, *args, **kwargs) -> None:
         """
         Extract the image into an independently usable file or byte stream, attempting to avoid re-encoding or quality loss, as far as pdfium's limited API permits.
-        
+
         This method can only extract DCTDecode (JPEG) and JPXDecode (JPEG 2000) images directly.
         Otherwise, the pixel data is decoded and re-encoded using :mod:`PIL`, which is slower and loses the original encoding.
         For images with simple filters only, ``get_data(decode_simple=True)`` is used to preserve higher bit depth or special color formats not supported by ``FPDF_BITMAP``.
         For images with complex filters other than those extracted directly, we have to resort to :meth:`.get_bitmap`.
-        
+
         Note, this method is not able to account for alpha masks, and potentially other data stored separately of the main image stream, which might lead to incorrect representation of the image.
-        
+
         Tip:
             The ``pikepdf`` library is capable of preserving the original encoding in many cases where this method is not.
-        
+
         Parameters:
             dest (str | pathlib.Path | io.BytesIO):
                 File path prefix or byte stream to which the image shall be written.
@@ -310,11 +300,7 @@ class PdfImage(PdfObject):
                 The image format to use in case it is necessary to (re-)encode the data.
         """
         ...
-    
-
 
 _ImageInfo = ...
-class _ImageExtractionError(Exception):
-    ...
 
-
+class _ImageExtractionError(Exception): ...

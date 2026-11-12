@@ -1,6 +1,6 @@
 # 代码与资料检索
 
-工作区入口 `scripts/workspace.ps1` 和 `scripts/workspace.sh` 的 `env` 模式设置当前 shell 的开发环境并创建所需的 `temp/` 目录，不安装工具或配置 MCP。`init` 模式安装缺失的 CodeGraph 和 Zvec-grep、准备本仓库索引并更新用户的 Codex MCP 配置；按用户要求初始化后，重新连接 MCP 或重启 Codex。两者的本仓库索引排除 `legacy/`。
+工作区入口 `dev.ps1` 和 `dev.sh` 的 `env` 模式设置当前 shell 的开发环境并创建所需的 `temp/` 目录，不安装工具或配置 MCP。`init` 模式安装缺失的 CodeGraph 和 Zvec-grep、准备本仓库索引并更新用户的 Codex MCP 配置；按用户要求初始化后，重新连接 MCP 或重启 Codex。两者的本仓库索引排除 `legacy/`。
 
 ## 检索本仓库
 

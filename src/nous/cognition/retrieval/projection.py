@@ -11,6 +11,7 @@ from nous.content.results import ResultStore
 from nous.temporal.values import CognitiveTimes
 from nous.wave.contracts import (
     Association,
+    Candidate,
     CandidateContent,
     CandidateOccurrence,
     CandidatePath,
@@ -22,7 +23,9 @@ from nous.wave.contracts import (
     DocumentCandidates,
     DocumentInput,
     EvidenceProjection,
+    GroupDescriptor,
     PathStep,
+    ReusableDocument,
     SourceSequence,
     SupportGroup,
     document_order,
@@ -30,6 +33,7 @@ from nous.wave.contracts import (
 
 from ..concept_contracts import AnnotationView
 from .capture import CapturedCorpus
+from .contracts import CognitiveGroupContext
 
 
 def annotation_paths(annotation: AnnotationView) -> tuple[CandidatePath, ...]:
@@ -106,20 +110,101 @@ class ProjectionBuilder:
     def __init__(self, results: ResultStore):
         self.results = results
 
+    @staticmethod
+    def combine(
+        collection: str,
+        profile: str,
+        namespace_id: str,
+        generation: int,
+        needs_review_count: int,
+        fragments: Sequence[tuple[str, str, CorpusView | ReusableDocument, GroupDescriptor]],
+        sources: dict[str, ReusableDocument],
+    ) -> CorpusView:
+        """Assemble independent group projections without expanding unchanged sources."""
+        documents: dict[str, Document] = {}
+        concepts: dict[str, Concept] = {}
+        candidates: dict[str, Candidate | DocumentCandidates] = {}
+        associations: dict[str, Association] = {}
+        support_groups: dict[str, SupportGroup] = {}
+        sequences: dict[str, SourceSequence] = {}
+        roots: dict[str, tuple[ArtifactRef, ...]] = {}
+        memberships: dict[str, tuple[str, ...]] = {}
+        source_documents: dict[str, None] = {}
+        groups: list[GroupDescriptor] = []
+        stamps: dict[str, str] = {}
+
+        def merge[T](target: dict[str, T], key: str, value: T) -> None:
+            if key in target and target[key] != value:
+                raise NousError(
+                    "wave.projection_conflict",
+                    "Projection fragments disagree",
+                    details={"key": key},
+                )
+            target[key] = value
+
+        for value in sources.values():
+            merge(documents, value.document.key, value.document)
+            for key, refs in value.roots.items():
+                merge(roots, key, refs)
+            merge(memberships, value.document.key, value.memberships)
+            if value.projection.source_document:
+                source_documents[value.document.key] = None
+
+        for document_key, stamp, fragment, group in fragments:
+            if isinstance(fragment, CorpusView):
+                for value in fragment.documents:
+                    merge(documents, value.key, value)
+                for key, refs in fragment.evidence.roots.items():
+                    merge(roots, key, refs)
+                for key, value in fragment.evidence.documents.items():
+                    merge(memberships, key, value)
+                source_documents.update(dict.fromkeys(fragment.evidence.source_documents))
+                declarations = fragment
+            else:
+                declarations = fragment.projection
+            for value in declarations.concepts:
+                merge(concepts, value.key, value)
+            for value in declarations.candidates:
+                merge(candidates, value.key, value)
+            for value in declarations.associations:
+                merge(associations, value.key, value)
+            for value in declarations.support_groups:
+                merge(support_groups, value.key, value)
+            for value in declarations.source_sequences:
+                sequences.setdefault(value.model_dump_json(), value)
+            groups.append(group)
+            stamps[document_key] = stamp
+        return CorpusView(
+            name=collection,
+            owner=CognitionOwner(namespace_id=namespace_id),
+            generation=generation,
+            profile=profile,
+            metadata={"needs_review_count": needs_review_count},
+            documents=tuple(documents.values()),
+            groups=tuple(groups),
+            evidence=EvidenceProjection(
+                roots=roots, documents=memberships, source_documents=tuple(source_documents)
+            ),
+            concepts=tuple(concepts.values()),
+            candidates=tuple(candidates.values()),
+            source_sequences=tuple(sequences.values()),
+            support_groups=tuple(support_groups.values()),
+            associations=tuple(associations.values()),
+            capture_stamps=stamps,
+        )
+
     async def build(
         self,
         captured: CapturedCorpus,
         collection: str,
         profile: str,
         *,
-        include_review: bool,
-        include_exploration: bool,
         candidate_limit: int,
     ) -> CorpusView:
         """Project the captured revisions, sources and annotations for a Wave collection.
 
-        The inclusion flags and candidate size limit determine which captured material
-        enters the projection. Input revisions and their source references stay exact.
+        The directory has already selected eligible revisions. Input revisions and
+        their source references stay exact.
         """
         documents: list[Document] = []
         external: dict[str, ArtifactRef] = {}
@@ -166,9 +251,6 @@ class ProjectionBuilder:
         root_refs: dict[str, tuple[ArtifactRef, ...]] = {}
         document_roots: dict[str, tuple[str, ...]] = {}
         source_documents: list[str] = []
-        formal_origins = {
-            ref.id: "record:" + object_id for object_id, ref in captured.origins.items()
-        }
         external_lineage = await self.results.provenance(tuple(external.values()))
         for object_id, ref in external.items():
             summary = external_lineage[object_id]
@@ -180,7 +262,7 @@ class ProjectionBuilder:
                 )
             keys: list[str] = []
             for origin in summary.support_roots:
-                root = formal_origins.get(origin.id, "artifact:" + origin.id)
+                root = "artifact:" + origin.id
                 root_refs[root] = (origin,)
                 keys.append(root)
             document_roots["artifact:" + object_id] = tuple(dict.fromkeys(keys))
@@ -212,6 +294,7 @@ class ProjectionBuilder:
             roots=root_refs, documents=document_roots, source_documents=tuple(source_documents)
         )
         candidates: list[DocumentCandidates] = []
+        groups: list[GroupDescriptor] = []
         support_groups: list[SupportGroup] = []
         associations: list[Association] = []
         concepts: dict[str, Concept] = {}
@@ -219,10 +302,6 @@ class ProjectionBuilder:
         source_documents_set = set(evidence.source_documents)
         for object_id in captured.current:
             item = captured.records[object_id]
-            if item.revision["purpose"] == "exploration" and not include_exploration:
-                continue
-            if object_id in captured.needs_review and not include_review:
-                continue
             doc = "revision:" + object_id
             annotation = captured.annotations.get(object_id)
             paths = annotation_paths(annotation) if annotation else ()
@@ -248,15 +327,21 @@ class ProjectionBuilder:
                         )
                         for path in paths
                     )
-            metadata: dict[str, JsonValue] = {
-                "record_revision": cast(dict[str, JsonValue], item.ref.model_dump(mode="json")),
-                "title": item.revision["title"],
-                "kind": item.record["kind"],
-                "purpose": item.revision["purpose"],
-                "annotation": annotation.ref.identifier if annotation else None,
-                "needs_review": object_id in captured.needs_review,
-                "sources": [source.model_dump(mode="json") for source in item.sources],
-            }
+            context = CognitiveGroupContext(
+                revision_ref=item.ref,
+                kind=item.record["kind"],
+                purpose=item.revision["purpose"],
+                needs_review=object_id in captured.needs_review,
+                sources=item.sources,
+            )
+            groups.append(
+                GroupDescriptor(
+                    key=item.ref.identifier,
+                    document_key=doc,
+                    title=item.revision["title"],
+                    context=cast(dict[str, JsonValue], context.model_dump(mode="json")),
+                )
+            )
             candidates.append(
                 DocumentCandidates(
                     document=doc,
@@ -266,7 +351,6 @@ class ProjectionBuilder:
                     paths=paths,
                     occurrences=occurrences,
                     concepts=None,
-                    metadata=metadata,
                 )
             )
             if (
@@ -298,6 +382,7 @@ class ProjectionBuilder:
             profile=profile,
             metadata={"needs_review_count": len(captured.needs_review)},
             documents=tuple(documents),
+            groups=tuple(groups),
             concepts=tuple(concepts.values()),
             source_sequences=tuple(sequences),
             candidates=tuple(candidates),

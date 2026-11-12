@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,15 +28,23 @@ from .contracts import (
     OriginSlice,
     OutputContent,
     OutputMapping,
+    OutputRole,
     ProcessingResult,
+    ProducerFacts,
+    ResultFacts,
     ResultOutput,
+    ResultOutputRef,
     ResultRef,
+    SelectedInputs,
+    SelectedSource,
     SourceContext,
+    SourceFacts,
     SourceSelection,
 )
 from .provenance import ProvenanceReader, ProvenanceSummary
 
 _JSON = TypeAdapter(dict[str, JsonValue])
+_PRODUCER = TypeAdapter(ProducerFacts)
 
 
 @dataclass(frozen=True)
@@ -47,12 +53,13 @@ class PreparedOutput:
     content: PublishedContent
     media_type: str
     display_name: str
+    role: OutputRole
+    representation_kind: str | None
 
 
 @dataclass(frozen=True)
 class PreparedOutputs:
     outputs: tuple[PreparedOutput, ...]
-    formed_at: datetime
 
 
 class ResultStore:
@@ -129,24 +136,18 @@ class ResultStore:
                     await self.artifacts.content.publish_bytes(output.data),
                     output.media_type,
                     output.display_name,
+                    output.role,
+                    output.representation_kind,
                 )
             )
-        return PreparedOutputs(tuple(prepared), self.artifacts.clock.utc_now())
+        return PreparedOutputs(tuple(prepared))
 
     async def adopt_in(
         self,
         tx: WriteTx,
         *,
-        operation: str,
-        producer: Mapping[str, object],
-        inputs: Sequence[InputGroup],
+        facts: ResultFacts,
         prepared_outputs: PreparedOutputs,
-        request: Mapping[str, object] | None = None,
-        parameters: Mapping[str, object] | None = None,
-        coverage: Mapping[str, object] | None = None,
-        producer_key: str | None = None,
-        mappings: Sequence[OutputMapping] = (),
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
     ) -> ProcessingResult:
         """Register the result, output artifacts and body bindings in one caller-owned transaction.
 
@@ -161,12 +162,36 @@ class ResultStore:
         """
         if not prepared_outputs.outputs:
             raise NousError("content.empty_result", "A result must have at least one output")
+        inputs, mappings, dependencies = facts.inputs, facts.mappings, facts.dependencies
+        selected = facts.selected_inputs.sources
+        slots = [source.slot_key for source in selected]
+        if len(slots) != len(set(slots)):
+            raise NousError("content.duplicate_source", "Selected source slots must be unique")
+        if any(group.slot_key not in slots for group in inputs):
+            raise NousError("content.source_mismatch", "Each input group must have a selected slot")
+        selected_refs = [
+            selection.artifact for source in selected for selection in source.selections
+        ]
+        selected_identities = set(selected_refs)
+        if any(item.artifact not in selected_identities for item in facts.selected_inputs.facts):
+            raise NousError(
+                "content.source_mismatch", "Source facts must describe a selected artifact"
+            )
+        if any(ref.instance_id != self.artifacts.instance_id for ref in selected_refs):
+            raise NousError(
+                "content.instance_mismatch", "Selected source belongs to another instance"
+            )
+        await self.artifacts.get_many_in(tx, selected_refs)
         keys = [group.key for group in inputs]
         if len(keys) != len(set(keys)):
             raise NousError(
                 "content.duplicate_source", "Input group keys must be unique in a result"
             )
         outputs_by_name = {item.name: item for item in prepared_outputs.outputs}
+        if len(outputs_by_name) != len(prepared_outputs.outputs) or any(
+            not name for name in outputs_by_name
+        ):
+            raise NousError("content.duplicate_output", "Output names must be unique and nonempty")
         ranges: dict[str, list[tuple[int, int]]] = {}
         for mapping in mappings:
             output = outputs_by_name.get(mapping.output_name)
@@ -231,65 +256,6 @@ class ResultStore:
                 await self.artifacts.get_in(tx, dependency)
             else:
                 await self.get_in(tx, dependency)
-        object_id, recorded = str(uuid4()), self.artifacts.clock.utc_now()
-        values = {
-            "producer": _JSON.validate_python(dict(producer)),
-            "request": _JSON.validate_python(dict(request or {})),
-            "parameters": _JSON.validate_python(dict(parameters or {})),
-            "coverage": _JSON.validate_python(dict(coverage or {})),
-        }
-        signature = hashlib.sha256(
-            json.dumps(
-                {
-                    "operation": operation,
-                    **values,
-                    "inputs": [group.model_dump(mode="json") for group in inputs],
-                    "outputs": [
-                        {
-                            "name": item.name,
-                            "blob": item.content.blob.model_dump(mode="json"),
-                            "media_type": item.media_type,
-                            "display_name": item.display_name,
-                        }
-                        for item in prepared_outputs.outputs
-                    ],
-                    "mappings": [item.model_dump(mode="json") for item in mappings],
-                    "dependencies": [item.model_dump(mode="json") for item in dependencies],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ).encode()
-        ).hexdigest()
-        if producer_key is not None:
-            existing = (
-                await tx.connection.execute(
-                    sa.select(schema.results.c.id, schema.results.c.adoption_signature).where(
-                        schema.results.c.producer_key == producer_key
-                    )
-                )
-            ).one_or_none()
-            if existing is not None:
-                if existing.adoption_signature != signature:
-                    raise NousError(
-                        "content.producer_conflict",
-                        "Producer key already identifies a different result",
-                        details={"producer_key": producer_key},
-                    )
-                return await self.get_in(tx, str(existing.id))
-        identifier = await insert_identifier(
-            tx,
-            schema.results,
-            "res",
-            {
-                "id": object_id,
-                "operation": operation,
-                "producer_key": producer_key,
-                "adoption_signature": signature,
-                **values,
-                "formed_at": prepared_outputs.formed_at.isoformat(),
-                "recorded_at": recorded.isoformat(),
-            },
-        )
         artifact_refs = [part.content.artifact for group in inputs for part in group.parts]
         artifact_refs.extend(
             origin.origin.artifact
@@ -311,24 +277,77 @@ class ResultStore:
             raise NousError(
                 "content.instance_mismatch", "Input relation belongs to another instance"
             )
-        for table, object_ids in (
-            (schema.artifacts, list({ref.id for ref in artifact_refs})),
-            (schema.results, list({ref.id for ref in transform_refs})),
-        ):
-            found_ids: set[str] = set()
-            for start in range(0, len(object_ids), 900):
-                found_ids.update(
-                    str(value)
-                    for value in (
-                        await tx.connection.execute(
-                            sa.select(table.c.id).where(
-                                table.c.id.in_(object_ids[start : start + 900])
-                            )
-                        )
-                    ).scalars()
+        await self.artifacts.get_many_in(tx, artifact_refs)
+        result_ids = list({ref.id for ref in transform_refs})
+        found_results: dict[str, str] = {}
+        for start in range(0, len(result_ids), 900):
+            result_rows = await tx.connection.execute(
+                sa.select(schema.results.c.id, schema.results.c.identifier).where(
+                    schema.results.c.id.in_(result_ids[start : start + 900])
                 )
-            if found_ids != set(object_ids):
-                raise NousError("content.not_found", "An input relation refers to a missing record")
+            )
+            found_results.update((str(row.id), str(row.identifier)) for row in result_rows)
+        if len(found_results) != len(result_ids):
+            raise NousError("content.not_found", "An input relation refers to a missing result")
+        if any(found_results[ref.id] != ref.identifier for ref in transform_refs):
+            raise NousError(
+                "content.reference_mismatch", "Result reference identity does not match"
+            )
+        cache_key = facts.parameters.get("cache_key")
+        if isinstance(cache_key, str):
+            cached = await tx.connection.scalar(
+                sa.select(schema.results.c.identifier).where(
+                    schema.results.c.operation == facts.operation,
+                    schema.results.c.parameters["cache_key"].as_string() == cache_key,
+                )
+            )
+            if cached is not None:
+                return await self.get_in(tx, str(cached))
+        object_id, recorded = str(uuid4()), self.artifacts.clock.utc_now()
+        values = {
+            "producer": facts.producer.model_dump(mode="json"),
+            "request": facts.request,
+            "parameters": facts.parameters,
+            "coverage": facts.coverage,
+            "selected_facts": [
+                item.model_dump(mode="json") for item in facts.selected_inputs.facts
+            ],
+        }
+        identifier = await insert_identifier(
+            tx,
+            schema.results,
+            "res",
+            {
+                "id": object_id,
+                "operation": facts.operation,
+                **values,
+                "formed_at": facts.formed_at.isoformat(),
+                "recorded_at": recorded.isoformat(),
+            },
+        )
+        for ordinal, source in enumerate(selected):
+            await tx.connection.execute(
+                schema.selected_sources.insert().values(
+                    result_id=object_id,
+                    slot_key=source.slot_key,
+                    ordinal=ordinal,
+                    role=source.role,
+                    name=source.display_name,
+                )
+            )
+            await tx.connection.execute(
+                schema.selected_targets.insert(),
+                [
+                    {
+                        "result_id": object_id,
+                        "slot_key": source.slot_key,
+                        "ordinal": index,
+                        "artifact_id": selection.artifact.id,
+                        "selector": selection.selection.model_dump(mode="json"),
+                    }
+                    for index, selection in enumerate(source.selections)
+                ],
+            )
         group_rows: list[dict[str, object]] = []
         part_rows: list[dict[str, object]] = []
         origin_rows: list[dict[str, object]] = []
@@ -366,6 +385,7 @@ class ResultStore:
                             "origin_ordinal": origin_ordinal,
                             "artifact_id": origin.origin.artifact.id,
                             "selector": origin.origin.selection.model_dump(mode="json"),
+                            "precision": origin.precision,
                             "transform_result_id": origin.transform_ref.id
                             if origin.transform_ref
                             else None,
@@ -387,7 +407,7 @@ class ResultStore:
                 display_name=output.display_name,
                 source=None,
                 received_at=None,
-                formed_at=prepared_outputs.formed_at,
+                formed_at=facts.formed_at,
             )
             await tx.connection.execute(
                 schema.outputs.insert().values(
@@ -395,9 +415,18 @@ class ResultStore:
                     ordinal=ordinal,
                     name=output.name,
                     artifact_id=artifact.ref.id,
+                    role=output.role,
+                    representation_kind=output.representation_kind,
                 )
             )
-            result_outputs.append(ResultOutput(name=output.name, artifact=artifact.ref))
+            result_outputs.append(
+                ResultOutput(
+                    name=output.name,
+                    artifact=artifact.ref,
+                    role=output.role,
+                    representation_kind=output.representation_kind,
+                )
+            )
         if mappings:
             ordinals: dict[str, int] = {}
             rows: list[dict[str, object]] = []
@@ -432,69 +461,39 @@ class ResultStore:
             ref=ResultRef(
                 id=object_id, identifier=identifier, instance_id=self.artifacts.instance_id
             ),
-            operation=operation,
-            inputs=tuple(inputs),
+            **facts.model_dump(),
             outputs=tuple(result_outputs),
-            mappings=tuple(mappings),
-            dependencies=tuple(dependencies),
-            **values,
-            formed_at=prepared_outputs.formed_at,
             recorded_at=recorded,
         )
 
     async def adopt(
         self,
         *,
-        operation: str,
-        producer: Mapping[str, object],
-        inputs: Sequence[InputGroup],
+        facts: ResultFacts,
         outputs: Mapping[str, OutputContent],
-        request: Mapping[str, object] | None = None,
-        parameters: Mapping[str, object] | None = None,
-        coverage: Mapping[str, object] | None = None,
-        producer_key: str | None = None,
-        mappings: Sequence[OutputMapping] = (),
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
     ) -> ProcessingResult:
-        """Publish output bytes and atomically adopt the result and its references.
-
-        Call after computation succeeds. Publication happens before the short
-        transaction; if adoption fails, retry adopting the completed outputs
-        rather than repeating the successful computation. For composition with
-        another owner, use ``prepare_outputs`` followed by ``adopt_in`` in the
-        caller's transaction.
-
-        Returns:
-            The committed result with named output and input references.
-
-        Raises:
-            NousError: If result validation or adoption fails, including an
-                empty output set or duplicate input group keys.
-        """
+        """Publish completed outputs and commit their facts in a short transaction."""
         prepared = await self.prepare_outputs(outputs)
         async with self.database.write() as tx:
-            result = await self.adopt_in(
-                tx,
-                operation=operation,
-                producer=producer,
-                inputs=inputs,
-                prepared_outputs=prepared,
-                request=request,
-                parameters=parameters,
-                coverage=coverage,
-                producer_key=producer_key,
-                mappings=mappings,
-                dependencies=dependencies,
-            )
-        record_completed(result.ref.identifier)
+            result = await self.adopt_in(tx, facts=facts, prepared_outputs=prepared)
+        record_completed(result.ref)
         return result
 
-    async def find_producer(self, producer_key: str) -> ProcessingResult | None:
+    async def resolve_output(self, ref: ResultOutputRef) -> ArtifactRef:
+        """Resolve the named output without consulting its original producer."""
         async with self.database.read() as tx:
-            ref = await tx.connection.scalar(
-                sa.select(schema.results.c.id).where(schema.results.c.producer_key == producer_key)
-            )
-            return await self.get_in(tx, str(ref)) if ref is not None else None
+            return await self.resolve_output_in(tx, ref)
+
+    async def resolve_output_in(self, tx: ReadTx, ref: ResultOutputRef) -> ArtifactRef:
+        result = await self.get_in(tx, ref.result)
+        for output in result.outputs:
+            if output.name == ref.output:
+                return output.artifact
+        raise NousError(
+            "content.not_found",
+            "Result output does not exist",
+            details={"result": ref.result.identifier, "output": ref.output},
+        )
 
     async def get(self, ref: str | ResultRef) -> ProcessingResult:
         async with self.database.read() as tx:
@@ -522,6 +521,32 @@ class ResultStore:
             raise NousError(
                 "content.not_found", "Processing result does not exist", details={"ref": target}
             )
+        if isinstance(ref, ResultRef) and ref.identifier != row["identifier"]:
+            raise NousError(
+                "content.reference_mismatch", "Result reference identity does not match"
+            )
+        selected_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.selected_sources)
+                    .where(schema.selected_sources.c.result_id == row["id"])
+                    .order_by(schema.selected_sources.c.ordinal)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        target_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.selected_targets)
+                    .where(schema.selected_targets.c.result_id == row["id"])
+                    .order_by(schema.selected_targets.c.slot_key, schema.selected_targets.c.ordinal)
+                )
+            )
+            .mappings()
+            .all()
+        )
         input_rows = (
             (
                 await tx.connection.execute(
@@ -571,7 +596,8 @@ class ResultStore:
             .all()
         )
         object_ids = {
-            str(source["artifact_id"]) for source in [*part_rows, *origin_rows, *output_rows]
+            str(source["artifact_id"])
+            for source in [*target_rows, *part_rows, *origin_rows, *output_rows]
         }
         identities: dict[str, ArtifactRef] = {}
         identity_list = list(object_ids)
@@ -628,6 +654,7 @@ class ResultStore:
                         selection=SourceSelection.model_validate(source["selector"]),
                     ),
                     transform_ref=transforms.get(str(source["transform_result_id"])),
+                    precision=source["precision"],
                 )
             )
         grouped: dict[int, list[InputPart]] = {}
@@ -659,9 +686,34 @@ class ResultStore:
             for source in input_rows
         ]
         outputs = [
-            ResultOutput(name=str(output["name"]), artifact=identities[str(output["artifact_id"])])
+            ResultOutput(
+                name=str(output["name"]),
+                artifact=identities[str(output["artifact_id"])],
+                role=output["role"],
+                representation_kind=output["representation_kind"],
+            )
             for output in output_rows
         ]
+        selected_by_slot: dict[str, list[ContentSelection]] = {}
+        for target_row in target_rows:
+            selected_by_slot.setdefault(str(target_row["slot_key"]), []).append(
+                ContentSelection(
+                    artifact=identities[str(target_row["artifact_id"])],
+                    selection=SourceSelection.model_validate(target_row["selector"]),
+                )
+            )
+        selected_inputs = SelectedInputs(
+            sources=tuple(
+                SelectedSource(
+                    slot_key=str(source["slot_key"]),
+                    role=source["role"],
+                    display_name=source["name"],
+                    selections=tuple(selected_by_slot[str(source["slot_key"])]),
+                )
+                for source in selected_rows
+            ),
+            facts=tuple(SourceFacts.model_validate(item) for item in row["selected_facts"]),
+        )
         mapping_rows = (
             (
                 await tx.connection.execute(
@@ -723,11 +775,12 @@ class ResultStore:
                 instance_id=self.artifacts.instance_id,
             ),
             operation=str(row["operation"]),
+            selected_inputs=selected_inputs,
             inputs=tuple(inputs),
             outputs=tuple(outputs),
             mappings=mappings,
             dependencies=tuple(dependencies),
-            producer=_JSON.validate_python(row["producer"]),
+            producer=_PRODUCER.validate_python(row["producer"]),
             request=_JSON.validate_python(row["request"]),
             parameters=_JSON.validate_python(row["parameters"]),
             coverage=_JSON.validate_python(row["coverage"]),
@@ -742,48 +795,55 @@ class ResultStore:
         async with self.artifacts.content.execution.operation("content.result_read"):
             result = await self.get(ref)
             value = result.model_dump(mode="json")
-            if not sources:
-                value.pop("inputs", None)
             if not details:
                 value.pop("request", None)
             output_views = await self.artifacts.read_view_many(
-                [ContentSelection(artifact=output.artifact) for output in result.outputs],
+                [
+                    ContentSelection(artifact=output.artifact)
+                    for output in result.outputs
+                    if details or output.role != "diagnostic"
+                ],
                 representations="none",
             )
             value["outputs"] = [
                 {
                     "name": output.name,
-                    "view": view.model_copy(update={"body_text": None}).model_dump(mode="json")
-                    if output.name == "response" and not details
-                    else view.model_dump(mode="json"),
+                    "artifact": output.artifact.model_dump(mode="json"),
+                    "role": output.role,
+                    "representation_kind": output.representation_kind,
+                    "view": view.model_dump(mode="json"),
                 }
-                for output, view in zip(result.outputs, output_views, strict=True)
+                for output, view in zip(
+                    (output for output in result.outputs if details or output.role != "diagnostic"),
+                    output_views,
+                    strict=True,
+                )
             ]
             if sources:
-                grouped = [
-                    tuple(
-                        dict.fromkeys(
-                            content
-                            for part in group.parts
-                            for content in (
-                                tuple(origin.origin for origin in part.origins) or (part.content,)
-                            )
-                        )
-                    )
-                    for group in result.inputs
+                grouped = [source.selections for source in result.selected_inputs.sources]
+                actual_groups = [
+                    tuple(part.content for part in group.parts) for group in result.inputs
                 ]
                 all_views = await self.artifacts.read_view_many(
-                    [item for group in grouped for item in group]
+                    [item for group in (*grouped, *actual_groups) for item in group]
                 )
                 source_views: dict[str, object] = {}
                 offset = 0
-                for group, selected in zip(result.inputs, grouped, strict=True):
-                    source_views[group.key] = [
+                for source, selected in zip(result.selected_inputs.sources, grouped, strict=True):
+                    source_views[source.slot_key] = [
                         view.model_dump(mode="json")
                         for view in all_views[offset : offset + len(selected)]
                     ]
                     offset += len(selected)
                 value["source_views"] = source_views
+                input_views: dict[str, object] = {}
+                for group, parts in zip(result.inputs, actual_groups, strict=True):
+                    input_views[group.key] = [
+                        view.model_dump(mode="json")
+                        for view in all_views[offset : offset + len(parts)]
+                    ]
+                    offset += len(parts)
+                value["input_views"] = input_views
             return value
 
     async def provenance(

@@ -30,10 +30,10 @@ class CandidateMapping(TypedDict):
     content_document: str
     document: str
     group_key: str
+    local: bool
     roots: list[str]
     concepts: list[str]
     paths: list[dict[str, object]]
-    metadata: dict[str, JsonValue]
     annotation: dict[str, str] | None
 
 
@@ -56,6 +56,7 @@ class SnapshotMapping(TypedDict):
     metadata: dict[str, JsonValue]
     root_order: list[str]
     documents: dict[str, DocumentMapping]
+    groups: dict[str, dict[str, JsonValue]]
     roots: dict[str, list[dict[str, str]]]
     concepts: list[ConceptMapping]
     candidates: list[CandidateMapping]
@@ -77,8 +78,6 @@ class SnapshotRow(TypedDict):
     mapping: SnapshotMapping
     owner: dict[str, JsonValue]
     metadata: dict[str, JsonValue]
-    build_key: str | None
-    build_signature: str | None
     component_signature: str
     graph_signature: str
     build_summary: dict[str, JsonValue]

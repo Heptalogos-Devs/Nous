@@ -24,7 +24,7 @@ records.apply(exact_base, changes, sources?, reason?, intent=edit, after=AfterWr
 
 新字节先通过 CAS 发布；短 WriteTx 核对 expected_revision，登记新 revision 及引用，切换 current。并发发现当前版本已变化时返回实际 current 引用，调用者据新正文继续；不默默合并，也不自动重跑模型。
 
-修订是产品需要的历史，不是内部 schema 兼容。数据库结构可以直接迁移，授权开发实例可以重建；不恢复旧 API/旧 serializer 读写路径。
+修订是产品需要的历史。开发中调整内部表结构时，在明确选择的新实例使用当前定义；正式修订和精确来源按产品合同保留。
 
 ## 标注与索引
 

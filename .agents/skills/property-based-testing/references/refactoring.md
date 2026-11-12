@@ -21,9 +21,11 @@ def process_order(order_id: str) -> None:
     total = apply_discount(order, calculate_discount(order))
     db.save(order_id, total)
 
+
 # After: the pure core takes arguments and returns a value
 def order_total(order: Order, rules: DiscountRules) -> Decimal:
     return apply_discount(order, calculate_discount(order, rules))
+
 
 def process_order(order_id: str) -> None:
     order = db.fetch(order_id)
@@ -47,7 +49,7 @@ which.
 
 ```python
 def encode_message(msg: dict) -> bytes: ...
-def decode_message(data: bytes) -> dict: ...   # unlocks decode(encode(x)) == x
+def decode_message(data: bytes) -> dict: ...  # unlocks decode(encode(x)) == x
 ```
 
 Unlocks roundtrip, the strongest property in the catalog. Worth asking for even when the
@@ -65,14 +67,16 @@ def build_query(table: str, filters: dict) -> str:
     q = f"SELECT * FROM {table}"
     ...
 
+
 # After
 @dataclass
 class Query:
     table: str
     filters: dict
 
+
 def render(q: Query) -> str: ...
-def parse(sql: str) -> Query: ...   # now render/parse is a roundtrip
+def parse(sql: str) -> Query: ...  # now render/parse is a roundtrip
 ```
 
 This is pattern 2 wearing different clothes, and it is where escaping bugs live: a
@@ -85,9 +89,9 @@ An in-place mutation gives you nothing to compare against, because the input is 
 the time you want to assert on it.
 
 ```python
-def sort_tasks(tasks: list[Task]) -> None: ...      # before/after comparison impossible
+def sort_tasks(tasks: list[Task]) -> None: ...  # before/after comparison impossible
 def sorted_tasks(tasks: list[Task]) -> list[Task]:  # unlocks is_sorted, permutation,
-    ...                                             # idempotence, length preservation
+    ...  # idempotence, length preservation
 ```
 
 If the mutating signature has to stay, a wrapper that copies and returns is enough for
@@ -99,8 +103,12 @@ A function reading a global, a module constant, or `os.environ` can only be test
 whatever those happen to be, so the edges of its input domain are unreachable.
 
 ```python
-def validate(data: str) -> bool:          return len(data) <= CONFIG.max_length
-def validate(data: str, max_len: int):    return len(data) <= max_len
+def validate(data: str) -> bool:
+    return len(data) <= CONFIG.max_length
+
+
+def validate(data: str, max_len: int):
+    return len(data) <= max_len
 ```
 
 Parameterising the bound is what lets a generator drive `max_len` to 0, to 1, and to the

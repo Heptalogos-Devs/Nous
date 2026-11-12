@@ -44,6 +44,6 @@ source: Markdown 链接保持现有存储形式；既有精确历史正文和来
 
 选定源对象的版本和逻辑槽在写作前固定；S1:P3 等展开后的局部组键以最终成功路线实际发送的 InputGroup 为准。SourceResolver 根据逻辑槽和表示生产者登记的坐标映射形成正式 citation map，实际输入继续保留真正消费的表示。备用路线换表示时使用该路线的组键登记来源。
 
-InputSpec.slot_key 和 InputGroup.slot_key 保存稳定来源槽，InputGroup.key 只表达实际组键。所有媒体变换与备用路线保留槽身份，不能解析冒号恢复来源。正式采用沿 slot_key 与实际 origins 取得精确来源集合。旧正文引用目录和新增材料目录分别冻结，由程序避免键冲突；范围外原引用保持原样。共同字段与表迁移见 [精确编辑](exact-editing.md)。
+SelectedSource.slot_key 和 InputGroup.slot_key 保存稳定来源槽，InputGroup.key 只表达实际组键。所有媒体变换与备用路线保留槽身份，不能解析冒号恢复来源。正式采用沿 slot_key 与实际 origins 取得精确来源集合。旧正文引用目录和新增材料目录分别处理，由程序避免键冲突；范围外原引用保持原样。共同字段见[精确编辑](exact-editing.md)。
 
 用户源序号和 exact revision 保持稳定；表示转换和局部组键可以按真实发送改变。实际请求、正文引用映射与结果采用必须指向同一次成功输出。

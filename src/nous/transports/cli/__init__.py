@@ -1,55 +1,56 @@
 """Local instance management through the shared application operations."""
 
-import asyncio
 import json
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextvars import ContextVar
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated, cast
 
 import click
 import typer
+from pydantic import JsonValue
 from rich.console import Console
 from typer.exceptions import TyperException
 
+from nous.application.config_operations import (
+    EXPLAIN_CONFIGURATION,
+    LIST_CONFIGURATION,
+    REMOVE_CONFIGURATION_RESOURCE,
+    SET_CONFIGURATION,
+    SHOW_CONFIGURATION,
+    UNSET_CONFIGURATION,
+    VALIDATE_CONFIGURATION,
+    ConfigurationPath,
+    EmptyRequest,
+    ListConfiguration,
+    SetConfiguration,
+    ShowConfiguration,
+)
+from nous.application.inputs import FileInput
+from nous.application.time_operations import PARSE_TIME, ParseTime
 from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import exception_context
 from nous.configuration import Configuration
-from nous.configuration.values import Object
-from nous.content.contracts import ContentReadView
-from nous.presentation import error_message, format_status, render_error, select_language, translate
+from nous.content.contracts import ExternalInput
+from nous.presentation import error_message, render_error, translate
 from nous.runtime.instance import (
     InstanceLocator,
     InstanceProfiles,
     inspect_instance,
 )
 
-cli = typer.Typer(help="Nous 本地实例管理 / Local instance management", no_args_is_help=True)
-config_cli = typer.Typer(help="读取、解释和修改配置 / Configuration", no_args_is_help=True)
-instance_cli = typer.Typer(help="查看实例 / Inspect instance", no_args_is_help=True)
-runtime_cli = typer.Typer(help="运行诊断 / Runtime diagnostics", no_args_is_help=True)
-time_cli = typer.Typer(help="解析显式时间 / Explicit time", no_args_is_help=True)
-for command, name in (
-    (config_cli, "config"),
-    (instance_cli, "instance"),
-    (runtime_cli, "runtime"),
-    (time_cli, "time"),
-):
-    cli.add_typer(command, name=name)
-
-
-@dataclass(frozen=True)
-class Options:
-    locator: InstanceLocator
-    json_mode: bool = False
-    language: str | None = None
-    debug: bool = False
-
-
-_current: ContextVar[Options | None] = ContextVar("local_cli_options", default=None)
+from .context import (
+    Options,
+    application_call,
+    application_catalog,
+    current_options,
+    emit,
+    language_for,
+    options,
+    run_async,
+)
+from .groups import catalog_cli, cli, config_cli, instance_cli, runtime_cli, time_cli
 
 
 @cli.callback()
@@ -73,158 +74,7 @@ def configure(
     ctx.obj = Options(
         InstanceLocator.resolve(instance, profile=profile), json_mode, language, debug
     )
-    _current.set(ctx.obj)
-
-
-def options(ctx: typer.Context) -> Options:
-    return cast(Options, ctx.obj)
-
-
-def run_async[T](action: Awaitable[T]) -> T:
-    """Translate cancellation after owners have released their actual workers and resources."""
-    try:
-        return asyncio.run(action)
-    except (asyncio.CancelledError, KeyboardInterrupt, TimeoutError) as error:
-        details = exception_context(error)
-        cancelled = isinstance(error, (asyncio.CancelledError, KeyboardInterrupt))
-        raise NousError(
-            "operation.cancelled" if cancelled else "operation.timeout",
-            "Operation cancelled" if cancelled else "Operation exceeded its deadline.",
-            details=details,
-            operation_id=cast(str | None, details.get("operation_id")),
-            trace_id=cast(str | None, details.get("trace_id")),
-            cause=error,
-        ) from error
-
-
-def application_action(
-    ctx: typer.Context,
-    name: str,
-    *args: object,
-    scope: str | None = None,
-    on_delta: Callable[[str], None] | None = None,
-    on_event: Callable[[str, object], None] | None = None,
-    input_parameters: Sequence[object] = (),
-    **kwargs: object,
-) -> object:
-    """Run the same application operation locally or in the instance host."""
-    from nous.application.actions import ACTIONS, perform, perform_configuration, write_schema
-    from nous.application.configuration import open_configuration_operations
-    from nous.application.inputs import InputParameter
-    from nous.runtime.bootstrap import open_instance
-
-    from .io import read_stream, write_text
-    from .local_control import request_action
-
-    events: dict[str, Callable[..., object]] = {"on_delta": on_delta} if on_delta else {}
-    if on_event is not None:
-        events["on_event"] = on_event
-    response = request_action(
-        options(ctx).locator,
-        name,
-        scope,
-        args,
-        kwargs,
-        on_delta,
-        inputs=input_parameters,
-        on_event=on_event,
-    )
-    if response is not None:
-        return ACTIONS[name].result(response.get("value"))
-
-    async def local() -> object:
-        if name == "configuration.write_schema":
-            events["on_write"] = write_text
-            if not options(ctx).locator.config_file.exists():
-                return await write_schema(cast(Path, args[0]), cast(str, args[1]), write_text)
-        if ACTIONS[name].scope == "configuration_read":
-            configuration = Configuration(options(ctx).locator.config_file)
-            return await perform_configuration(
-                configuration,
-                name,
-                args,
-                kwargs,
-                tuple(cast(InputParameter, item) for item in input_parameters),
-                events=events,
-                read_stream=read_stream,
-            )
-        if ACTIONS[name].scope == "configuration":
-            async with open_configuration_operations(options(ctx).locator) as configuration:
-                return await perform_configuration(
-                    configuration,
-                    name,
-                    args,
-                    kwargs,
-                    tuple(cast(InputParameter, item) for item in input_parameters),
-                    events=events,
-                    read_stream=read_stream,
-                )
-        async with open_instance(options(ctx).locator) as runtime:
-            value = await perform(
-                runtime,
-                name,
-                scope,
-                args,
-                kwargs,
-                events=events,
-                inputs=tuple(cast(InputParameter, item) for item in input_parameters),
-                read_stream=read_stream,
-            )
-        if name == "runtime.check":
-            cast(dict[str, object], value).update(
-                state=runtime.state,
-                execution=runtime.execution.status(),
-                in_flight=runtime.execution.in_flight,
-            )
-        return value
-
-    return run_async(local())
-
-
-def language_for(selected: Options | None) -> str:
-    configured: str | None = None
-    if selected is not None and selected.language is None:
-        try:
-            configured = Configuration(
-                selected.locator.config_file
-            ).snapshot.values.localization.language
-        except NousError, OSError:
-            pass
-    return select_language(selected.language if selected else None, configured)
-
-
-def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
-    if options(ctx).json_mode:
-        typer.echo(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
-    else:
-        typer.echo(format_status(value, language_for(options(ctx))))
-
-
-def emit_content_view(view: ContentReadView) -> None:
-    """Render the shared content view for text and media using existing representations."""
-    language = language_for(_current.get())
-    typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.identifier}")
-    selection = view.source.selection.model_dump(
-        mode="json", exclude_none=True, exclude_defaults=True
-    )
-    if selection:
-        typer.echo(
-            f"{translate('Selection', language)}: {json.dumps(selection, ensure_ascii=False)}"
-        )
-    if view.body_text is not None:
-        typer.echo(view.body_text)
-    for representation in view.available_representations:
-        typer.echo(
-            f"  {translate(representation.kind, language)} · {representation.operation} · {representation.result_ref.identifier} · {representation.content.artifact.identifier}"
-        )
-        for source in representation.source_selections:
-            coordinates = source.selection.model_dump(
-                mode="json", exclude_none=True, exclude_defaults=True
-            )
-            suffix = " " + json.dumps(coordinates, ensure_ascii=False) if coordinates else ""
-            typer.echo(f"  {translate('Source', language)}: {source.artifact.identifier}{suffix}")
-        if representation.body_text is not None:
-            typer.echo(representation.body_text)
+    current_options.set(ctx.obj)
 
 
 @cli.command("init")
@@ -245,6 +95,18 @@ def initialize(
             "config_file": str(options(ctx).locator.config_file),
         },
     )
+
+
+@catalog_cli.command("list")
+def operations_list(ctx: typer.Context) -> None:
+    """列出完整应用操作 / List complete application operations."""
+    emit(ctx, application_catalog(ctx))
+
+
+@catalog_cli.command("describe")
+def operations_describe(ctx: typer.Context, name: str) -> None:
+    """查看请求、结果和事件格式 / Describe an operation's schemas."""
+    emit(ctx, application_catalog(ctx, name))
 
 
 @instance_cli.command("show")
@@ -287,7 +149,7 @@ def config_list(
     ] = "standard",
 ) -> None:
     """列出类型、默认、作用域与生效方式 / List configuration fields."""
-    fields = cast(list[Object], application_action(ctx, "configuration.inspect", "catalog", level))
+    fields = application_call(ctx, LIST_CONFIGURATION, ListConfiguration(level=level))
     if options(ctx).json_mode:
         emit(ctx, {"fields": fields})
         return
@@ -320,13 +182,19 @@ def config_show(
     """显示保存值或下次启动值 / Show saved or prospective values."""
     if saved and effective:
         raise NousError("configuration.invalid_option", "Choose either --saved or --effective")
-    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "show", saved=saved)))
+    emit(
+        ctx,
+        application_call(ctx, SHOW_CONFIGURATION, ShowConfiguration(saved=saved)),
+    )
 
 
 @config_cli.command("explain")
 def config_explain(ctx: typer.Context, path: str) -> None:
     """解释来源、覆盖和生效状态 / Explain value sources and application."""
-    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "explain", path)))
+    emit(
+        ctx,
+        application_call(ctx, EXPLAIN_CONFIGURATION, ConfigurationPath(path=path)),
+    )
 
 
 @config_cli.command("set")
@@ -353,34 +221,39 @@ def config_set(
             parsed = json.loads(value)
         except ValueError:
             parsed = value
-    from .input_files import json_parameter
-
-    result = application_action(
-        ctx,
-        "configuration.set",
-        path,
-        value=parsed,
-        input_parameters=(json_parameter("value", value_file),) if value_file else (),
+    request = SetConfiguration(
+        path=path,
+        value=cast(JsonValue, parsed),
+        input=ExternalInput(key="value") if value_file else None,
     )
-    emit(ctx, cast(Object, result))
+    result = application_call(
+        ctx,
+        SET_CONFIGURATION,
+        request,
+        inputs={"value": FileInput(value_file)} if value_file else None,
+    )
+    emit(ctx, result)
 
 
 @config_cli.command("unset")
 def config_unset(ctx: typer.Context, path: str) -> None:
     """删除本层覆盖并恢复继承 / Restore inheritance."""
-    emit(ctx, cast(Object, application_action(ctx, "configuration.unset", path)))
+    emit(ctx, application_call(ctx, UNSET_CONFIGURATION, ConfigurationPath(path=path)))
 
 
 @config_cli.command("remove-resource")
 def config_remove_resource(ctx: typer.Context, path: str) -> None:
     """检查引用后删除资源 / Remove an unreferenced resource."""
-    emit(ctx, cast(Object, application_action(ctx, "configuration.remove_resource", path)))
+    emit(ctx, application_call(ctx, REMOVE_CONFIGURATION_RESOURCE, ConfigurationPath(path=path)))
 
 
 @config_cli.command("validate")
 def config_validate(ctx: typer.Context) -> None:
     """校验语法、字段及资源引用 / Validate syntax, fields and references."""
-    emit(ctx, cast(Object, application_action(ctx, "configuration.inspect", "validate")))
+    emit(
+        ctx,
+        application_call(ctx, VALIDATE_CONFIGURATION, EmptyRequest()),
+    )
 
 
 @config_cli.command("schema")
@@ -394,8 +267,10 @@ def config_schema(
         emit(ctx, schema)
     else:
         text = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
-        result = application_action(ctx, "configuration.write_schema", output, text)
-        emit(ctx, cast(Object, result))
+        from .io import write_text
+
+        run_async(write_text(output, text))
+        emit(ctx, {"file": str(output), "state": "saved"})
 
 
 @runtime_cli.command("check")
@@ -403,7 +278,9 @@ def runtime_check(
     ctx: typer.Context, details: Annotated[bool, typer.Option("--details")] = False
 ) -> None:
     """打开资源并报告本地能力 / Inspect actual local owners."""
-    result = cast(Object, application_action(ctx, "runtime.check"))
+    from nous.runtime.operations import CHECK_RUNTIME, ListOperations
+
+    result = application_call(ctx, CHECK_RUNTIME, ListOperations())
     if options(ctx).json_mode or details:
         emit(ctx, result)
         return
@@ -418,7 +295,6 @@ def runtime_check(
         "embedding",
         "wave",
         "execution",
-        "jobs",
         "observability",
     ):
         value = cast(dict[str, object], result[key])
@@ -437,25 +313,10 @@ def runtime_check(
                 or "no bound spaces"
             )
         elif key == "execution":
-            summary = f"{value['root_operations']} root operations; {value['queued']} queued; {value['running']} running; {value['blocking_workers']} blocking workers"
-        elif key == "jobs":
-            recent_jobs = cast(list[dict[str, object]], value["recent"])
-            counts = {
-                "total": len(recent_jobs),
-                "queued": sum(job["status"] in {"ENQUEUED", "DELAYED"} for job in recent_jobs),
-                "running": sum(job["status"] == "PENDING" for job in recent_jobs),
-                "failed": sum(job["status"] == "ERROR" for job in recent_jobs),
-            }
-            worker = translate(
-                "Worker running" if value["worker_running"] else "Worker not started", language
-            )
             summary = (
-                worker
-                + "; "
-                + translate(
-                    "Recent jobs: {total}; queued: {queued}; running: {running}; failed: {failed}",
-                    language,
-                ).format(**counts)
+                f"{value['root_operations']} root operations; "
+                f"{value['background_running']} background operations; "
+                f"{value['blocking_workers']} blocking workers"
             )
         elif key == "models":
             summary = (
@@ -480,31 +341,7 @@ def runtime_check(
                 )
         else:
             summary = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        console.print(
-            f"{translate('Jobs', language) if key == 'jobs' else key}: {summary}", markup=False
-        )
-        if key == "jobs":
-            for job in cast(list[dict[str, object]], value["recent_failures"]):
-                ref = cast(dict[str, str], job["ref"])
-                issue = cast(dict[str, object] | None, job.get("error"))
-                reason = translate(str(issue.get("message", "")), language) if issue else ""
-                stage = str(issue.get("stage", "")) if issue else ""
-                console.print(
-                    "  "
-                    + translate(
-                        "Failed job: {kind} {job_id} — {stage} (step {step}): {reason}",
-                        language,
-                    ).format(
-                        kind=job["kind"],
-                        job_id=ref["workflow_id"],
-                        stage=stage,
-                        step=job.get("failed_step")
-                        if job.get("failed_step") is not None
-                        else translate("unknown", language),
-                        reason=reason,
-                    ),
-                    markup=False,
-                )
+        console.print(f"{key}: {summary}", markup=False)
     recent = cast(list[dict[str, object]], result["recent_results"])
     if recent:
         console.print(
@@ -536,7 +373,10 @@ def runtime_check(
                 f"{issue.get('code')} — {issue.get('message')}"
                 for issue in issues
             ) or str(problem.get("error_message") or problem.get("error_code") or "")
-            completed = ", ".join(cast(list[str], problem.get("completed_result_refs") or []))
+            completed = ", ".join(
+                str(item.get("identifier") or item)
+                for item in cast(list[dict[str, object]], problem.get("completed_refs") or [])
+            )
             completed_suffix = f" · {completed}" if completed else ""
             console.print(
                 f"  {translate(str(problem.get('result') or ''), language)} · "
@@ -576,8 +416,8 @@ def runtime_logs(
             )
     for issue in cast(list[dict[str, object]], result["issues"]):
         typer.echo(f"  {issue['stage']}: {issue['code']} — {issue['message']}")
-    for reference in cast(list[str], result["completed_result_refs"]):
-        typer.echo(f"  {reference}")
+    for reference in cast(list[dict[str, object]], result["completed_refs"]):
+        typer.echo(f"  {reference.get('identifier') or reference}")
 
 
 @time_cli.command("parse")
@@ -589,21 +429,22 @@ def time_parse(
     fold: Annotated[int | None, typer.Option(help="DST 重复时刻 / DST fold: 0 or 1")] = None,
 ) -> None:
     """保留原文、精度和不确定性 / Preserve precision and uncertainty."""
-    result = application_action(
-        ctx, "configuration.inspect", "time", value, domain=domain, timezone=timezone, fold=fold
+    result = application_call(
+        ctx,
+        PARSE_TIME,
+        ParseTime(value=value, domain=domain, timezone=timezone, fold=fold),
     )
-    emit(ctx, cast(Object, result))
+    emit(ctx, result.model_dump(mode="json"))
 
 
-from .jobs import job_cli  # noqa: E402
+from . import runtime as _runtime  # noqa: E402, F401  # pyright: ignore[reportUnusedImport]
 from .tools import tools_cli  # noqa: E402
 
 cli.add_typer(tools_cli, name="tools")
-cli.add_typer(job_cli, name="job")
 
 
 def main(*, args: list[str] | None = None) -> None:
-    _current.set(None)
+    current_options.set(None)
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
@@ -649,7 +490,7 @@ def main(*, args: list[str] | None = None) -> None:
             )
         )
         result = failure.to_dict()
-        selected = _current.get()
+        selected = current_options.get()
         if selected and selected.debug:
             Console(stderr=True).print_exception(show_locals=False)
         language = language_for(selected)

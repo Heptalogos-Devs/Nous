@@ -1,16 +1,31 @@
 """Record and resolve feedback through the cognitive application owner."""
 
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import typer
 
-from nous.cognition.feedback import Category, FeedbackView, Value
+from nous.cognition.feedback import (
+    LIST_FEEDBACK,
+    READ_FEEDBACK,
+    RECORD_FEEDBACK,
+    RECORD_QUERY_FEEDBACK,
+    RESOLVE_FEEDBACK,
+    Category,
+    FeedbackView,
+    ListFeedback,
+    QueryFeedbackRequest,
+    ReadFeedback,
+    RecordFeedbackRequest,
+    ResolveFeedback,
+    Value,
+)
 from nous.common.errors import NousError
 from nous.presentation import translate
 
-from . import application_action, cli, emit, language_for, options
-from .input_files import json_parameter
+from .context import application_call, emit, language_for, options
+from .groups import cli
+from .input_files import json_binding
 
 feedback_cli = typer.Typer(help="Feedback", no_args_is_help=True)
 cli.add_typer(feedback_cli, name="feedback")
@@ -68,51 +83,66 @@ def record(
     query_result: Annotated[
         Path | None, typer.Option("--query-result", exists=True, dir_okay=False)
     ] = None,
-    candidate: str | None = None,
+    passage: Annotated[
+        str | None, typer.Option("--passage", help="Group:passage, starting at 1")
+    ] = None,
 ) -> None:
     if (ref is None) == (query_result is None):
         raise NousError(
             "input.invalid_feedback", "Choose an exact record revision or a query result"
         )
-    if candidate is not None and query_result is None:
-        raise NousError("input.invalid_feedback", "A candidate requires a query result")
+    if passage is not None and query_result is None:
+        raise NousError("input.invalid_feedback", "A passage requires a query result")
     if selection is not None and query_result is not None:
         raise NousError(
             "input.invalid_feedback", "Choose the delivered candidate from the query result"
         )
 
     if query_result is not None:
-        result = application_action(
+        source, inputs = json_binding(query_result, key="result")
+        target = None
+        if passage is not None:
+            parts = passage.split(":")
+            if len(parts) != 2 or not all(part.isdecimal() and int(part) > 0 for part in parts):
+                raise NousError("input.invalid_feedback", "Use a 1-based group:passage pair")
+            target = (int(parts[0]) - 1, int(parts[1]) - 1)
+        result = application_call(
             ctx,
-            "feedback.record_query",
-            scope=namespace,
-            category=category,
-            target=candidate,
-            value=value,
-            comment=comment,
-            author=author,
-            input_parameters=(json_parameter("result", query_result),),
+            RECORD_QUERY_FEEDBACK,
+            QueryFeedbackRequest(
+                result=source,
+                category=category,
+                namespace=namespace,
+                target=target,
+                value=value,
+                comment=comment,
+                author=author,
+            ),
+            inputs=inputs,
         )
     else:
         assert ref is not None
-        result = application_action(
+        selected, inputs = json_binding(selection, key="selection") if selection else (None, {})
+        result = application_call(
             ctx,
-            "feedback.record",
-            ref,
-            category,
-            scope=namespace,
-            value=value,
-            comment=comment,
-            author=author,
-            selection=None,
-            input_parameters=(json_parameter("selection", selection),) if selection else (),
+            RECORD_FEEDBACK,
+            RecordFeedbackRequest(
+                target=ref,
+                category=category,
+                namespace=namespace,
+                value=value,
+                comment=comment,
+                author=author,
+                selection=selected,
+            ),
+            inputs=inputs,
         )
-    _show(ctx, cast(FeedbackView, result))
+    _show(ctx, result)
 
 
 @feedback_cli.command("read")
 def read(ctx: typer.Context, ref: str, namespace: str | None = None) -> None:
-    _show(ctx, cast(FeedbackView, application_action(ctx, "feedback.read", ref, scope=namespace)))
+    _show(ctx, application_call(ctx, READ_FEEDBACK, ReadFeedback(ref=ref, namespace=namespace)))
 
 
 @feedback_cli.command("list")
@@ -125,12 +155,11 @@ def list_feedback(
     offset: Annotated[int, typer.Option(min=0)] = 0,
     namespace: str | None = None,
 ) -> None:
-    result = cast(
-        tuple[FeedbackView, ...],
-        application_action(
-            ctx,
-            "feedback.list",
-            scope=namespace,
+    result = application_call(
+        ctx,
+        LIST_FEEDBACK,
+        ListFeedback(
+            namespace=namespace,
             target=target,
             category=category,
             unresolved_only=unresolved,
@@ -157,7 +186,9 @@ def resolve(
     actor: str | None = None,
     namespace: str | None = None,
 ) -> None:
-    result = application_action(
-        ctx, "feedback.resolve", ref, action, scope=namespace, note=note, actor=actor
+    result = application_call(
+        ctx,
+        RESOLVE_FEEDBACK,
+        ResolveFeedback(ref=ref, action=action, namespace=namespace, note=note, actor=actor),
     )
-    _show(ctx, cast(FeedbackView, result))
+    _show(ctx, result)

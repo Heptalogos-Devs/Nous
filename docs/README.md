@@ -1,14 +1,16 @@
 # Nous 设计与开发文档
 
-当前能力见[当前工作](CURRENT.md)，本轮实施入口为[架构重构与缺陷闭合](plans/architecture-rework.md)，覆盖完整事务、生成与材料恢复、显式持久宿主、检索资产及交付。保存后维护的使用见[操作说明](development/durable-cognition-walkthrough.md)。Journal Maintenance、基础收敛与 Wave Native 计划保留为对应能力的实施依据。
+当前能力见[当前工作](CURRENT.md)，实施安排见[架构重构计划](plans/architecture-rework.md)，覆盖完整操作、成果与来源、运行期维护和检索交付。保存后维护的使用见[操作说明](development/durable-cognition-walkthrough.md)。
 
 ## 全局入口
 
-[架构](ARCHITECTURE.md)定义所有权、数据和依赖方向；[当前工作](CURRENT.md)区分已有能力与正在建设的能力。源码位置由 `src/nous/INDEX.md` 维护。开发发现结构不足时直接修改定义者与所有实际消费者。
+[架构](ARCHITECTURE.md)定义所有权、数据和依赖方向；[领域词汇](../GLOSSARY.md)统一材料、成果、正式认识和检索交付的名称；[当前工作](CURRENT.md)区分已有能力与正在建设的能力。源码位置由 `src/nous/INDEX.md` 维护。开发发现结构不足时直接修改定义者与所有实际消费者。
 
 模型任务设计、输入准备和输出判断遵循 [LLM 使用与提示词设计](agents/llm-use.md)。
 
 项目文档与真实材料的批量导入、草稿和检索实验见 [Journal 与 Wave 使用实验](development/journal-wave-experiments.md)。
+
+524 题六模式的实际使用结果见[检索使用分析](research/retrieval-use-20261112.md)，完整返回、浏览页和重算脚本保存在[研究归档](research/archives/README.md)。
 
 调用关系和数据流工具见[代码调用与数据流工具](development/code-topology-tools.md)。
 
@@ -22,7 +24,7 @@
 
 Wave：[能力与边界](design/wave/overview.md)、[资产与集合](design/wave/assets.md)、[公共值](design/wave/contracts.md)、[上下文查询](design/wave/query-context.md)、[VCP 计算](design/wave/vcp.md)、[Nous 扩展](design/wave/nous-extensions.md)、[分数与排名](design/wave/ranking.md)、[Native 接口](design/wave/native.md)、[快照与发布](design/wave/persistence.md)、[配置](design/wave/configuration.md)、[产品入口](design/interfaces/wave-cli.md)。
 
-实施与依据：[主计划](plans/wave-native.md)、[实际操作](development/wave-walkthrough.md)、[审查发现](research/structure-review-fdb39e4.md)、[VCP 采用对照](research/vcp-adoption.md)、[多语言检索实验](research/multilingual-retrieval.md)、[代码调用与数据流拓扑](research/code-topology.md)。
+实施与依据：[架构重构计划](plans/architecture-rework.md)、[Wave 操作](development/wave-walkthrough.md)、[审查发现](research/structure-review-fdb39e4.md)、[VCP 采用对照](research/vcp-adoption.md)、[多语言检索实验](research/multilingual-retrieval.md)、[此前的代码调用与数据流拓扑](research/code-topology.md)。
 
 本轮补充：[操作所有权](design/foundation/operation-ownership.md)、[多输入规划](design/models/input-planning.md)、[来源读取](design/foundation/provenance.md)、[正文结构](design/foundation/text-structure.md)、[请求尝试](design/models/request-attempts.md)、[使用诊断](design/interfaces/diagnostics.md)、[检索核心](design/wave/engine.md)。
 
@@ -34,7 +36,7 @@ Wave：[能力与边界](design/wave/overview.md)、[资产与集合](design/wav
 
 共同接缝：[内容阅读与准备](design/content/reading-and-preparation.md)、[投影准备](design/wave/corpus-preparation.md)、[文稿分组](design/wave/grouped-delivery.md)、[操作结果](design/foundation/operation-outcomes.md)、[Prompt 编辑上下文](design/models/prompt-editing-context.md)、[配置](design/cognition/maintenance-configuration.md)、[维护 CLI](design/interfaces/journal-maintenance-cli.md)、[实例选择](design/interfaces/instance-selection.md)。
 
-本轮专题：[稳定身份](design/foundation/stable-identities.md)、[来源解析](design/cognition/source-resolution.md)、[无损正文](design/content/selection-and-text.md)、[当前视图变化](design/cognition/current-view-mutations.md)、[配置快照](design/foundation/typed-config-snapshot.md)、[执行与资源](design/foundation/execution.md)、[DBOS 接入](design/foundation/dbos-integration.md)、[持久维护](design/cognition/durable-maintenance.md)、[成功计算](design/models/durable-computation.md)、[宿主与 Job](design/interfaces/jobs-and-host.md)。
+共同合同：[稳定身份](design/foundation/stable-identities.md)、[来源解析](design/cognition/source-resolution.md)、[无损正文](design/content/selection-and-text.md)、[当前视图变化](design/cognition/current-view-mutations.md)、[配置快照](design/foundation/typed-config-snapshot.md)、[执行与资源](design/foundation/execution.md)、[提交后维护](design/cognition/maintenance-architecture.md)、[完成成果](design/models/durable-computation.md)、[宿主与运行期操作](design/interfaces/jobs-and-host.md)。
 
 后续：[认知使用路线](plans/cognitive-use-roadmap.md)、[工作中的认知使用](plans/cognitive-use-next.md)。
 

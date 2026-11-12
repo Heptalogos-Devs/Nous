@@ -10,7 +10,6 @@ from pydantic import Field, field_validator, model_validator
 from nous.cognition.configuration import CognitionConfig
 from nous.common.values import ResourceId
 from nous.content.configuration import ContentConfig
-from nous.jobs.configuration import JobsConfig
 from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
     CredentialReference,
@@ -94,8 +93,8 @@ class RuntimeConfig(ConfigModel):
 
 
 class ExecutionConfig(ConfigModel):
-    max_in_flight: int = setting(
-        16, ge=1, apply="restart", description="Maximum concurrent operations."
+    max_background_tasks: int = setting(
+        16, ge=1, apply="restart", description="Maximum active background operations."
     )
     max_blocking_workers: int = setting(
         4, ge=1, apply="restart", description="Maximum blocking worker threads."
@@ -325,7 +324,6 @@ class NousConfig(ConfigModel):
     models: ConfigMap[ResourceId, ModelConfig] = Field(default_factory=dict)
     presets: ConfigMap[ResourceId, PresetConfig] = Field(default_factory=dict)
     tasks: ConfigMap[ResourceId, TaskAssignment] = Field(default_factory=dict)
-    jobs: JobsConfig = Field(default_factory=JobsConfig)
     model_execution: ModelExecutionConfig = Field(default_factory=ModelExecutionConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)

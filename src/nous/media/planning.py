@@ -144,6 +144,7 @@ def make_group(
                             artifact=origin.ref, selection=origin_selection or SourceSelection()
                         ),
                         transform_ref=artifact.producer_result_ref,
+                        precision="atomic",
                     ),
                 )
                 if origin is not None

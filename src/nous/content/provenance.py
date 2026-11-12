@@ -156,11 +156,20 @@ class ProvenanceReader:
             )
             per_target[str(row["root"])].add(object_id)
         parents: dict[str, set[str]] = {}
-        supporting: dict[str, set[str]] = {}
+        supporting: dict[str, set[tuple[str, SourceRole]]] = {}
         for edge in edges:
             parents.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
-            if edge["role"] in {"source", "reference", "current_basis"}:
-                supporting.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
+            if edge["role"] in {
+                "source",
+                "reference",
+                "current_basis",
+                "context",
+                "revision_base",
+                "edit_target",
+            }:
+                supporting.setdefault(str(edge["child"]), set()).add(
+                    (str(edge["parent"]), edge["role"])
+                )
         memo: dict[str, set[str]] = {}
         support_memo: dict[str, set[str]] = {}
         for object_id in object_ids:
@@ -177,7 +186,14 @@ class ProvenanceReader:
                         else {node}
                     )
                     support_memo[node] = (
-                        set().union(*(support_memo[parent] for parent in supporting.get(node, ())))
+                        set().union(
+                            *(
+                                support_memo[parent]
+                                for parent, role in supporting.get(node, ())
+                                if role in {"source", "reference", "current_basis"}
+                                or parent in parents
+                            )
+                        )
                         if parents.get(node)
                         else {node}
                     )

@@ -24,7 +24,7 @@ sh scripts/temp/run.sh clean temp/work/example-task --apply
 
 `clean` 后可指定一个或多个 `temp/` 内的文件或目录；接受相对仓库根目录、相对 `temp/` 或绝对路径。指定路径时只处理这些目标，`temp/test-materials/`、`tools/` 和 `venvs/` 的子项也可以明确选择，不需要 `--include-toolchains`。重叠目标只处理一次；路径不存在、位于 `temp/` 外，或其祖先为链接时停止，目标是链接时保留。不能选择 `temp/`、`temp/test-materials/`、清理锁或 `temp/AGENTS.md`。目标包含 Agent 指令或 `test-materials/` 中以 `0-` 开头的用户原始材料时予以保留。
 
-`init` 不安装工具或初始化实例；开发环境与检索工具由 `scripts/workspace.ps1` 和 `scripts/workspace.sh` 设置。`temp/work/<任务>/` 存放一次性工作；`test-materials/` 保留输入材料、结果和测试实例，目录分类与素材约定见生成的 `temp/AGENTS.md`。用 Nous 的 `init` 命令创建需要保留的实例。
+`init` 不安装工具或初始化实例；开发环境与检索工具由 `dev.ps1` 和 `dev.sh` 设置。`temp/work/<任务>/` 存放一次性工作；`test-materials/` 保留输入材料、结果和测试实例，目录分类与素材约定见生成的 `temp/AGENTS.md`。用 Nous 的 `init` 命令创建需要保留的实例。
 
 不指定路径的清理默认保留 `AGENTS.md`、`test-materials/`、`tools/` 和 `venvs/`，完成后补齐标准目录；指定路径时不会重建被清理的目标。指定 `--include-toolchains` 后需要重新安装被清理的工具和虚拟环境。散落的输入素材会先复制到 `test-materials/Incoming/` 并校验；目标已有不同内容时停止清理。归集后按用途分类并修正本地引用。
 

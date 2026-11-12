@@ -1,26 +1,61 @@
-"""User-facing written record commands call the shared cognitive owners."""
+"""Written record commands over the shared typed application operations."""
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import typer
 
-from nous.application.inputs import InputParameter
-from nous.cognition.contracts import Namespace, RecordView, RevisionSummary
+from nous.cognition.contracts import (
+    CreateNamespace,
+    ListNamespaces,
+    RecordView,
+    RenameNamespace,
+    SelectNamespace,
+)
 from nous.cognition.retrieval.contracts import Mode
+from nous.cognition.scope import (
+    CREATE_NAMESPACE,
+    LIST_NAMESPACES,
+    RENAME_NAMESPACE,
+    SELECT_NAMESPACE,
+)
 from nous.cognition.writing.contracts import (
+    AddNote,
     AfterWrite,
+    ApplyEdits,
     CommittedRecord,
+    CreateJournal,
+    DiffRecords,
+    ListRecords,
+    ReadRecord,
+    RecordMembership,
     RecordOutcome,
+    ReplaceRecord,
+    SetRecall,
     SourceChanges,
-    SourceRequest,
+    SourceChoice,
+)
+from nous.cognition.writing.operations import (
+    ADD_NOTE,
+    APPLY_EDITS,
+    ARCHIVE_RECORD,
+    CREATE_JOURNAL,
+    DIFF_RECORDS,
+    HISTORY_RECORD,
+    LIST_RECORDS,
+    READ_RECORD,
+    REPLACE_RECORD,
+    RESTORE_RECORD,
+    SET_RECALL,
 )
 from nous.common.errors import NousError
+from nous.content.contracts import ExternalInput
 from nous.presentation import translate
 
-from . import application_action, cli, emit_content_view, language_for, options
-from .input_files import body_parameter, json_parameter
+from .context import application_call, emit_content_view, language_for, options
+from .groups import cli
+from .input_files import body_binding, json_binding
 
 note_cli = typer.Typer(help="Notes", no_args_is_help=True)
 journal_cli = typer.Typer(help="Journals", no_args_is_help=True)
@@ -35,7 +70,7 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
     if options(ctx).json_mode:
         typer.echo(result.model_dump_json())
     else:
-        record = result.record if isinstance(result, RecordOutcome) else result
+        record = result.commit if isinstance(result, RecordOutcome) else result
         title = record.title or translate(
             "Untitled note" if record.ref.kind == "note" else "Untitled journal", language
         )
@@ -46,22 +81,30 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
                 typer.echo(
                     f"{translate('Current revision', language)}: {result.current_revision.identifier}"
                 )
-            for key, views in result.source_views.items():
-                typer.echo(f"\n[{key}]")
-                for view in views:
+            for source in result.source_details:
+                typer.echo(f"\n[{source.binding.key}] {source.title or source.binding.name or ''}")
+                for view in source.views:
                     emit_content_view(view)
         elif isinstance(result, RecordOutcome):
             typer.echo(translate("Saved", language))
-            for name, stage in (("Annotation", result.annotation), ("Retrieval", result.retrieval)):
-                if stage.state != "not_requested":
-                    typer.echo(f"{translate(name, language)}: {translate(stage.state, language)}")
-                if stage.job:
-                    typer.echo(f"Job: {stage.job.workflow_id}")
-                if stage.issue:
-                    typer.echo(f"{stage.issue.code}: {stage.issue.message}")
-            if result.status == "partial":
-                typer.echo(f"{translate('Operation', language)}: {result.operation.operation_id}")
-    if isinstance(result, RecordOutcome) and result.status == "partial":
+            maintenance = result.maintenance
+            if maintenance.execution == "started":
+                typer.echo(
+                    f"{translate('started', language)} · "
+                    f"{translate('Operation', language)}: {maintenance.operation_ref.operation_id}"
+                )
+            elif maintenance.execution == "completed":
+                for name, stage in (
+                    ("Annotation", maintenance.annotation),
+                    ("Retrieval", maintenance.refresh),
+                ):
+                    if stage.state != "not_requested":
+                        typer.echo(
+                            f"{translate(name, language)}: {translate(stage.state, language)}"
+                        )
+            for issue in result.issues:
+                typer.echo(f"{issue.code}: {issue.message}", err=True)
+    if isinstance(result, RecordOutcome) and result.issues:
         raise typer.Exit(3)
 
 
@@ -76,30 +119,31 @@ def after_write(
         raise NousError("input.invalid", "Choose --background or --inline")
     return AfterWrite(
         annotation="run" if annotate else "default",
-        retrieval="refresh" if refresh or mode is not None else "defer",
-        retrieval_mode=mode,
-        execution="background" if background else "inline" if inline else "default",
+        refresh="run" if refresh or mode is not None else "defer",
+        mode=mode,
+        execution="background" if background else "wait",
     )
 
 
 def source_requests(
     source: list[str] | None, current_basis: list[str] | None, inspiration: list[str] | None
-) -> tuple[SourceRequest, ...]:
+) -> tuple[SourceChoice, ...]:
     return (
-        tuple(SourceRequest(target=target, usage="reference") for target in source or ())
+        tuple(SourceChoice(target=target, usage="reference") for target in source or ())
         + tuple(
-            SourceRequest(target=target, usage="current_basis") for target in current_basis or ()
+            SourceChoice(target=target, usage="current_basis") for target in current_basis or ()
         )
-        + tuple(SourceRequest(target=target, usage="inspiration") for target in inspiration or ())
+        + tuple(SourceChoice(target=target, usage="inspiration") for target in inspiration or ())
     )
 
 
 def _create(
     ctx: typer.Context,
     namespace: str | None,
-    body: InputParameter,
+    text: str | None,
+    file: Path | None,
     title: str | None,
-    kind: str,
+    kind: Literal["note", "journal"],
     remember: bool | None = None,
     purpose: str = "record",
     source: list[str] | None = None,
@@ -111,31 +155,36 @@ def _create(
     inline: bool = False,
     annotate: bool = False,
 ) -> RecordOutcome:
-    requests = source_requests(source, current_basis, inspiration)
-    after = after_write(refresh, refresh_mode, background, inline, annotate)
+    body, inputs = body_binding(text, file)
+    sources = source_requests(source, current_basis, inspiration)
+    policy = after_write(refresh, refresh_mode, background, inline, annotate)
     if kind == "note":
-        result = application_action(
+        return application_call(
             ctx,
-            "records.add_note",
-            scope=namespace,
-            title=title,
-            remember=remember,
-            source_requests=requests,
-            after=after,
-            input_parameters=(body,),
+            ADD_NOTE,
+            AddNote(
+                body=body,
+                namespace=namespace,
+                title=title,
+                sources=sources,
+                after=policy,
+                remember=remember,
+            ),
+            inputs=inputs,
         )
-    else:
-        result = application_action(
-            ctx,
-            "records.create_journal",
-            scope=namespace,
+    return application_call(
+        ctx,
+        CREATE_JOURNAL,
+        CreateJournal(
+            body=body,
+            namespace=namespace,
             title=title,
+            sources=sources,
+            after=policy,
             purpose=purpose,
-            source_requests=requests,
-            after=after,
-            input_parameters=(body,),
-        )
-    return cast(RecordOutcome, result)
+        ),
+        inputs=inputs,
+    )
 
 
 @note_cli.command("add")
@@ -146,12 +195,7 @@ def note_add(
     title: str | None = None,
     remember: Annotated[bool | None, typer.Option("--remember/--no-remember")] = None,
     namespace: str | None = None,
-    source: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--source", help='Fixed source record, e.g. "note(...)"; repeated inputs use S1, S2...'
-        ),
-    ] = None,
+    source: Annotated[list[str] | None, typer.Option("--source")] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
@@ -159,13 +203,14 @@ def note_add(
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
-):
+) -> None:
     emit_record(
         ctx,
         _create(
             ctx,
             namespace,
-            body_parameter("body", text, file),
+            text,
+            file,
             title,
             "note",
             remember,
@@ -189,12 +234,7 @@ def journal_create(
     title: str | None = None,
     purpose: str = "record",
     namespace: str | None = None,
-    source: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--source", help='Fixed source record, e.g. "note(...)"; repeated inputs use S1, S2...'
-        ),
-    ] = None,
+    source: Annotated[list[str] | None, typer.Option("--source")] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
@@ -202,13 +242,14 @@ def journal_create(
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
-):
+) -> None:
     emit_record(
         ctx,
         _create(
             ctx,
             namespace,
-            body_parameter("body", text, file),
+            text,
+            file,
             title,
             "journal",
             purpose=purpose,
@@ -231,16 +272,18 @@ def read_record(
     namespace: str | None = None,
     sources: bool = False,
     blocks: str | None = None,
-):
-    result = application_action(
+) -> None:
+    result = application_call(
         ctx,
-        "records.read",
-        ref,
-        scope=namespace,
-        sources=sources,
-        blocks=tuple(blocks.split(",")) if blocks else (),
+        READ_RECORD,
+        ReadRecord(
+            target=ref,
+            namespace=namespace,
+            sources=sources,
+            blocks=tuple(blocks.split(",")) if blocks else (),
+        ),
     )
-    emit_record(ctx, cast(RecordView, result))
+    emit_record(ctx, result)
 
 
 @journal_cli.command("replace")
@@ -267,40 +310,40 @@ def revise_record(
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
-):
-    if (source or current_basis or inspiration) and clear_sources:
-        raise NousError("input.conflicting_sources", "Choose --source or --clear-sources")
-    if source_changes is not None and clear_sources:
-        raise NousError("input.conflicting_sources", "Choose source changes or --clear-sources")
-    changes = SourceChanges(preserve=False) if clear_sources else None
-    parameters = [body_parameter("markdown", text, file)]
+) -> None:
+    if clear_sources and (source or current_basis or inspiration or source_changes):
+        raise NousError("input.conflicting_sources", "Choose --clear-sources or source changes")
+    body, inputs = body_binding(text, file)
+    changes: SourceChanges | ExternalInput | None = (
+        SourceChanges(preserve=False) if clear_sources else None
+    )
     if source_changes:
-        parameters.append(json_parameter("sources", source_changes))
+        changes, extra = json_binding(source_changes, key="source_changes")
+        inputs.update(extra)
+    mappings: dict[str, str] | ExternalInput = {}
     if feedback_mappings:
-        parameters.append(json_parameter("feedback_mappings", feedback_mappings))
-
-    bindings = (
-        source_requests(source, current_basis, inspiration)
-        if source is not None or current_basis is not None or inspiration is not None
-        else (() if clear_sources else None)
-    )
-    result = application_action(
+        mappings, extra = json_binding(feedback_mappings, key="feedback_mappings")
+        inputs.update(extra)
+    result = application_call(
         ctx,
-        "records.replace",
-        ref,
-        scope=namespace,
-        expected=expected,
-        title=title,
-        reason=reason,
-        intent=intent,
-        feedback_refs=feedback or (),
-        feedback_mappings={},
-        source_requests=bindings,
-        sources=changes,
-        after=after_write(refresh, refresh_mode, background, inline, annotate),
-        input_parameters=parameters,
+        REPLACE_RECORD,
+        ReplaceRecord(
+            target=ref,
+            expected=expected,
+            body=body,
+            namespace=namespace,
+            title=title,
+            reason=reason,
+            change_kind=intent,
+            feedback_refs=tuple(feedback or ()),
+            feedback_mappings=mappings,
+            sources=source_requests(source, current_basis, inspiration),
+            source_changes=changes,
+            after=after_write(refresh, refresh_mode, background, inline, annotate),
+        ),
+        inputs=inputs,
     )
-    emit_record(ctx, cast(RecordOutcome, result))
+    emit_record(ctx, result)
 
 
 @journal_cli.command("patch")
@@ -311,6 +354,7 @@ def patch_record(
     changes: Annotated[Path, typer.Option("--changes")],
     source_changes: Annotated[Path | None, typer.Option("--sources")] = None,
     namespace: str | None = None,
+    expected: str | None = None,
     reason: str | None = None,
     intent: Literal["edit", "correction"] = "edit",
     feedback: Annotated[list[str] | None, typer.Option("--feedback")] = None,
@@ -320,36 +364,41 @@ def patch_record(
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
-):
-    parameters = [json_parameter("changes", changes)]
-    if feedback_mappings:
-        parameters.append(json_parameter("feedback_mappings", feedback_mappings))
+) -> None:
+    declared, inputs = json_binding(changes, key="changes")
+    sources = None
     if source_changes:
-        parameters.append(json_parameter("sources", source_changes))
-
-    result = application_action(
+        sources, extra = json_binding(source_changes, key="source_changes")
+        inputs.update(extra)
+    mappings: dict[str, str] | ExternalInput = {}
+    if feedback_mappings:
+        mappings, extra = json_binding(feedback_mappings, key="feedback_mappings")
+        inputs.update(extra)
+    result = application_call(
         ctx,
-        "records.apply",
-        ref,
-        scope=namespace,
-        sources=None,
-        reason=reason,
-        intent=intent,
-        feedback_refs=feedback or (),
-        feedback_mappings={},
-        after=after_write(refresh, refresh_mode, background, inline, annotate),
-        input_parameters=parameters,
+        APPLY_EDITS,
+        ApplyEdits(
+            target=ref,
+            expected=expected,
+            namespace=namespace,
+            changes=declared,
+            source_changes=sources,
+            reason=reason,
+            change_kind=intent,
+            feedback_refs=tuple(feedback or ()),
+            feedback_mappings=mappings,
+            after=after_write(refresh, refresh_mode, background, inline, annotate),
+        ),
+        inputs=inputs,
     )
-    emit_record(ctx, cast(RecordOutcome, result))
+    emit_record(ctx, result)
 
 
 @journal_cli.command("diff")
 @note_cli.command("diff")
-def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None = None):
-    from nous.cognition.writing.contracts import RevisionDiff
-
-    result = cast(
-        RevisionDiff, application_action(ctx, "records.diff", left, right, scope=namespace)
+def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None = None) -> None:
+    result = application_call(
+        ctx, DIFF_RECORDS, DiffRecords(left=left, right=right, namespace=namespace)
     )
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.unified)
 
@@ -366,129 +415,90 @@ def edit_record(
     inline: bool = False,
     annotate: bool = False,
     resume: Annotated[Path | None, typer.Option("--resume")] = None,
-):
-    from difflib import unified_diff
-
+) -> None:
     import click
 
     from nous.application.editing import EditSession
     from nous.configuration import Configuration
+    from nous.runtime.instance import InstanceDescriptor
+    from nous.runtime.paths import ResolvedPaths
 
     selected = options(ctx)
-    language = language_for(selected)
+    settings = Configuration(selected.locator.config_file).snapshot.values
+    policy = after_write(refresh, refresh_mode, background, inline, annotate)
+    kind = ctx.parent.info_name if ctx.parent else ""
     if resume is not None:
-        kind = ctx.parent.info_name if ctx.parent else ""
-        session = cast(
-            EditSession, application_action(ctx, "records.resume_edit", resume, kind or "")
-        )
-        if (refresh or refresh_mode or background or inline or annotate) and after_write(
-            refresh, refresh_mode, background, inline, annotate
-        ) != session.after:
+        session = EditSession.resume(resume, resume.read_bytes(), settings.instance.id, kind or "")
+        if (
+            refresh or refresh_mode or background or inline or annotate
+        ) and policy != session.after:
             raise NousError(
-                "input.edit_session_mismatch",
-                "The edit recovery request has different maintenance options.",
+                "input.edit_session_mismatch", "The edit session has different maintenance options"
             )
     else:
         if ref is None:
-            raise NousError("input.body_required", "Provide a record or --resume PATH.")
-
-        session = cast(
-            EditSession,
-            application_action(
-                ctx,
-                "records.begin_edit",
-                ref,
-                namespace,
-                after_write(refresh, refresh_mode, background, inline, annotate),
-            ),
+            raise NousError("input.body_required", "Provide a record or --resume PATH")
+        original = application_call(ctx, READ_RECORD, ReadRecord(target=ref, namespace=namespace))
+        if original.ref.kind != kind:
+            raise NousError("input.invalid_kind", "The record belongs to another command")
+        descriptor = InstanceDescriptor(
+            settings.instance.id, settings.instance.name, settings.instance.layout
         )
-
+        paths = ResolvedPaths.resolve(selected.locator, descriptor, settings.paths)
+        session = EditSession.create(paths, original, policy)
     try:
         if resume is None:
             click.edit(filename=str(session.file))
-        body = cast(str, application_action(ctx, "records.read_edit", session.file))
-        if session.unchanged(body):
-            session.clear()
-            return
-        if (
-            Configuration(selected.locator.config_file).snapshot.values.instance.id
-            != session.target.instance_id
-        ):
-            raise NousError(
-                "input.edit_session_mismatch", "The edit session belongs to another instance."
-            )
         if ref is not None:
-            requested = cast(
-                RecordView,
-                application_action(ctx, "records.read", ref, scope=session.target.namespace_id),
+            current = application_call(
+                ctx, READ_RECORD, ReadRecord(target=ref, namespace=session.target.namespace_id)
             )
-            if requested.ref != session.target:
+            if current.ref != session.target:
                 raise NousError(
-                    "input.edit_session_mismatch", "The edit session belongs to another target."
+                    "input.edit_session_mismatch", "The edit session belongs to another record"
                 )
-        try:
-            result = cast(
-                RecordOutcome,
-                application_action(
-                    ctx,
-                    "records.replace",
-                    session.target,
-                    body,
-                    scope=session.target.namespace_id,
-                    expected=session.expected,
-                    write_key=session.id,
-                    after=session.after,
-                ),
-            )
-        except NousError as error:
-            if error.code == "cognition.revision_conflict":
-                current = cast(
-                    RecordView,
-                    application_action(
-                        ctx, "records.read", session.target, scope=session.target.namespace_id
-                    ),
-                )
-                error.details.update(
-                    current=current.revision_ref.identifier,
-                    expected=session.expected.identifier,
-                    diff="".join(
-                        unified_diff(
-                            current.body.splitlines(keepends=True),
-                            body.splitlines(keepends=True),
-                            fromfile=current.revision_ref.identifier,
-                            tofile=str(session.file),
-                        )
-                    ),
-                )
-            raise
+        body, inputs = body_binding(None, session.file)
+        result = application_call(
+            ctx,
+            REPLACE_RECORD,
+            ReplaceRecord(
+                target=session.target,
+                expected=session.expected,
+                namespace=session.target.namespace_id,
+                body=body,
+                write_key=session.id,
+                after=session.after,
+            ),
+            inputs=inputs,
+        )
         try:
             emit_record(ctx, result)
-        except typer.Exit as exit:
-            if exit.exit_code == 3:  # A partial outcome still confirms the written revision.
+        except typer.Exit as error:
+            if error.exit_code == 3:
                 session.clear()
             raise
-        else:
-            session.clear()
+        session.clear()
     except BaseException as error:
         if session.descriptor.exists():
             if isinstance(error, NousError):
                 error.details.update(
                     edited_file=str(session.file), edit_session=str(session.descriptor)
                 )
-            typer.echo(f"{translate('Edit recovery file', language)}: {session.file}", err=True)
             typer.echo(
-                f"{translate('Edit recovery session', language)}: {session.descriptor}", err=True
+                f"{translate('Edit recovery file', language_for(selected))}: {session.file}",
+                err=True,
+            )
+            typer.echo(
+                f"{translate('Edit recovery session', language_for(selected))}: {session.descriptor}",
+                err=True,
             )
         raise
 
 
 @journal_cli.command("history")
 @note_cli.command("history")
-def history(ctx: typer.Context, ref: str, namespace: str | None = None):
-    result = cast(
-        tuple[RevisionSummary, ...],
-        application_action(ctx, "records.history", ref, scope=namespace),
-    )
+def history(ctx: typer.Context, ref: str, namespace: str | None = None) -> None:
+    result = application_call(ctx, HISTORY_RECORD, ReadRecord(target=ref, namespace=namespace))
     if options(ctx).json_mode:
         typer.echo(
             json.dumps(
@@ -498,7 +508,7 @@ def history(ctx: typer.Context, ref: str, namespace: str | None = None):
     else:
         for item in result:
             typer.echo(
-                f"{item.revision_ref.identifier}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}  {item.recorded_at.isoformat()}"
+                f"{item.revision_ref.identifier}  {item.title or ''}  {item.recorded_at.isoformat()}"
             )
 
 
@@ -516,20 +526,21 @@ def _membership(
 ) -> RecordOutcome:
     after = after_write(refresh, refresh_mode, background, inline)
     if operation == "recall":
-        result = application_action(
+        return application_call(
             ctx,
-            "records.set_recall",
-            ref,
-            bool(enabled),
-            scope=namespace,
-            expected=expected,
-            after=after,
+            SET_RECALL,
+            SetRecall(
+                target=ref,
+                namespace=namespace,
+                expected=expected,
+                enabled=bool(enabled),
+                after=after,
+            ),
         )
-    else:
-        result = application_action(
-            ctx, f"records.{operation}", ref, scope=namespace, expected=expected, after=after
-        )
-    return cast(RecordOutcome, result)
+    request = RecordMembership(target=ref, namespace=namespace, expected=expected, after=after)
+    return application_call(
+        ctx, ARCHIVE_RECORD if operation == "archive" else RESTORE_RECORD, request
+    )
 
 
 @journal_cli.command("archive")
@@ -543,7 +554,7 @@ def archive(
     refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
-):
+) -> None:
     emit_record(
         ctx,
         _membership(
@@ -571,7 +582,7 @@ def restore(
     refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
-):
+) -> None:
     emit_record(
         ctx,
         _membership(
@@ -599,7 +610,7 @@ def remember(
     refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
-):
+) -> None:
     emit_record(
         ctx,
         _membership(
@@ -625,20 +636,12 @@ def list_records(
     archived: bool = False,
     offset: int = 0,
     limit: int | None = None,
-):
+) -> None:
     kind = "note" if ctx.parent is not None and ctx.parent.info_name == "note" else "journal"
-
-    result = cast(
-        tuple[CommittedRecord, ...],
-        application_action(
-            ctx,
-            "records.list",
-            scope=namespace,
-            kind=kind,
-            archived=archived,
-            offset=offset,
-            limit=limit,
-        ),
+    result = application_call(
+        ctx,
+        LIST_RECORDS,
+        ListRecords(namespace=namespace, kind=kind, archived=archived, offset=offset, limit=limit),
     )
     if options(ctx).json_mode:
         typer.echo(
@@ -648,20 +651,18 @@ def list_records(
         )
     else:
         for item in result:
-            typer.echo(
-                f"{item.revision_ref.identifier}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}"
-            )
+            typer.echo(f"{item.revision_ref.identifier}  {item.title or ''}")
 
 
 @namespace_cli.command("create")
-def namespace_create(ctx: typer.Context, name: str):
-    result = cast(Namespace, application_action(ctx, "namespaces.create", name))
+def namespace_create(ctx: typer.Context, name: str) -> None:
+    result = application_call(ctx, CREATE_NAMESPACE, CreateNamespace(name=name))
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
 
 
 @namespace_cli.command("list")
-def namespace_list(ctx: typer.Context):
-    result = cast(tuple[Namespace, ...], application_action(ctx, "namespaces.list"))
+def namespace_list(ctx: typer.Context) -> None:
+    result = application_call(ctx, LIST_NAMESPACES, ListNamespaces())
     typer.echo(
         json.dumps(
             {"namespaces": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
@@ -672,12 +673,14 @@ def namespace_list(ctx: typer.Context):
 
 
 @namespace_cli.command("rename")
-def namespace_rename(ctx: typer.Context, namespace: str, name: str):
-    result = cast(Namespace, application_action(ctx, "namespaces.rename", namespace, name))
+def namespace_rename(ctx: typer.Context, namespace: str, name: str) -> None:
+    result = application_call(
+        ctx, RENAME_NAMESPACE, RenameNamespace(namespace=namespace, name=name)
+    )
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
 
 
 @namespace_cli.command("select")
-def namespace_select(ctx: typer.Context, namespace: str):
-    result = cast(Namespace, application_action(ctx, "namespaces.select", namespace))
+def namespace_select(ctx: typer.Context, namespace: str) -> None:
+    result = application_call(ctx, SELECT_NAMESPACE, SelectNamespace(namespace=namespace))
     typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)

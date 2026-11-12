@@ -6,7 +6,7 @@
 
 完成后的用户流程为：记录/形成新 Journal → 查阅正文与媒体来源 → 给出意见或明确修改 → 取得局部修订或显式重写 → 采用并读差异 → 当前检索更新 → 原版本与原引用可追溯。宿主程序直接使用同一组操作，CLI 只是入口。
 
-范围不含 DBOS 上线、后台守护进程、HTTP/MCP、远程 SDK、WorkContext/Steward/Episode 实现或反馈自动学习。其有效设计与接入次序记录在 [后续路线](cognitive-use-roadmap.md)，不以空接口宣称完成。
+WorkContext/Steward/Episode 和反馈自动学习的后续接入次序记录在[后续路线](cognitive-use-roadmap.md)。当前后台维护和应用入口的责任见[架构重构计划](architecture-rework.md)。
 
 ## 必读合同与真实负责者
 
@@ -37,21 +37,21 @@
 1. 按 [维护架构](../design/cognition/maintenance-architecture.md) 将写作、读取、草稿收为 writing/，检索捕获/投影/操作收为 retrieval/；迁移实际符号和 import。旧文件移除，不留 re-export 兼容。
 2. WrittenRecords 只拥有正文身份、事务内采用、成员状态、来源和 generation。移除 annotations/retrieval 依赖与 complete_save。RecordReader 提供精确/批量读取，不因继承层而绕回应用操作。
 3. 在 writing/operations.py 实现 RecordOperations，拥有真实 root 操作、准备字节、事务、反馈/草稿同事务关联和 AfterWrite。用共同 `finish_write` 过程组织请求的标注/刷新；正常 defer 成功，明确阶段失败 partial。
-4. `await runtime.cognition(namespace)` 返回绑定稳定域身份的实际操作集合。连接、CAS、执行、配置和 Native 仍共享 Runtime 中已有实例；不同域句柄不更改全局选择。
-5. 新返回值固定为 RecordOutcome.record（CommittedRecord），并分开 committed_generation 与后续 annotation/retrieval 的实际 generation；不能为了展示最新值篡改“本次正文在哪代提交”的信息。
+4. CLI、SDK 和宿主通过 `runtime.app.call` 使用同一类型化操作；请求中的 NamespaceSelector 与精确目标经共同解析能力核验。
+5. RecordOutcome.commit 保存 CommittedRecord，并分开正文提交代次与后续标注、刷新结果。
 6. 所有手工 create/edit/replace、草稿采用、反馈更正、归档/恢复都进入新的统一操作。CLI 不调用 `*_in` 或拼事务。
 
 **产物**：没有模型也可在同一长 Runtime 中记录、读取、手工修改、归档和历史回读；一次逻辑调用有一个根 operation，后处理结果可独立解释。
 
 ## 精确编辑与来源继承
 
-**修改/新增**：content/edits.py、content/citations.py、writing/records.py、writing/operations.py、writing/contracts.py、models/input.py 与 InputSpec。
+**修改/新增**：content/edits.py、content/citations.py、writing/records.py、writing/operations.py、writing/contracts.py、models/input.py 与 SelectedInputs。
 
 **实施**：
 
 1. 实现 [精确编辑](../design/cognition/exact-editing.md) 的变更值、解析器和逆序应用算法。块/选区由现有 TextView 解析；引文只在范围内做精确唯一匹配。
 2. RecordOperations.apply 使用 exact base；校验后发布全文，在短事务用原基准提交。replace 走相同核心；diff 使用标准库展示真实两版差异。
-3. 建立 CitationContext：保留旧 source keys、固定新来源、解析成功路线的实际键。InputSpec 支持显式局部根键，所有路线和媒体分片通过共同 planner 保留它。禁止在 writing 事后按字符串猜 split 后来源。
+3. 建立 CitationContext：保留旧 source keys、固定新来源、解析成功路线的实际键。SelectedSource 的 slot_key 贯穿所有路线和媒体分片，写作不按字符串猜来源。
 4. 引用解析移到共同 citations 能力，records 不再自行 MarkdownIt.parse 一遍实现另一个链接合同。未改动正文及链接保持原字节，明确移除的绑定经同一校验。
 5. correction 继续调用 basis 的实际失效语义；edit 不凭意见词汇触发更正。多人/并发基准变化返回冲突并保留编辑稿。
 
@@ -66,7 +66,7 @@
 1. 移除 journalize 的 target_revision 和 revision_base 更新路径。共同来源解析识别正式 Journal 身份；旧 Journal 主输入提示使用 rewrite/reflect。
 2. 保留现行 journal-draft 的用户规则与 no_material 解释，只用于新篇。新增 journal-edit、journal-rewrite、journal-reflect 三个专一 TaskDefinition 与 Prompt。模型任务只产生文字/小型 edits；无额外审核模型。
 3. edit 输出通过共同文本能力解释为 edits＋完整正文＋diff；模型提供的 T 键/引文由程序定位。rewrite 输出完整正文；reflect 采用新 Journal，旧文稿不变。
-4. DraftStore 统一保存四种成功产物、冻结 base/sources/意图、反馈引用和 adopted_revision。ProducedTask 及草稿描述同事务采用；正式文稿采用另一个事务。保存失败沿现有恢复信息处理，不重新发模型请求。
+4. 写作产品先保存模型成果及精确 base、sources、意图和反馈引用；DraftStore 保存完整草稿及 adopted_revision。后续组装或正式采用失败时保留已经提交的成果。
 5. RecordOperations.adopt 在同一事务完成正文、draft adoption 和 feedback resolution。重复采用返回原结果，冲突不自动切到 latest。编辑器改写整个草稿需明确变更为全文输入，保留生成与人工修改来源。
 6. 模型资源/Prompt/输出合同进入现有配置与 describe。缺模型时人工操作继续可用，语言操作报实际缺项。
 
@@ -160,7 +160,7 @@
 
 ## 实施时必须一同迁移的接缝
 
-来源槽与 SourceBinding 多选区按 exact-editing 的完整字段迁移，覆盖 ResultStore.actual_inputs、媒体 planner、TaskDefinition、草稿、文稿引用与 Wave projection；不保留旧单选区分支。新写作任务的未变化语义分别处理：edit 空 edits、rewrite 同文 unchanged、new/reflection 精确 no_material。DraftOverride 不丢原生成结果，已采用后不同覆盖正文报冲突。
+来源槽与 SourceBinding 多选区按 exact-editing 的完整字段迁移，覆盖 ResultFacts.inputs、媒体 planner、TaskDefinition、草稿、文稿引用与 Wave projection。新写作任务的未变化语义分别处理：edit 空 edits、rewrite 同文 unchanged、new/reflection 精确 no_material。ReviseDraft 创建新的完整草稿，保留原生成结果与父草稿。
 
 所有显示 title 的消费者按 nullable 数据合同迁移；新认知命令的保存、历史、标注、反馈、差异与 refresh 全部使用 presentation。partial 已保存结果的 CLI 退出码统一为 3，并保留 stdout 结果。
 

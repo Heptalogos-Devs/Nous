@@ -5,7 +5,7 @@ exclude_dirs = ["target", "__pycache__", ".venv"]
 warn = 800
 reject = 900
 suffix = ".py"
-roots = ["src", "tests/python", "scripts"]
+roots = ["src", "tests", "scripts"]
 input = "stdin"
 format = ["uv", "run", "--locked", "ruff", "format", "--stdin-filename", "{path}"]
 
@@ -19,7 +19,7 @@ format = ["rustfmt", "--edition", "2024", "--emit", "stdout", "--config", "skip_
 
 [format.python]
 argv = ["uv", "run", "--locked", "ruff", "format", "--check"]
-paths = ["src", "tests/python", "scripts"]
+paths = ["src", "tests", "scripts"]
 
 [format.rust]
 argv = ["cargo", "fmt", "--manifest-path", "native/Cargo.toml", "--all", "--", "--check"]
@@ -27,14 +27,14 @@ subset = ["rustfmt", "--check", "--edition", "2024"]
 
 [lint.python]
 argv = ["uv", "run", "--locked", "ruff", "check"]
-paths = ["src", "tests/python", "scripts"]
+paths = ["src", "tests", "scripts"]
 
 [types.python]
 argv = ["uv", "run", "--locked", "basedpyright", "--pythonpath", "{venv_python}"]
 
 [tests.python]
 argv = ["uv", "run", "--locked", "pytest"]
-full = ["tests/python"]
+full = ["tests"]
 
 [[tests.rust]]
 package = "nous-vcp"

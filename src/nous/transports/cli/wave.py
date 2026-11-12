@@ -1,17 +1,44 @@
-"""Wave product actions; argument conversion and presentation only."""
+"""Build, query and inspect Wave collections using shared operations."""
 
-from __future__ import annotations
-
-import json
+import asyncio
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import typer
 
-from nous.application.inputs import InputParameter
+from nous.application.inputs import FileInput, InputProvider, StreamInput
+from nous.common.errors import NousError
+from nous.content.contracts import ExternalInput, SourceSelection
+from nous.models.vector_contracts import VectorRef
+from nous.storage.file_input import FileReaderPool
+from nous.wave.contracts import (
+    CandidateFilter,
+    CandidatePool,
+    CollectionManifest,
+    ContextFragment,
+    PassageDelivery,
+    QueryCue,
+    ThinkingStage,
+    WaveBuild,
+    WaveCleanup,
+    WaveQuery,
+    WaveRead,
+    WaveSearchResult,
+    WaveSegment,
+    WaveSnapshotRequest,
+)
+from nous.wave.operations import (
+    WAVE_BUILD,
+    WAVE_CLEANUP,
+    WAVE_INSPECT,
+    WAVE_QUERY,
+    WAVE_READ,
+    WAVE_SEGMENT,
+)
 
-from . import application_action, emit, options
-from .input_files import json_parameter
+from .context import application_call, emit, options
+from .input_files import json_binding
 
 wave_cli = typer.Typer(help="构建、检索和回读内容集合 / Wave retrieval", no_args_is_help=True)
 
@@ -22,87 +49,124 @@ def cleanup(
     keep_recent: Annotated[int, typer.Option("--keep-recent", min=0)] = 0,
     retain: Annotated[list[str] | None, typer.Option("--retain")] = None,
 ) -> None:
-    """清理未保留的旧快照 / Remove unretained old snapshots."""
+    result = application_call(
+        ctx, WAVE_CLEANUP, WaveCleanup(keep_recent=keep_recent, retain=tuple(retain or ()))
+    )
+    emit(ctx, result.model_dump(mode="json"))
 
-    result = application_action(ctx, "wave.cleanup_named", keep_recent, retain or ())
-    emit(ctx, cast(dict[str, object], result))
 
-
-def _hits(value: dict[str, object], explain: bool) -> None:
-    hits = cast(list[dict[str, object]], value.get("hits", []))
-    groups = cast(list[dict[str, object]], value.get("groups", []))
-    if groups:
-        hits = [
-            passage
-            for group in groups
-            for passage in cast(list[dict[str, object]], group["passages"])
-        ]
-    previous_group: object = None
-    for rank, hit in enumerate(hits, 1):
-        if groups and hit.get("group_key") != previous_group:
-            previous_group = hit["group_key"]
-            group = next(group for group in groups if group["group_key"] == previous_group)
-            typer.echo(f"{group['group_rank']}. {group.get('title') or group['group_key']}")
-        ranking = hit.get("ranking_score")
-        quality = hit.get("quality_score")
-        scores = f"ranking_score={ranking}"
-        if quality is not None:
-            scores += f"  quality_score={quality}"
-        typer.echo(f"{rank}. {hit['candidate']}  {scores}  ({value.get('score_kind', '')})")
-        typer.echo(str(hit.get("snippet", "")))
-        for content in cast(list[dict[str, object]], hit.get("passage_contents", [])):
-            artifact = cast(dict[str, object], content.get("artifact", {}))
-            typer.echo(
-                f"   {artifact.get('identifier', '')} {json.dumps(content.get('selection', {}), ensure_ascii=False)}"
-            )
-        if hit.get("concepts"):
-            typer.echo("   Concepts: " + ", ".join(cast(list[str], hit["concepts"])))
-        if hit.get("sources"):
-            typer.echo("   Sources: " + json.dumps(hit["sources"], ensure_ascii=False))
-        if hit.get("folded_refs"):
-            typer.echo("   Related sources: " + json.dumps(hit["folded_refs"], ensure_ascii=False))
-        if explain:
-            details = {
-                key: item
-                for key, item in hit.items()
-                if key not in {"snippet", "content", "candidate_ref"}
-            }
-            typer.echo(json.dumps(details, ensure_ascii=False, indent=2))
-    if not hits:
-        typer.echo("No matches / 没有匹配内容")
-    if explain:
+def _show_passage(value: PassageDelivery) -> None:
+    if value.reason == "title_preview":
+        typer.echo("标题命中 / Title match")
+    typer.echo(value.text)
+    for fragment in value.fragments:
         typer.echo(
-            json.dumps(
-                {key: item for key, item in value.items() if key != "hits"},
-                ensure_ascii=False,
-                indent=2,
-            )
+            f"   {fragment.content.artifact.identifier} {fragment.content.selection.model_dump_json()}"
         )
+
+
+def _hits(value: WaveSearchResult, explain: bool) -> None:
+    groups = value.groups
+    if groups:
+        for group in groups:
+            typer.echo(
+                f"{group.rank}. {group.group.title or group.group.key}  {group.basis.score_kind}={group.basis.ranking_score}"
+            )
+            for passage in group.passages:
+                _show_passage(passage)
+            if explain:
+                typer.echo(group.model_dump_json(indent=2))
+    else:
+        hits = value.hits
+        for hit in hits:
+            basis = hit.basis
+            passage = hit.passage
+            typer.echo(
+                f"{basis.candidate_rank}. {basis.candidate.key}  {basis.score_kind}={basis.ranking_score}"
+            )
+            _show_passage(passage)
+            if explain:
+                typer.echo(basis.model_dump_json(indent=2))
+        if not hits:
+            typer.echo("No matches / 没有匹配内容")
 
 
 @wave_cli.command("build")
 def build(
     ctx: typer.Context,
-    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
+    manifest: Annotated[Path, typer.Option("--manifest")],
     space: Annotated[str | None, typer.Option("--space")] = None,
 ) -> None:
-    emit(ctx, cast(dict[str, object], application_action(ctx, "wave.build", manifest, space)))
+    async def prepare(
+        request: WaveBuild, bindings: Mapping[str, InputProvider], limit: int
+    ) -> tuple[WaveBuild, Mapping[str, InputProvider]]:
+        try:
+            resolved_manifest = await asyncio.to_thread(manifest.resolve, strict=True)
+        except OSError as error:
+            raise NousError(
+                "input.unreadable",
+                "Cannot read external input",
+                details={"source": str(manifest)},
+                cause=error,
+            ) from error
+        readers = FileReaderPool(1)
+        chunks = readers.chunks(
+            resolved_manifest, 1024 * 1024, selection=SourceSelection(), limit=limit
+        )
+        try:
+            data = b"".join([chunk async for chunk in chunks])
+        except TimeoutError:
+            raise
+        except OSError as error:
+            raise NousError(
+                "input.unreadable",
+                "Cannot read external input",
+                details={"source": str(manifest)},
+                cause=error,
+            ) from error
+        finally:
+            await chunks.aclose()
+            await readers.aclose()
+        declaration = CollectionManifest.model_validate_json(data)
+        inputs: dict[str, InputProvider] = {
+            **bindings,
+            "manifest": StreamInput((data,), name=manifest.name, source=str(manifest)),
+        }
+        documents: dict[str, ExternalInput] = {}
+        for index, document in enumerate(declaration.documents, 1):
+            if document.input.file is None:
+                continue
+            path = Path(document.input.file)
+            if not path.is_absolute():
+                path = resolved_manifest.parent / path
+            key = f"document_{index}"
+            inputs[key] = FileInput(path, name=path.name, source=str(path))
+            documents[document.key] = ExternalInput(key=key)
+        return WaveBuild(
+            manifest=request.manifest, documents=documents, space=request.space
+        ), inputs
+
+    result = application_call(
+        ctx,
+        WAVE_BUILD,
+        WaveBuild(manifest=ExternalInput(key="manifest"), documents={}, space=space),
+        prepare=prepare,
+    )
+    emit(ctx, result.model_dump(mode="json"))
 
 
 @wave_cli.command("inspect")
 def inspect(
     ctx: typer.Context,
     snapshot: str,
-    concept: Annotated[
-        list[str] | None, typer.Option("--concept", help="概念 key；可重复 / Concept keys")
-    ] = None,
+    concept: Annotated[list[str] | None, typer.Option("--concept")] = None,
 ) -> None:
-    result = (
-        application_action(ctx, "wave.neighborhood", snapshot, concept)
-        if concept
-        else application_action(ctx, "wave.inspect", snapshot)
+    emit(
+        ctx,
+        application_call(
+            ctx, WAVE_INSPECT, WaveSnapshotRequest(snapshot=snapshot, concepts=tuple(concept or ()))
+        ).model_dump(mode="json"),
     )
-    emit(ctx, cast(dict[str, object], result))
 
 
 @wave_cli.command("query")
@@ -115,12 +179,8 @@ def query(
         typer.Option("--mode"),
     ] = None,
     context: Annotated[Path | None, typer.Option("--context", exists=True, dir_okay=False)] = None,
-    core: Annotated[
-        list[str] | None, typer.Option("--core", help="核心概念 key；可重复 / Core concept keys")
-    ] = None,
-    cue: Annotated[
-        list[str] | None, typer.Option("--cue", help="临时线索描述；可重复 / Cue descriptions")
-    ] = None,
+    core: Annotated[list[str] | None, typer.Option("--core")] = None,
+    cue: Annotated[list[str] | None, typer.Option("--cue")] = None,
     thinking_stages: Annotated[
         Path | None, typer.Option("--thinking-stages", exists=True, dir_okay=False)
     ] = None,
@@ -138,40 +198,47 @@ def query(
     passages_per_group: Annotated[int, typer.Option("--passages-per-group", min=1)] = 1,
     explain: Annotated[bool, typer.Option("--explain")] = False,
 ) -> None:
-    request = {
-        "snapshot": snapshot,
-        "text": text,
-        "vector": None,
-        "candidate_pool": None,
-        "mode": mode,
-        "context": (),
-        "core_concepts": tuple(core or ()),
-        "cues": tuple({"label": value, "description": value} for value in cue or ()),
-        "thinking_stages": (),
-        "candidate_filter": None,
-        "top_k": top_k,
-        "grouping": grouping,
-        "passages_per_group": passages_per_group,
-        "include_trace": explain,
-    }
-    parameters: list[InputParameter] = []
-    for field, path in (
-        ("context", context),
-        ("vector", vector_ref),
-        ("candidate_pool", candidate_pool),
-        ("thinking_stages", thinking_stages),
-        ("candidate_filter", candidate_filter),
-    ):
-        if path is not None:
-            parameters.append(json_parameter(f"request.{field}", path))
-    value = cast(
-        dict[str, object],
-        application_action(ctx, "wave.query", request=request, input_parameters=parameters),
+    inputs: dict[str, InputProvider] = {}
+
+    def source(path: Path | None, key: str) -> ExternalInput | None:
+        if path is None:
+            return None
+        value, binding = json_binding(path, key=key)
+        inputs.update(binding)
+        return value
+
+    query_context: tuple[ContextFragment, ...] | ExternalInput = source(context, "context") or ()
+    stages: tuple[ThinkingStage, ...] | ExternalInput = (
+        source(thinking_stages, "thinking_stages") or ()
+    )
+    vector: VectorRef | ExternalInput | None = source(vector_ref, "vector")
+    pool: CandidatePool | ExternalInput | None = source(candidate_pool, "candidate_pool")
+    filters: CandidateFilter | ExternalInput | None = source(candidate_filter, "candidate_filter")
+    result = application_call(
+        ctx,
+        WAVE_QUERY,
+        WaveQuery(
+            snapshot=snapshot,
+            text=text,
+            mode=mode,
+            context=query_context,
+            vector=vector,
+            candidate_pool=pool,
+            candidate_filter=filters,
+            thinking_stages=stages,
+            core_concepts=tuple(core or ()),
+            cues=tuple(QueryCue(label=item, description=item) for item in cue or ()),
+            top_k=top_k,
+            grouping=grouping,
+            passages_per_group=passages_per_group,
+            include_trace=explain,
+        ),
+        inputs=inputs,
     )
     if options(ctx).json_mode:
-        emit(ctx, value)
+        emit(ctx, result.model_dump(mode="json"))
     else:
-        _hits(value, explain)
+        _hits(result, explain)
 
 
 @wave_cli.command("read")
@@ -181,16 +248,15 @@ def read(
     candidate: str,
     sources: Annotated[bool, typer.Option("--sources")] = False,
 ) -> None:
-    value = cast(
-        dict[str, object],
-        application_action(ctx, "wave.read", snapshot, candidate, sources=sources),
+    result = application_call(
+        ctx, WAVE_READ, WaveRead(snapshot=snapshot, candidate=candidate, sources=sources)
     )
     if options(ctx).json_mode:
-        emit(ctx, value)
+        emit(ctx, result.model_dump(mode="json"))
     else:
-        typer.echo(str(value.get("text", "")))
+        typer.echo(result.text)
         if sources:
-            emit(ctx, {key: item for key, item in value.items() if key != "text"})
+            emit(ctx, result.model_dump(mode="json", exclude={"text"}))
 
 
 @wave_cli.command("segment")
@@ -199,10 +265,10 @@ def segment(
     snapshot: str,
     context: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
 ) -> None:
-    value = application_action(
+    fragments, inputs = json_binding(context, key="fragments")
+    emit(
         ctx,
-        "wave.segment",
-        snapshot,
-        input_parameters=(json_parameter("fragments", context),),
+        application_call(
+            ctx, WAVE_SEGMENT, WaveSegment(snapshot=snapshot, fragments=fragments), inputs=inputs
+        ).model_dump(mode="json"),
     )
-    emit(ctx, cast(dict[str, object], value))

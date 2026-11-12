@@ -1,20 +1,18 @@
-"""Semantic source ordering and request grouping for every language entry point."""
+"""Choose semantic units before planning their physical model representations."""
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
 from nous.content.contracts import (
     Artifact,
-    ContentSelection,
     SelectedInputs,
-    SelectedSource,
     SourceRole,
     SourceSelection,
 )
@@ -28,11 +26,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class RequestGroup:
+class SemanticUnit:
+    key: str
+    inputs: SelectedInputs
+    mode: Literal["joint", "independent"]
+
+
+@dataclass(frozen=True)
+class RoutePlan:
+    unit: SemanticUnit
     batches: tuple[PreparedBatch, ...]
     coverage: dict[str, JsonValue]
-    selected_inputs: SelectedInputs
-    route_inputs: SelectedInputs
     contract: TaskDefinition | None = None
     document_mode: str = "auto"
     without_audio: bool = False
@@ -43,24 +47,80 @@ class InputPlan:
     task_mode: str
     selected_inputs: SelectedInputs
     representation_plans: tuple[MediaPlan, ...]
-    request_groups: tuple[RequestGroup, ...]
+    route_plans: tuple[RoutePlan, ...]
     requested_coverage: dict[str, JsonValue]
 
 
-async def plan_inputs(
+def semantic_units(
+    selected: SelectedInputs,
+    mode: Literal["joint", "independent"],
+    ranges: Sequence[SourceSelection] = (),
+    *,
+    contract: TaskDefinition | None = None,
+) -> tuple[SemanticUnit, ...]:
+    """Partition selected material, retaining auxiliary context with each unit."""
+    if mode == "joint":
+        if ranges:
+            raise NousError(
+                "model.invalid_input_mode", "Independent ranges require independent input"
+            )
+        return (SemanticUnit("U1", selected, mode),)
+    material = [
+        (index, selection)
+        for index, source in enumerate(selected.sources)
+        if source.role != "context"
+        for selection in source.selections
+    ]
+    if ranges:
+        if len(material) != 1:
+            raise NousError("model.invalid_input_mode", "Ranges require one selected source")
+        index, original = material[0]
+        material = [
+            (index, original.model_copy(update={"selection": original.selection.restrict(item)}))
+            for item in ranges
+        ]
+    elif contract is not None:
+        had_material = bool(material)
+        facts = {fact.artifact.id: fact for fact in selected.facts}
+        material = [
+            (index, original.model_copy(update={"selection": original.selection.restrict(item)}))
+            for index, original in material
+            for item in contract.independent_ranges(original, facts.get(original.artifact.id))
+        ]
+        if had_material and not material:
+            raise NousError("model.empty_semantic_units", "Task produced no independent ranges")
+    if not material:
+        return (SemanticUnit("U1", selected, mode),)
+    units: list[SemanticUnit] = []
+    for index, selection in material:
+        sources = tuple(
+            source.model_copy(update={"selections": (selection,)})
+            if source_index == index
+            else source
+            for source_index, source in enumerate(selected.sources)
+            if source_index == index or source.role == "context"
+        )
+        refs = {item.artifact.id for source in sources for item in source.selections}
+        inputs = SelectedInputs(
+            sources=sources,
+            facts=tuple(fact for fact in selected.facts if fact.artifact.id in refs),
+        )
+        units.append(SemanticUnit(f"U{len(units) + 1}", inputs, mode))
+    return tuple(units)
+
+
+async def _plan_unit(
     preparer: MediaPreparer,
-    selected_inputs: SelectedInputs,
+    unit: SemanticUnit,
     settings: MediaConfig,
     *,
-    requirements: Sequence[str] = (),
-    document_mode: str = "auto",
-    without_audio: bool = False,
-    per_batch: bool = False,
-    contract: TaskDefinition | None = None,
-) -> InputPlan:
-    mode = "independent_batches" if per_batch else contract.input_mode if contract else "joint"
-    originals: list[tuple[Artifact, SourceSelection, SourceRole, str, str | None]] = []
-    for source in selected_inputs.sources:
+    requirements: Sequence[str],
+    document_mode: str,
+    without_audio: bool,
+    contract: TaskDefinition | None,
+) -> tuple[RoutePlan, tuple[MediaPlan, ...]]:
+    originals: list[tuple[Artifact, SourceSelection, SourceRole, str]] = []
+    for source in unit.inputs.sources:
         artifacts = await preparer.artifacts.get_many([item.artifact for item in source.selections])
         originals.extend(
             (
@@ -70,58 +130,49 @@ async def plan_inputs(
                 item.selection,
                 source.role,
                 source.slot_key,
-                source.display_name,
             )
             for item, artifact in zip(source.selections, artifacts, strict=True)
         )
-    facts = {item.artifact.id: item.details for item in selected_inputs.facts}
-    plans: list[MediaPlan] = []
-    batches: list[PreparedBatch] = []
-    chosen_inputs = tuple((artifact, supplied) for artifact, supplied, _, _, _ in originals)
-    task_plans = (
-        await contract.prepare_sources(chosen_inputs, preparer.artifacts) if contract else None
-    )
-    slots = [slot for _, _, _, slot, _ in originals]
-    for declared in slots:
-        if any(char.isspace() for char in declared):
-            raise NousError(
-                "model.invalid_source_slot", "Source slot keys cannot contain whitespace"
-            )
+    slots = [slot for _, _, _, slot in originals]
+    if any(any(char.isspace() for char in slot) for slot in slots):
+        raise NousError("model.invalid_source_slot", "Source slot keys cannot contain whitespace")
     roles: dict[str, SourceRole] = {}
-    for slot, (_, _, role, _, _) in zip(slots, originals, strict=True):
+    for _, _, role, slot in originals:
         if slot in roles and roles[slot] != role:
             raise NousError(
-                "model.source_slot_conflict",
-                "One source slot cannot have different roles",
-                details={"slot_key": slot},
+                "model.source_slot_conflict", "One source slot cannot have different roles"
             )
         roles[slot] = role
-    counts = Counter(slots)
-    fragments: Counter[str] = Counter()
+    facts = {item.artifact.id: item.details for item in unit.inputs.facts}
+    chosen = tuple((artifact, selection) for artifact, selection, _, _ in originals)
+    task_plans = await contract.prepare_sources(chosen, preparer.artifacts) if contract else None
+    if task_plans is not None and len(task_plans) != len(originals):
+        raise NousError("model.invalid_plan", "Task preparation must cover every selected input")
+    counts, fragments = Counter(slots), Counter[str]()
     seen_keys: set[str] = set()
-    route_batches: list[SelectedInputs] = []
-    for index, (artifact, supplied, role, _, name) in enumerate(originals, 1):
-        slot_key = slots[index - 1]
-        fragments[slot_key] += 1
-        chosen = supplied
-        if task_plans is not None:
-            plan = task_plans[index - 1]
-        else:
-            plan = await preparer.prepare(
+    plans: list[MediaPlan] = []
+    batches: list[PreparedBatch] = []
+    for index, (artifact, selection, role, slot) in enumerate(originals):
+        fragments[slot] += 1
+        plan = (
+            task_plans[index]
+            if task_plans is not None
+            else await preparer.prepare(
                 artifact,
-                chosen,
+                selection,
                 requirements=requirements,
                 settings=settings,
                 document_mode=document_mode,
                 without_audio=without_audio,
                 facts=facts.get(artifact.ref.id),
             )
+        )
         plans.append(plan)
         for batch in plan.batches:
-            prefix = slot_key if counts[slot_key] == 1 else f"{slot_key}:F{fragments[slot_key]}"
+            prefix = slot if counts[slot] == 1 else f"{slot}:F{fragments[slot]}"
             preserve = contract is not None and contract.preserve_source_keys
             sources = tuple(
-                source.bind_slot(slot_key, prefix, role, preserve_key=preserve)
+                source.bind_slot(slot, prefix, role, preserve_key=preserve)
                 for source in batch.sources
             )
             for source in sources:
@@ -132,68 +183,73 @@ async def plan_inputs(
                         details={"key": source.key},
                     )
                 seen_keys.add(source.key)
-            batch = replace(
-                batch,
-                sources=sources,
-                source_prefix=prefix,
-                source_slot_key=slot_key,
-                source_role=role,
-            )
-            batches.append(batch)
-            route_batches.append(
-                SelectedInputs(
-                    sources=(
-                        SelectedSource(
-                            slot_key=slot_key,
-                            role=role,
-                            selections=(
-                                ContentSelection(artifact=artifact.ref, selection=batch.selection),
-                            ),
-                            display_name=name,
-                        ),
-                    ),
-                    facts=selected_inputs.facts,
+            batches.append(
+                replace(
+                    batch,
+                    sources=sources,
+                    source_prefix=prefix,
+                    source_slot_key=slot,
+                    source_role=role,
                 )
             )
     coverage: dict[str, JsonValue] = {
-        "mode": mode,
+        "mode": unit.mode,
+        "unit": unit.key,
         "inputs": [
             {"artifact": plan.artifact.ref.model_dump(mode="json"), **plan.coverage}
             for plan in plans
         ],
     }
-    requests = (
-        tuple(
-            RequestGroup(
-                (batch,),
-                batch.coverage,
-                selected_inputs,
-                route_inputs,
-                contract,
-                document_mode,
-                without_audio,
-            )
-            for batch, route_inputs in zip(batches, route_batches, strict=True)
-        )
-        if mode == "independent_batches"
+    return (
+        RoutePlan(unit, tuple(batches), coverage, contract, document_mode, without_audio),
+        tuple(plans),
+    )
+
+
+async def plan_inputs(
+    preparer: MediaPreparer,
+    selected_inputs: SelectedInputs,
+    settings: MediaConfig,
+    *,
+    requirements: Sequence[str] = (),
+    document_mode: str = "auto",
+    without_audio: bool = False,
+    input_mode: Literal["joint", "independent"] = "joint",
+    contract: TaskDefinition | None = None,
+    unit: SemanticUnit | None = None,
+) -> InputPlan:
+    mode: Literal["joint", "independent"] = (
+        unit.mode
+        if unit
         else (
-            RequestGroup(
-                tuple(batches),
-                coverage,
-                selected_inputs,
-                selected_inputs,
-                contract,
-                document_mode,
-                without_audio,
-            ),
+            "independent"
+            if input_mode == "independent" or (contract and contract.input_mode == "independent")
+            else "joint"
         )
     )
-    return InputPlan(mode, selected_inputs, tuple(plans), requests, coverage)
+    routes: list[RoutePlan] = []
+    plans: list[MediaPlan] = []
+    units = (unit,) if unit else semantic_units(selected_inputs, mode, contract=contract)
+    for current in units:
+        route, representations = await _plan_unit(
+            preparer,
+            current,
+            settings,
+            requirements=requirements,
+            document_mode=document_mode,
+            without_audio=without_audio,
+            contract=contract,
+        )
+        routes.append(route)
+        plans.extend(representations)
+    coverage: dict[str, JsonValue] = {
+        "mode": mode,
+        "units": [route.coverage for route in routes],
+    }
+    return InputPlan(mode, selected_inputs, tuple(plans), tuple(routes), coverage)
 
 
-async def materialize(
-    preparer: MediaPreparer, request: RequestGroup, max_bytes: int
-) -> PreparedBatch:
+async def materialize(preparer: MediaPreparer, request: RoutePlan, max_bytes: int) -> PreparedBatch:
     batches: list[PreparedBatch] = []
     total = 0
     for planned in request.batches:
@@ -205,13 +261,15 @@ async def materialize(
         if total > max_bytes:
             raise NousError(
                 "model.joint_input_limit",
-                "Joint input exceeds the request byte allowance; reduce the selected range or explicitly use per-batch processing",
+                "The selected semantic unit exceeds the request byte allowance",
                 details={
                     "bytes": total,
                     "max_bytes": max_bytes,
                     "coverage": request.coverage,
-                    "completed_result_refs": [
-                        ref for item in (*batches, batch) for ref in item.completed_result_refs
+                    "completed_refs": [
+                        ref.model_dump(mode="json")
+                        for item in (*batches, batch)
+                        for ref in item.completed_result_refs
                     ],
                 },
             )
@@ -222,9 +280,7 @@ async def materialize(
     return PreparedBatch(
         tuple(source for batch in batches for source in batch.sources),
         SourceSelection(),
-        {**request.coverage, "actual": [batch.coverage for batch in batches]}
-        if request.coverage.get("mode") == "joint" or len(batches) != 1
-        else batches[0].coverage,
+        {**request.coverage, "actual": [batch.coverage for batch in batches]},
         completed_result_refs=tuple(
             dict.fromkeys(ref for batch in batches for ref in batch.completed_result_refs)
         ),
@@ -233,24 +289,18 @@ async def materialize(
 
 async def for_route(
     preparer: MediaPreparer,
-    request: RequestGroup,
+    request: RoutePlan,
     requirements: Sequence[str],
     settings: MediaConfig,
-) -> RequestGroup:
-    """Replan the selected physical range from the retained original selections."""
-    plan = await plan_inputs(
+) -> RoutePlan:
+    """Replan the same semantic unit for a different model route."""
+    route, _ = await _plan_unit(
         preparer,
-        request.route_inputs,
+        request.unit,
         settings,
         requirements=requirements,
         document_mode=request.document_mode,
         without_audio=request.without_audio,
         contract=request.contract,
     )
-    batches = tuple(batch for group in plan.request_groups for batch in group.batches)
-    coverage = (
-        plan.requested_coverage
-        if len(batches) != 1 or request.coverage.get("mode") == "joint"
-        else batches[0].coverage
-    )
-    return replace(request, batches=batches, coverage=coverage)
+    return route

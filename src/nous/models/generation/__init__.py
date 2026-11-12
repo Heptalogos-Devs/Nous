@@ -1,11 +1,7 @@
-"""Language generation, response recovery and transactional adoption."""
+"""Language generation and completed task values."""
 
-from .computation import FrozenLanguageTask as FrozenLanguageTask
-from .contracts import GenerationOutcome as GenerationOutcome
+from .contracts import CompletedTask as CompletedTask
 from .contracts import GenerationRequest as GenerationRequest
-from .contracts import PendingGeneration as PendingGeneration
-from .contracts import PendingResponse as PendingResponse
-from .contracts import PreparedProduction as PreparedProduction
-from .contracts import PreparedRun as PreparedRun
-from .contracts import ProducedTask as ProducedTask
+from .contracts import ModelOutcome as ModelOutcome
+from .contracts import RunModel as RunModel
 from .operations import GenerationOperations as GenerationOperations

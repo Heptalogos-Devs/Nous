@@ -19,16 +19,21 @@ from nous.content.contracts import (
     InputPart,
     OutputContent,
     OutputMapping,
+    ProgramProducer,
+    ResultFacts,
+    ResultRef,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
 )
 from nous.content.results import ResultStore
 
-preparation_results: ContextVar[list[str] | None] = ContextVar(
+preparation_results: ContextVar[list[ResultRef] | None] = ContextVar(
     "media_preparation_results", default=None
 )
 
 
-def track_completed(reference: str) -> None:
+def track_completed(reference: ResultRef) -> None:
     completed = preparation_results.get()
     if completed is not None:
         completed.append(reference)
@@ -67,7 +72,7 @@ class MediaDerivatives:
     async def cached(self, operation: str, cache_key: str) -> dict[str, Artifact] | None:
         cached = await self.results.find_cached(operation, cache_key)
         if cached is not None:
-            track_completed(cached.ref.identifier)
+            track_completed(cached.ref)
             return {
                 output.name: await self.artifacts.get(output.artifact) for output in cached.outputs
             }
@@ -99,49 +104,66 @@ class MediaDerivatives:
         """Serialize same-key conversion and adoption without retaining idle locks."""
         cache_key = self.key(original, selection, operation, parameters)
         lock = self._locks.setdefault(cache_key, asyncio.Lock())
-        async with self.artifacts.content.execution.keyed_operation("media.derivative", lock):
+        async with self.artifacts.content.execution.operation("media.derivative"), lock:
             cached = await self.cached(operation, cache_key)
             if cached is not None:
                 return cached
             outputs = await create()
+            selected = ContentSelection(artifact=original.ref, selection=selection)
             result = await self.results.adopt(
-                operation=operation,
-                producer={"kind": "deterministic", **parameters},
-                inputs=(
-                    InputGroup(
-                        key="S1",
-                        slot_key="S1",
-                        name=original.display_name,
-                        parts=(
-                            InputPart(
-                                content=ContentSelection(
-                                    artifact=original.ref, selection=selection
+                facts=ResultFacts(
+                    operation=operation,
+                    producer=ProgramProducer(operation=operation, parameters=parameters),
+                    selected_inputs=SelectedInputs(
+                        sources=(
+                            SelectedSource(
+                                slot_key="S1",
+                                selections=(selected,),
+                                display_name=original.display_name,
+                            ),
+                        )
+                    ),
+                    inputs=(
+                        InputGroup(
+                            key="S1",
+                            slot_key="S1",
+                            name=original.display_name,
+                            parts=(
+                                InputPart(
+                                    content=ContentSelection(
+                                        artifact=original.ref, selection=selection
+                                    ),
+                                    source_media_type=original.media_type,
+                                    media_type=original.media_type,
                                 ),
-                                source_media_type=original.media_type,
-                                media_type=original.media_type,
                             ),
                         ),
                     ),
+                    parameters={
+                        **parameters,
+                        "cache_key": cache_key,
+                    },
+                    coverage={"selection": selection.model_dump(mode="json")},
+                    mappings=tuple(
+                        OutputMapping(
+                            output_name=name,
+                            selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
+                            relation="atomic",
+                            origins=(ContentSelection(artifact=original.ref, selection=selection),),
+                        )
+                        for name, output in outputs.items()
+                        if output.data
+                    ),
+                    formed_at=self.artifacts.clock.utc_now(),
                 ),
-                outputs=outputs,
-                parameters={
-                    **parameters,
-                    "cache_key": cache_key,
-                    "representations": {name: {"kind": "prepared"} for name in outputs},
-                },
-                coverage={"selection": selection.model_dump(mode="json")},
-                mappings=tuple(
-                    OutputMapping(
-                        output_name=name,
-                        selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
-                        relation="atomic",
-                        origins=(ContentSelection(artifact=original.ref, selection=selection),),
+                outputs={
+                    name: output.model_copy(
+                        update={"representation_kind": output.representation_kind or "prepared"}
                     )
                     for name, output in outputs.items()
-                    if output.data
-                ),
+                },
             )
-            track_completed(result.ref.identifier)
+            track_completed(result.ref)
             return {
                 output.name: await self.artifacts.get(output.artifact) for output in result.outputs
             }

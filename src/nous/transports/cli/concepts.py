@@ -2,19 +2,44 @@
 
 import json
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
-from nous.application.inputs import InputParameter
-from nous.cognition.concept_contracts import AnnotationProposalView, AnnotationView, ConceptView
-from nous.cognition.concepts import ConceptTarget
+from nous.application.inputs import FileInput, InputProvider
+from nous.cognition.annotation.contracts import (
+    AnnotateRecord,
+    ReadAnnotation,
+    ReadAnnotationProposal,
+)
+from nous.cognition.annotation.operations import (
+    ANNOTATE_RECORD,
+    READ_ANNOTATION,
+    READ_ANNOTATION_PROPOSAL,
+)
+from nous.cognition.concept_contracts import (
+    AnnotationProposalView,
+    AnnotationView,
+    ConceptView,
+    CreateConcept,
+    FindConcepts,
+    ReadConcept,
+    ReviseConcept,
+)
+from nous.cognition.concepts import (
+    CREATE_CONCEPT,
+    FIND_CONCEPTS,
+    READ_CONCEPT,
+    REVISE_CONCEPT,
+    ConceptTarget,
+)
 from nous.common.errors import NousError
+from nous.content.contracts import ExternalInput
 from nous.presentation import translate
 
-from . import application_action, cli, language_for, options
 from .cognition import journal_cli, note_cli
-from .input_files import json_parameter
+from .context import application_call, emit, language_for, options
+from .groups import cli
 
 concept_cli = typer.Typer(help="Concept meanings", no_args_is_help=True)
 annotation_cli = typer.Typer(help="Annotations", no_args_is_help=True)
@@ -42,23 +67,24 @@ def concept_add(
     alias: Annotated[list[str] | None, typer.Option("--alias")] = None,
     author: str | None = None,
 ):
-    result = application_action(
+    result = application_call(
         ctx,
-        "concepts.create",
-        namespace,
-        label,
-        description,
-        alias or (),
-        author=author,
-        scope=namespace,
+        CREATE_CONCEPT,
+        CreateConcept(
+            namespace=namespace,
+            label=label,
+            description=description,
+            aliases=tuple(alias or ()),
+            author=author,
+        ),
     )
-    emit_concept(ctx, cast(ConceptView, result))
+    emit_concept(ctx, result)
 
 
 @concept_cli.command("read")
 def concept_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    result = application_action(ctx, "concepts.read", ref, namespace, scope=namespace)
-    emit_concept(ctx, cast(ConceptView, result))
+    result = application_call(ctx, READ_CONCEPT, ReadConcept(target=ref, namespace=namespace))
+    emit_concept(ctx, result)
 
 
 @concept_cli.command("find")
@@ -69,11 +95,10 @@ def concept_find(
     limit: int = 20,
     offset: int = 0,
 ):
-    result = cast(
-        tuple[ConceptView, ...],
-        application_action(
-            ctx, "concepts.find", namespace, text, offset=offset, limit=limit, scope=namespace
-        ),
+    result = application_call(
+        ctx,
+        FIND_CONCEPTS,
+        FindConcepts(namespace=namespace, text=text, offset=offset, limit=limit),
     )
     if options(ctx).json_mode:
         typer.echo(
@@ -113,19 +138,20 @@ def concept_revise(
     elif expected.isdecimal():
         expected = ref.split("@")[0] + "@" + expected
 
-    result = application_action(
+    result = application_call(
         ctx,
-        "concepts.revise",
-        ref,
-        expected,
-        label,
-        description,
-        alias or (),
-        namespace=namespace,
-        author=author,
-        scope=namespace,
+        REVISE_CONCEPT,
+        ReviseConcept(
+            target=ref,
+            expected_revision=expected,
+            label=label,
+            description=description,
+            aliases=tuple(alias or ()),
+            namespace=namespace,
+            author=author,
+        ),
     )
-    emit_concept(ctx, cast(ConceptView, result))
+    emit_concept(ctx, result)
 
 
 def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | AnnotationView):
@@ -197,64 +223,48 @@ def annotate(
             )
         candidates[key] = target
     if background:
-        result = application_action(
-            ctx,
-            "maintenance.request_annotation",
-            ref,
-            namespace=namespace,
-            task=task,
-            refresh=refresh,
-        )
-    else:
-        parameters: list[InputParameter] = []
-        if bindings is not None:
-            parameters.append(json_parameter("bindings", bindings))
-        if proposal is not None:
-            parameters.append(json_parameter("proposal", proposal))
-        result = application_action(
-            ctx,
-            "annotations.from_input",
-            ref,
-            scope=namespace,
-            namespace=namespace,
-            proposal=None,
-            proposal_result=proposal_result,
-            known_concepts=candidates if known_concept is not None else None,
-            bindings=None,
-            draft_only=draft_only,
-            task=task,
-            activate_for_current=not historical,
-            input_parameters=parameters,
-        )
-    if background:
-        from nous.jobs.contracts import JobRef
+        from nous.cognition.maintenance.contracts import MaintainRecord
+        from nous.cognition.maintenance.operations import MAINTAIN_RECORD
 
-        assert isinstance(result, JobRef)
-        if options(ctx).json_mode:
-            typer.echo(result.model_dump_json())
-        else:
-            language = language_for(options(ctx))
-            typer.echo(
-                f"{translate('Queued', language)} · {translate('Job', language)}: {result.workflow_id}"
-            )
+        result = application_call(
+            ctx,
+            MAINTAIN_RECORD,
+            MaintainRecord(
+                target=ref, namespace=namespace, task=task, refresh=refresh, execution="background"
+            ),
+        )
     else:
-        assert isinstance(result, (AnnotationProposalView, AnnotationView))
-        emit_annotation(ctx, result)
+        inputs: dict[str, InputProvider] = {}
+        if bindings is not None:
+            inputs["bindings"] = FileInput(bindings)
+        if proposal is not None:
+            inputs["proposal"] = FileInput(proposal)
+        result = application_call(
+            ctx,
+            ANNOTATE_RECORD,
+            AnnotateRecord(
+                target=ref,
+                namespace=namespace,
+                proposal=ExternalInput(key="proposal") if proposal else None,
+                proposal_result=proposal_result,
+                known_concepts=candidates if known_concept is not None else None,
+                bindings=ExternalInput(key="bindings") if bindings else {},
+                draft_only=draft_only,
+                task=task,
+                activate_for_current=not historical,
+            ),
+            inputs=inputs,
+        )
+    emit(ctx, result.model_dump(mode="json"))
 
 
 @annotation_cli.command("read")
 def annotation_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    result = application_action(ctx, "annotations.read", ref, scope=namespace, namespace=namespace)
-    emit_annotation(ctx, cast(AnnotationView, result))
+    result = application_call(ctx, READ_ANNOTATION, ReadAnnotation(ref=ref, namespace=namespace))
+    emit_annotation(ctx, result)
 
 
 @annotation_cli.command("proposal")
 def proposal_read(ctx: typer.Context, ref: str, namespace: str | None = None):
-    result = application_action(ctx, "annotations.read_proposal", ref, scope=namespace)
-    emit_annotation(ctx, cast(AnnotationProposalView, result))
-
-
-@annotation_cli.command("recover")
-def annotation_recover(ctx: typer.Context, ref: str, namespace: str | None = None):
-    result = application_action(ctx, "annotations.recover", ref, scope=namespace)
-    emit_annotation(ctx, cast(AnnotationProposalView | AnnotationView, result))
+    result = application_call(ctx, READ_ANNOTATION_PROPOSAL, ReadAnnotationProposal(ref=ref))
+    emit_annotation(ctx, result)

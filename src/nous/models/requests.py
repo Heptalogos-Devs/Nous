@@ -9,7 +9,7 @@ from pydantic import JsonValue
 from pydantic_ai.messages import ModelMessage
 
 from nous.configuration import ConfigSnapshot
-from nous.content.contracts import ArtifactRef
+from nous.content.contracts import ArtifactRef, ResultRef
 from nous.media.configuration import MediaConfig
 from nous.models.configuration import ModelExecutionConfig, ModelRoute, TaskAssignment
 
@@ -79,7 +79,7 @@ class PreparedGeneration:
     max_output_tokens: int
     structured_retries: int
     estimated_input_tokens: int
-    stage_refs: tuple[str, ...] = ()
+    stage_refs: tuple[ResultRef, ...] = ()
     ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
     attempt_plans: tuple[PreparedAttempt, ...] = ()
     coverage: dict[str, JsonValue] = field(default_factory=dict)
@@ -102,7 +102,7 @@ class PreparedGeneration:
             "deferred_routes": [route.model_id for route in self.routes[1:]],
             "media_tokens": None,
             "prepared_attempts": [attempt.to_dict() for attempt in self.attempt_plans],
-            "stage_result_refs": list(self.stage_refs),
+            "stage_result_refs": [item.model_dump(mode="json") for item in self.stage_refs],
         }
 
 

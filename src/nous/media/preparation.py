@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import codecs
+import asyncio
 import shutil
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
+from weakref import WeakValueDictionary
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import JsonValue
@@ -23,8 +24,14 @@ from nous.content.contracts import (
     InputGroup,
     OutputContent,
     OutputMapping,
+    ProgramProducer,
+    ResultFacts,
+    ResultRef,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
     is_text_media_type,
+    is_utf8_text_prefix,
 )
 from nous.content.results import ResultStore
 from nous.content.text import TextView
@@ -71,6 +78,7 @@ class MediaPreparer:
     ) -> None:
         self.artifacts, self.results, self.execution = artifacts, results, execution
         self.derivatives = MediaDerivatives(artifacts, results)
+        self._text_view_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self.visual = VisualPreparation(artifacts, results, execution, self.derivatives)
         self.av = AudioVisualPreparation(artifacts, execution, self.derivatives)
 
@@ -146,70 +154,85 @@ class MediaPreparer:
             )
         parameters = self.text_view_parameters(info)
         key = self.derivatives.key(original, source.selection, "media.text-view", parameters)
-        cached = await self.results.find_cached("media.text-view", key)
-        if cached is None:
-            plan = await self.prepare(
-                original,
-                source.selection,
-                requirements=("text/plain",),
-                settings=settings,
-                document_mode="text",
-            )
-            texts: list[str] = []
-            inputs: list[InputGroup] = []
-            mappings: list[OutputMapping] = []
-            offset = 0
-            async with self.batches(plan) as batches:
-                async for batch in batches:
-                    for item in batch.sources:
-                        text = item.text or ""
-                        start = offset + (2 if texts else 0)
-                        offset = start + len(text.encode())
-                        origins = (
-                            tuple(
-                                dict.fromkeys(
-                                    selected
-                                    for part in item.group.parts
-                                    for selected in (
-                                        tuple(value.origin for value in part.origins)
-                                        or (part.content,)
+        lock = self._text_view_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            cached = await self.results.find_cached("media.text-view", key)
+            if cached is None:
+                plan = await self.prepare(
+                    original,
+                    source.selection,
+                    requirements=("text/plain",),
+                    settings=settings,
+                    document_mode="text",
+                )
+                texts: list[str] = []
+                inputs: list[InputGroup] = []
+                mappings: list[OutputMapping] = []
+                offset = 0
+                async with self.batches(plan) as batches:
+                    async for batch in batches:
+                        for item in batch.sources:
+                            text = item.text or ""
+                            start = offset + (2 if texts else 0)
+                            offset = start + len(text.encode())
+                            origins = (
+                                tuple(
+                                    dict.fromkeys(
+                                        selected
+                                        for part in item.group.parts
+                                        for selected in (
+                                            tuple(value.origin for value in part.origins)
+                                            or (part.content,)
+                                        )
                                     )
                                 )
+                                if item.group
+                                else ()
                             )
-                            if item.group
-                            else ()
-                        )
-                        if start < offset and origins:
-                            mappings.append(
-                                OutputMapping(
-                                    output_name="text",
-                                    selection=SourceSelection(start_byte=start, end_byte=offset),
-                                    relation="atomic",
-                                    origins=origins,
+                            if start < offset and origins:
+                                mappings.append(
+                                    OutputMapping(
+                                        output_name="text",
+                                        selection=SourceSelection(
+                                            start_byte=start, end_byte=offset
+                                        ),
+                                        relation="atomic",
+                                        origins=origins,
+                                    )
                                 )
+                            texts.append(text)
+                        inputs.extend(batch.inputs)
+                cached = await self.results.adopt(
+                    facts=ResultFacts(
+                        operation="media.text-view",
+                        producer=ProgramProducer(
+                            operation="media.text-view", parameters=parameters
+                        ),
+                        selected_inputs=SelectedInputs(
+                            sources=(
+                                SelectedSource(
+                                    slot_key="S1",
+                                    selections=(source,),
+                                    display_name=original.display_name,
+                                ),
                             )
-                        texts.append(text)
-                    inputs.extend(batch.inputs)
-            cached = await self.results.adopt(
-                operation="media.text-view",
-                producer={"kind": "deterministic", **parameters},
-                inputs=tuple(inputs),
-                outputs={
-                    "text": OutputContent(
-                        data="\n\n".join(texts).encode(),
-                        media_type="text/plain",
-                        display_name="document.txt",
-                    )
-                },
-                parameters={
-                    **parameters,
-                    "cache_key": key,
-                    "representations": {"text": {"kind": "text"}},
-                },
-                coverage=plan.coverage,
-                mappings=mappings,
-            )
-        track_completed(cached.ref.identifier)
+                        ),
+                        inputs=tuple(inputs),
+                        parameters={**parameters, "cache_key": key},
+                        coverage=plan.coverage,
+                        mappings=tuple(mappings),
+                        formed_at=self.artifacts.clock.utc_now(),
+                    ),
+                    outputs={
+                        "text": OutputContent(
+                            data="\n\n".join(texts).encode(),
+                            media_type="text/plain",
+                            display_name="document.txt",
+                            representation_kind="text",
+                        )
+                    },
+                )
+        track_completed(cached.ref)
         body = cached.outputs[0].artifact
         resolved_mappings = tuple(
             TextMapping(
@@ -230,7 +253,7 @@ class MediaPreparer:
             await self.artifacts.text_view(body),
             cached.inputs,
             cached.coverage,
-            (cached.ref.identifier,),
+            (cached.ref,),
             resolved_mappings,
         )
 
@@ -276,13 +299,7 @@ class MediaPreparer:
             try:
                 info = await self.execution.blocking(inspect_image, path)
             except UnidentifiedImageError, OSError:
-                try:
-                    decoded = codecs.getincrementaldecoder("utf-8")().decode(header, final=False)
-                    controls = sum(ord(char) < 32 and char not in "\r\n\t" for char in decoded)
-                    text = "\x00" not in decoded and controls <= len(decoded) // 100
-                except UnicodeDecodeError:
-                    text = False
-                if not text:
+                if not is_utf8_text_prefix(header):
                     info = await AudioVisual(settings, self.execution).inspect(path)
                 else:
                     mime = (
@@ -338,7 +355,7 @@ class MediaPreparer:
             )
         if batch.conversion is not None:
             recipe = batch.conversion
-            completed: list[str] = []
+            completed: list[ResultRef] = []
             token = preparation_results.set(completed)
             try:
                 converted = await self._prepare(
@@ -371,7 +388,9 @@ class MediaPreparer:
                     completed_result_refs=tuple(dict.fromkeys(completed)),
                 )
             except NousError as error:
-                error.details["completed_result_refs"] = list(dict.fromkeys(completed))
+                error.details["completed_refs"] = [
+                    item.model_dump(mode="json") for item in dict.fromkeys(completed)
+                ]
                 raise
             finally:
                 preparation_results.reset(token)

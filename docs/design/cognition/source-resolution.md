@@ -9,6 +9,7 @@ class RevisionSelection(CognitiveValue):
     revision: RecordRevisionRef
     selections: tuple[ContentSelection, ...]  # 至少一项，允许不连续
 
+
 class SourceBinding(CognitiveValue):
     key: str
     selections: tuple[ContentSelection, ...]
@@ -17,20 +18,25 @@ class SourceBinding(CognitiveValue):
     name: str | None
 ```
 
-SourceBinding 继续为冻结后的存储值，不再让外部输入类型决定是否保留 owner_revision。RecordView、SearchPassage/DeliveredSelection 和选段结果应方便地返回 RevisionSelection，不让调用者拆掉 revision 后再尝试恢复。通用 Wave 仍返回 CandidateDescriptor；认知 retrieval 在自己拥有正式文稿 metadata 的位置构造 RevisionSelection。
+SourceBinding 是固定后的存储值。RecordView 和 RevisionPassage 返回 RevisionSelection；通用 Wave 返回 CandidateDescriptor 与 GroupDescriptor，认知检索从组级正式上下文构造 RevisionSelection。
 
 ## 一个共同解析能力
 
-`cognition/sources.py` 的 SourceResolver 集中来源准备，使用 RecordReader、ArtifactStore 与 MediaPreparer。媒体 owner 检查真实范围，内容 owner 负责字节和表示映射；它不依赖 CLI、Wave 私有 SQL 或 DBOS。
+`cognition/sources.py` 的 SourceResolver 集中来源准备，使用 RecordReader、ArtifactStore 与 MediaPreparer。媒体 owner 检查真实范围，内容 owner 负责字节和表示映射；它不依赖 CLI 或 Wave 私有 SQL。
 
 ```python
 class SourceResolver:
     async def prepare(
-        self, namespace: NamespaceRef, inputs: Sequence[SourceInput],
-        *, prefix: str = "S", reserved_keys: Sequence[str] = (),
+        self,
+        namespace: NamespaceRef,
+        inputs: Sequence[SourceInput],
+        *,
+        prefix: str = "S",
+        reserved_keys: Sequence[str] = (),
         reject_journals: bool = False,
         usage: Literal["reference", "current_basis", "inspiration"] = "reference",
         preserve_keys: bool = False,
+        input_reader: InputReader | None = None,
     ) -> PreparedSources: ...
 
     async def validate_in(
@@ -46,11 +52,11 @@ class SourceResolver:
 
 正式 RecordRef 在一次一致读取中解析为精确 revision；RevisionRef 保持原版本；RevisionSelection 核对其每个内容选区实际属于该修订正文或拥有明确原文映射的已采用表示。拒绝跨实例、跨域或伪造的 body 绑定。
 
-裸 Artifact/ContentSelection 保持合法通用输入。对于确为本域已采用文稿正文的 artifact，查询正式绑定补全 owner_revision；只能依据 artifact 身份和正式绑定，不能按相同 CAS digest、相同文本、名称或任意祖先猜测。映射唯一时补全；有多个正式 owner 时要求提供 RevisionSelection，不任取 current 或第一条记录。
+裸 Artifact/ContentSelection 是通用内容来源；它们保留自身身份和范围。需要正式文稿归属时，由调用者提供 RecordRevisionRef 或 RevisionSelection，不从正文 Artifact 反查并猜测 owner。
 
 外部原材料没有正式文稿归属时仍可作为 reference/inspiration。`current_basis` 表示可追踪的当前认识依赖，需要正式修订 owner；无法确定该语义时给出 `cognition.current_basis_owner_required`，引导调用者使用确切 RevisionSelection 或普通引用。以后 Resource 有正式版本能力时由该 owner 扩展，不在本轮造一个外部版本库。
 
-raw Journal Artifact/ContentSelection 也要识别其已采用身份，journalize 按现有意图合同返回 `cognition.writing_intent_required`；rewrite/reflect 是明确入口。Note 引用了 Journal 的事实仍按 Note 自身语义使用，不沿任意血缘做“污染”分类。
+以正式 Journal 修订作为写作来源时，journalize 按意图合同返回 `cognition.writing_intent_required`；rewrite/reflect 是明确入口。Note 引用了 Journal 的事实仍按 Note 自身语义使用。
 
 ## 范围校验与提交
 
@@ -64,7 +70,7 @@ raw Journal Artifact/ContentSelection 也要识别其已采用身份，journaliz
 
 保留 `reference/current_basis/inspiration` 区分。`correction` 对被纠正的 exact revision 登记失效，当前后代沿正式 revision DAG 计算 needs_review；普通编辑、归档、后续现实状态或新反思不声明旧认识错误。
 
-RevisionRef、RevisionSelection、唯一可归属的 body ContentSelection 表示相同依赖时，得到相同 target_revision_id 和失效结果。更新依据后通过新 revision 完成复核，精确旧版仍可阅读。
+RevisionRef 和 RevisionSelection 表示正式依赖；裸 ContentSelection 只表达内容，不能作为 current_basis。更新依据后通过新 revision 完成复核，精确旧版仍可阅读。
 
 来源范围和依赖范围不能无意扩大：不连续片段不转为 min/max 的连续区间；表示的原始页/时段也不能替换成整份媒体。字段在 input planning → actual_inputs → DraftContext → adoption → CorpusCapture → QueryResult 的每一步都有原样或明确变换后的消费者。
 

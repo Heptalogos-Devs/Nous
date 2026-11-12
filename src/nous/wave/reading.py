@@ -13,6 +13,7 @@ from nous.storage.database import Database
 
 from . import schema
 from .contracts import (
+    GroupDescriptor,
     SnapshotDescriptor,
     SnapshotRef,
 )
@@ -48,10 +49,8 @@ class SnapshotReader:
                 schema.snapshots.c.identity,
             ]
         )
-        query = (
-            sa.select(*columns, schema.collections.c.name)
-            .join(schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id)
-            .where(schema.snapshots.c.accepted.is_(True))
+        query = sa.select(*columns, schema.collections.c.name).join(
+            schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id
         )
         condition = (
             sa.and_(
@@ -143,6 +142,29 @@ class SnapshotReader:
                 result[key] = units[signature][index]
         return result
 
+    async def groups(self, ref: SnapshotRef, keys: Sequence[str]) -> dict[str, GroupDescriptor]:
+        """Read only the requested immutable group contexts."""
+        result: dict[str, GroupDescriptor] = {}
+        unique = list(dict.fromkeys(keys))
+        async with self.database.read() as tx:
+            for offset in range(0, len(unique), 400):
+                rows = (
+                    await tx.connection.execute(
+                        sa.select(schema.snapshot_groups).where(
+                            schema.snapshot_groups.c.snapshot_id == ref.id,
+                            schema.snapshot_groups.c.key.in_(unique[offset : offset + 400]),
+                        )
+                    )
+                ).mappings()
+                for row in rows:
+                    result[row["key"]] = GroupDescriptor(
+                        key=row["key"],
+                        document_key=row["document_key"],
+                        title=row["title"],
+                        context=row["context"],
+                    )
+        return result
+
     async def resolve(self, ref: str | SnapshotRef) -> SnapshotRow:
         row = await self.lookup(ref, include_mapping=True)
         if row is None:
@@ -196,6 +218,17 @@ class SnapshotReader:
                 .mappings()
                 .one()
             )
+            groups = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.snapshot_groups)
+                        .where(schema.snapshot_groups.c.snapshot_id == row["id"])
+                        .order_by(schema.snapshot_groups.c.ordinal)
+                    )
+                )
+                .mappings()
+                .all()
+            )
         documents = {member["document_key"]: member["document"] for member in members}
         units = {member["signature"]: member["candidates"] for member in members}
         roots = {key: refs for member in members for key, refs in member["roots"].items()}
@@ -215,6 +248,15 @@ class SnapshotReader:
             "support_groups": graph["support_groups"],
             "roots": roots,
             "documents": documents,
+            "groups": {
+                group["key"]: {
+                    "key": group["key"],
+                    "document_key": group["document_key"],
+                    "title": group["title"],
+                    "context": group["context"],
+                }
+                for group in groups
+            },
             "candidates": candidates,
         }
         return cast(SnapshotRow, value)

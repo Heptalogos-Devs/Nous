@@ -25,6 +25,7 @@ impl Snapshot {
         );
         let normalized = vector.map(unit).transpose()?;
         let vector = normalized.as_deref();
+        let mut local_vector = vector.map(<[f32]>::to_vec);
         QueryControls {
             top_k: o.top_k,
             group_scan_limit: o.group_scan_limit,
@@ -82,6 +83,9 @@ impl Snapshot {
             }
             let observation = provided.or(owned.as_ref()).unwrap();
             let output = &observation.output;
+            if mode == "tagmemo" {
+                local_vector = Some(unit(&output.enhanced_vector)?);
+            }
             if mode == "tagmemo" {
                 score_kind = "tagmemo_cosine";
                 used_lanes.push("tagmemo".into());
@@ -412,6 +416,7 @@ impl Snapshot {
                 skipped,
                 started,
                 readout_max_union_candidates,
+                local_vector,
             },
         )
     }

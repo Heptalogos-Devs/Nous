@@ -1,51 +1,27 @@
 # 完整应用操作与共同输入边界
 
-## 所有权调整
+应用层提供用户可直接完成的操作。`OperationDefinition` 集中请求、结果、事件类型与名称；组合根将定义与实际 owner 绑定，`Application.call` 供 SDK、本地 CLI 和运行中宿主共同调用。业务规则位于各能力的完整操作，入口负责参数、输入绑定与结果交付。
 
-应用层负责一个用户动作所需的跨 owner 协作，底层 owner 封装本领域的完整机制。ConfigurationOperations、GenerationOperations、MediaAnalysis、EmbeddingOperations 与 WaveOperations 各自负责实际成果。普通 Runtime 构造这些能力；显式 run_host 另行拥有持久宿主与应用循环。
+`CallContext` 携带本次请求的执行上下文、`InputReader` 和事件出口。请求取得外部输入、执行、保存和返回共用期限；内部阶段继承同一配置快照。宿主由客户端在请求开始时主动绑定文件和标准输入，正式来源使用原始显示名与已接纳 Artifact，不使用宿主暂存路径。
 
-共同复用的能力按已有职责提取：
+`runtime.app.list()` 和 `runtime.app.describe(name)` 从同一操作定义提供简介及请求、结果、事件 Schema；CLI 使用 `nous operations list` 和 `nous operations describe <名称>` 查询。配置、Prompt 和时间各有独立请求，离线配置入口与运行中宿主使用同一组操作绑定。
 
-| 能力 | 定义位置及责任 |
+`Saved` 事件在正式提交后携带带类型标识的成果引用。事件、运行期操作状态、错误中的 `completed_refs` 和日志使用相同的引用事实。前台观察者无法接收事件时结束调用，已提交成果仍可按引用读取；后台维护使用独立的事件出口。
+
+## 共同能力
+
+| 能力 | 负责者 |
 |---|---|
-| InputSpec、ContentSelection、SelectedInputs、InputGroup | content/contracts；原选择与实际交付分别保存，同一引用合同用于模型、媒体、Embedding、Wave |
-| 接纳本地/内联/已有引用 | ArtifactStore 的完整接纳操作，不在 CLI 或每个消费者重写 |
-| 原文块与精确片段读取 | content 的文本读取能力，使用 markdown-it 与不可变 Artifact |
-| 具体格式的准备与批次规划 | media；PDF 确定性抽文也供 Wave 使用，没有语言模型依赖 |
-| 任务语义、来源键校验与产物解释 | 发起任务的领域定义，通用目录和解释输入位于 models/tasks |
-| 模型尝试策略 | models 中小型共同执行策略，被生成/转写/Embedding 使用 |
-| 操作范围内 worker 生命周期 | Execution，CAS 和 Native 使用同一机制 |
-| 标识符编码与解析 | common 的纯值能力；具体 owner 在自己的表内分配并处理唯一约束 |
+| 输入绑定与接纳 | `application.inputs.InputReader`，统一内联文本、外部输入、Artifact 和命名 Result 输出 |
+| 原选择与实际输入 | `content.contracts.SelectedInputs`、`InputGroup`、`ContentSelection` |
+| 内容和成果 | ArtifactStore、ResultStore；`ResultFacts` 与命名输出在短事务中采用 |
+| 类型探测与表示准备 | MediaPreparer；原选择、真实模态、实际表示和范围分别保留 |
+| 任务与模型调用 | TaskDefinition、GenerationOperations、ModelExecutor；任务负责语义和输出解释 |
+| 向量与检索 | EmbeddingOperations、WaveOperations 与 Native；认知领域负责正式视图和反馈 |
+| 运行期资源 | ExecutionManager 跟踪请求、当前进程后台 Task、线程和受控进程 |
 
-这些是职责，允许相邻的内聚函数同处一文件。不要为每个动作创建 repository/service/manager 三层转发。
+`SourceTarget` 的分支是内联文本、Artifact、Result 命名输出和 `ExternalInput`。每个完整操作声明所需请求；认知来源另用 `SourceChoice` 承载正式修订与用途。调用期从接纳后的原件和选区计划实际表示；同一字节的不同原件保留各自身份。
 
-共用可读标识符由类型前缀与括号内六个以空格分隔的四字母单元组成，例如 `wav(Greg drug peut plan evil Bild)`。首单元从固定的 1,024 项表均匀选择，其余各从固定的 2,048 项表均匀选择，共 65 位随机空间；单元表及其顺序固定。API、JSON 和数据库使用 `identifier` 字段保存可读标识符，内部 UUID 继续使用 `id`。写入由所属表的唯一约束处理碰撞，失败时重新分配。修订号写在右括号之后，例如 `jrn(...)@3`。标识符按完整字符串传递，在命令行中使用时须整体加引号。
+纯 Prompt 预览进行输入准备和编译，不发送语言或转写请求。模型或程序形成完整输出后保存成果；后续领域加工失败时读取已保存成果并显式重新发起加工。读取结果不依赖旧模型配置。来源与映射见[内容记录](content-records.md)，运行期控制见[宿主与操作](../interfaces/jobs-and-host.md)。
 
-## 应用接口
-
-| 使用目的 | 公共服务与调用契约 |
-|---|---|
-| 多输入语言生成、预览与探测 | [GenerationOperations](../../../src/nous/models/generation/operations.py)：run_input、preview、probe |
-| 成功计算与独立结果采用 | GenerationRequest → produce；recover_response 解释已保存响应，prepare_adoption/adopt_in 复用已发布输出 |
-| 多媒体解释 | [MediaAnalysis.analyze](../../../src/nous/media/analysis.py) |
-| 文本向量复用与查询编码 | [EmbeddingOperations.ensure / encode_query](../../../src/nous/application/embedding.py) |
-| 集合构建、查询与原文读取 | [WaveOperations](../../../src/nous/wave/operations.py)：完整 build、query、read；跨 owner 用 prepare_build、accept_in、promote_in |
-
-各服务的准确参数、返回值、异常与资源限制写在源码 docstring 中。跨服务的正式认知操作见[进程内认知入口](../interfaces/cognition-api.md)。
-
-InputSpec 是产品输入值，context 由根操作建立并向内部阶段传递。普通入口使用已打开 Runtime 的 snapshot，不复制配置或伪造版本。内部阶段显式接收冻结任务/输入，与现有根上下文配合。
-
-`InputSpec` 是 File(path)、InlineText(text, display_name)、Existing(ArtifactRef, selection) 三选一。有序数组由应用保持；CLI 仅转换命令参数。文件接纳后以 Artifact 和完整 SelectedInputs 固定原选择、slot、role 及已确认类型；每条路线和每个语言阶段从原选择规划，不从旧物理 batch 倒推材料。原文件后续变化不改变本次已接纳内容。
-
-## 预览与探测
-
-纯 Prompt 预览调用共同输入/编译能力，说明使用的是模板级表示。指定实际 task 的预览则采用该任务的媒体与输出合同。两者都不偷偷运行转写或描述。
-
-`--show-request` 使用与本次执行相同的已准备消息。probe 接收显式模型选择和真实输入，调用正式准备/执行路径；其用途作为调用参数，不通过篡改全局 tasks 配置或伪造配置版本实现。
-
-## 结果和阶段
-
-成功响应和正式提案分别可恢复；已有结果先读取，没有结果才准备新请求。多阶段应用返回根操作状态、成功阶段 refs 和未完成范围。确定性缓存复用同一真实转换结果；LLM 结果复用核对保存的语义请求与实际覆盖，当前远端配置不阻断本地解释。
-
-模型执行器只判断协议响应、完成状态和输出形状。信息抽取的 source_keys、原文选段恢复、未来概念描述等都由对应任务合同负责。新增语义任务无需修改 Executor 中的任务名分支。
-
+可读标识符由类型前缀和括号内六个单元组成；内部使用 UUID。修订号写在右括号之后，例如 `jrn(...)@3`。在命令行中将完整标识符作为一个参数引用。

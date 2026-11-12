@@ -8,10 +8,11 @@
 
 ```python
 class ConfigSnapshot:
-    values: NousConfig       # 深度不可变、已校验的类型化视图
+    values: NousConfig  # 深度不可变、已校验的类型化视图
     version: int
     sources: FrozenMapping
     state: str
+
     def to_dict(self) -> dict: ...  # 显式产生独立可修改副本
 ```
 
@@ -27,15 +28,15 @@ Configuration 仍负责 Schema、来源合并、nullable/unset、生效方式及
 
 配置更改建立新候选并校验，资源采用成功后发布新 Snapshot。运行中的操作保留其旧快照，新根操作取得新的有效视图。需要修改参数的执行器以 model_copy/明确构造新值完成，不能就地改共享 preset。
 
-## 活动配置和任务冻结
+## 活动配置与调用范围
 
-短操作固定完整有效快照；持久任务固定其需要的实际任务、模板、模型路线、数值策略和资源绑定指纹，详情见模型持久计算专题。恢复时使用当前 Runtime 的连接/凭据和执行上限，核对资源身份是否兼容，而不把整份旧 Snapshot 设成全局活动配置。
+一次完整操作固定有效快照；后台维护使用启动时捕获的配置并由当前 Runtime 持有。保存的成果记录实际请求与生产者信息，读取不依赖旧运行环境。
 
 Namespace/task/call 合法覆盖在操作入口解析一次。业务层读取已解析的模块视图；ArtifactStore 的上限和 cache settings 回调可以继续存在，但返回已有类型化子视图，不能重复调用重校验 getter。
 
 ## 配置变更执行边界
 
-ConfigurationOperations.update/unset/remove_resource/reload 是公开用例，应进入 Runtime 的 ExecutionManager 后再取得配置更改锁。等待并发名额、数据库绑定与文件采用具有同一根期限、诊断与关闭责任。
+ConfigurationOperations.update/unset/remove_resource/reload 是公开用例，应进入 Runtime 的 ExecutionManager 后再取得配置更改锁。等待配置锁、数据库绑定与文件采用具有同一根期限、诊断与关闭责任。
 
 保留现有 file_saved、write_performed、effective/pending_restart 状态。文件已保存后后续资源应用失败，返回真实 partial/apply_failed 信息，不能声称文件未写。取消与超时也附带实际已完成状态，不由入口重新猜测。
 

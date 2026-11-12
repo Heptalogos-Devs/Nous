@@ -1,20 +1,20 @@
-# Nous 设计与开发文档
+# Nous design and development documents
 
-- (*) `agents/` 保存 Agent 治理文档，Agent 应当根据要求读取并遵守；  
-- `design/` 保存设计：只应当记录当下状态，不记录演变过程，不记录历史；  
-- `plans/` 安排工作：由开发者要求或者 Spec 提供；
-- (*) `sources/` 保存原始设计讨论，其中的提案不等于已批准的决定；
-- `research/` 保存研究结论与外部对照，结论可以改变实现，但不自动成为合同；
-- `development/` 保存操作说明与实施记录，跟随当前实现，不作为设计合同；
-- `examples/` 保存配置与清单示例，随实际格式更新；
-- (*) `notes/` 保存开发者笔记，Agent 只读。
+- (*) `agents/` holds Agent governance documents. An Agent reads and follows them when a requirement says to.
+- `design/` holds the design. Record only the current state, not the evolution and not the history.
+- `plans/` arranges work requested by the developer or supplied by a spec.
+- (*) `sources/` retains the original design discussions. A proposal there is not an approved decision.
+- `research/` holds research conclusions and external comparisons. A conclusion can change the implementation. It becomes a contract when a formal spec adopts it.
+- `development/` holds operating instructions and implementation records. They follow the current implementation and are not a design contract.
+- `examples/` holds configuration and manifest examples, and stays current with the actual format.
+- (*) `notes/` holds the developer's notes. Agents only read them.
 
-导航详见 [README.md](README.md)。对于标记有 (*) 的文档，除开发者明确要求外禁止任何 Agent 修改；需要变更时按根文件生成 patch 交开发者审查，授权后才直接修改。
+See [README.md](README.md) for navigation. No Agent may modify a document marked (*) unless the developer has explicitly requested it. When a change is required, produce the patch described by the root file, hand it to the developer for review, and edit the document directly only after authorization.
 
-## 更新规则
+## Update rules
 
-一项规则只在其负责专题定义。决定改变时替换原文并迁移关联例子。
-不在正文保留失效方案的兼容说明。CURRENT 不列讨论归档清单。
-研究提出的新规则与源码已经具有的能力分别写明；正式 Spec 中已选方案就是施工合同。
+Define each rule in the topic that owns it. When a decision changes, replace the original text and migrate the related examples.
+Do not keep a compatibility note for a retired scheme in the body. CURRENT does not list a discussion archive.
+State a rule proposed by research, and a capability the source already has, as separate facts. The scheme chosen in a formal spec is the build contract.
 
-修改已有专题时以仓库当前正文为底稿，只编辑受到新决定影响的段落；保留开发者补充的仍有效合同。外部 Spec 更新用上下文补丁，不用目录覆盖。
+When changing an existing topic, start from the current text in the repository and edit only the paragraphs the new decision affects. Keep a contract the developer added while it remains in force. Update an external spec with a contextual patch, not by replacing the directory.

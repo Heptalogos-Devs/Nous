@@ -97,7 +97,7 @@ async def map_origins(
     pending: list[tuple[ContentSelection, bool]] = [(root, False)]
     active: set[str] = set()
     done: dict[str, tuple[OriginSlice, ...]] = {}
-    children: dict[str, tuple[ResultRef, tuple[ContentSelection, ...]]] = {}
+    children: dict[str, tuple[ResultRef, tuple[tuple[ContentSelection, str], ...]]] = {}
 
     while pending:
         current, expanded = pending.pop()
@@ -108,8 +108,14 @@ async def map_origins(
             transform, origins = children.pop(key)
             answer = tuple(
                 dict.fromkeys(
-                    OriginSlice(origin=item.origin, transform_ref=transform)
-                    for origin in origins
+                    OriginSlice(
+                        origin=item.origin,
+                        transform_ref=transform,
+                        precision="atomic"
+                        if relation == "atomic" or item.precision == "atomic"
+                        else "identity",
+                    )
+                    for origin, relation in origins
                     for item in done[origin.model_dump_json()]
                 )
             )
@@ -132,7 +138,7 @@ async def map_origins(
         mappings = list(candidate[1]) if candidate else []
         mappings.sort(key=lambda item: item.selection.start_byte or 0)
         cursor = start
-        selected_origins: list[ContentSelection] = []
+        selected_origins: list[tuple[ContentSelection, str]] = []
         for mapping in mappings:
             low, high = mapping.selection.start_byte, mapping.selection.end_byte
             assert low is not None and high is not None
@@ -146,16 +152,19 @@ async def map_origins(
                 origin_start = origin.selection.start_byte
                 assert origin_start is not None
                 selected_origins.append(
-                    ContentSelection(
-                        artifact=origin.artifact,
-                        selection=SourceSelection(
-                            start_byte=origin_start + left - low,
-                            end_byte=origin_start + right - low,
+                    (
+                        ContentSelection(
+                            artifact=origin.artifact,
+                            selection=SourceSelection(
+                                start_byte=origin_start + left - low,
+                                end_byte=origin_start + right - low,
+                            ),
                         ),
+                        "identity",
                     )
                 )
             elif mapping.relation == "atomic":
-                selected_origins.extend(mapping.origins)
+                selected_origins.extend((origin, "atomic") for origin in mapping.origins)
             else:
                 break
             cursor = right
@@ -173,6 +182,6 @@ async def map_origins(
         active.add(key)
         children[key] = (transform, normalized)
         pending.append((current, True))
-        pending.extend((origin, False) for origin in reversed(normalized))
+        pending.extend((origin, False) for origin, _ in reversed(normalized))
 
     return done[root.model_dump_json()]

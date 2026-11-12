@@ -589,18 +589,40 @@ class PromptCatalog:
         )
         return target / "CONTEXT.md"
 
+    def read_directory(
+        self,
+        prompt_id: str,
+        source: Path,
+        *,
+        read_text: Callable[[Traversable], str] | None = None,
+    ) -> PromptResource:
+        """Read a prompt directory and its statically referenced templates."""
+        self._safe_name(prompt_id)
+        if "/" in prompt_id:
+            raise NousError("prompt.invalid_id", "Prompt ID must be a single directory name")
+        root = source.resolve(strict=True)
+
+        def read(path: Traversable) -> str:
+            resolved = Path(str(path)).resolve(strict=True)
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                raise NousError(
+                    "prompt.invalid_path", "Prompt files must remain inside the selected directory"
+                )
+            return (
+                read_text(resolved)
+                if read_text is not None
+                else resolved.read_text(encoding="utf-8")
+            )
+
+        return self._load(prompt_id, root, "import", read_text=read)
+
     def import_directory(self, prompt_id: str, source: Path) -> Path:
         """Validate and copy a prompt manifest and its templates to the instance.
 
         The returned path is the instance override directory. Existing files
         with the same names are overwritten; editing context is regenerated.
         """
-        self._safe_name(prompt_id)
-        if "/" in prompt_id:
-            raise NousError("prompt.invalid_id", "Prompt ID must be a single directory name")
-        # Validate in its current directory before publishing the instance resource.
-        source = source.resolve()
-        candidate = self._load(prompt_id, source, "import")
+        candidate = self.read_directory(prompt_id, source)
         target = self.directory / prompt_id
         target.mkdir(parents=True, exist_ok=True)
         (target / "prompt.toml").write_text(candidate.manifest_text, encoding="utf-8")

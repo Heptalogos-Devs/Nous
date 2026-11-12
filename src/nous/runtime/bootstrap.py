@@ -4,42 +4,96 @@ from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, ExitStack, asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import tomlkit
 
+from nous.application.config_operations import OfflineCalls
 from nous.application.configuration import ConfigurationOperations
-from nous.application.embedding import EmbeddingOperations
-from nous.cognition.annotation.operations import AnnotationOperations
+from nous.application.contracts import BoundOperation
+from nous.application.dispatch import Application
+from nous.application.embedding import PROBE_EMBEDDING, RUN_EMBEDDING, EmbeddingOperations
+from nous.cognition.annotation.operations import (
+    ADOPT_ANNOTATION,
+    ANNOTATE_RECORD,
+    PROPOSE_ANNOTATION,
+    READ_ANNOTATION,
+    READ_ANNOTATION_PROPOSAL,
+    AnnotationOperations,
+)
 from nous.cognition.annotation.task import ConceptAnnotationTask
-from nous.cognition.concepts import ConceptOperations
-from nous.cognition.contracts import NamespaceRef
-from nous.cognition.feedback import FeedbackOperations
-from nous.cognition.maintenance import MaintenanceOperations
-from nous.cognition.maintenance.definitions import queues as maintenance_queues
-from nous.cognition.retrieval.operations import CognitiveRetrieval
-from nous.cognition.scope import NamespaceOperations
+from nous.cognition.concepts import (
+    CREATE_CONCEPT,
+    FIND_CONCEPTS,
+    READ_CONCEPT,
+    REVISE_CONCEPT,
+    ConceptOperations,
+)
+from nous.cognition.feedback import (
+    LIST_FEEDBACK,
+    READ_FEEDBACK,
+    RECORD_FEEDBACK,
+    RECORD_QUERY_FEEDBACK,
+    RESOLVE_FEEDBACK,
+    FeedbackOperations,
+)
+from nous.cognition.maintenance.operations import MAINTAIN_RECORD, MaintenanceOperations
+from nous.cognition.retrieval.operations import QUERY, REFRESH, CognitiveRetrieval
+from nous.cognition.scope import (
+    CREATE_NAMESPACE,
+    LIST_NAMESPACES,
+    RENAME_NAMESPACE,
+    SELECT_NAMESPACE,
+    NamespaceOperations,
+)
 from nous.cognition.scope import initialize_in as initialize_namespaces_in
-from nous.cognition.services import CognitiveServices
 from nous.cognition.sources import SourceResolver
 from nous.cognition.writing.drafts import DraftStore
-from nous.cognition.writing.generation import WritingOperations
-from nous.cognition.writing.operations import RecordOperations
+from nous.cognition.writing.generation import (
+    DRAFT_FROM_RESULT,
+    READ_DRAFT,
+    REVISE_DRAFT,
+    WRITE_DRAFT,
+    WritingOperations,
+)
+from nous.cognition.writing.operations import (
+    ADD_NOTE,
+    ADOPT_DRAFT,
+    APPLY_EDITS,
+    ARCHIVE_RECORD,
+    CREATE_JOURNAL,
+    DIFF_RECORDS,
+    HISTORY_RECORD,
+    LIST_RECORDS,
+    READ_RECORD,
+    REPLACE_RECORD,
+    RESTORE_RECORD,
+    SET_RECALL,
+    RecordOperations,
+)
 from nous.cognition.writing.reading import RecordReader
 from nous.cognition.writing.records import WrittenRecords
 from nous.cognition.writing.tasks import writing_tasks
 from nous.common.errors import NousError
 from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
+from nous.content.operations import (
+    ACCEPT_CONTENT,
+    EXPORT_CONTENT,
+    READ_ARTIFACT,
+    READ_RESULT,
+    READ_SELECTIONS,
+    ContentOperations,
+)
 from nous.content.results import ResultStore
-from nous.jobs.operations import JobOperations
-from nous.jobs.runtime import JobRuntime, initialize_jobs, open_jobs
-from nous.media.analysis import MediaAnalysis
+from nous.media.analysis import ANALYZE_MEDIA, INSPECT_MEDIA, MediaAnalysis
 from nous.media.preparation import MediaPreparer
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
 from nous.models.generation import GenerationOperations
+from nous.models.generation.operations import MODEL_DISCOVER, MODEL_PROBE, MODEL_RUN, PROMPT_PREVIEW
 from nous.models.prompts import PromptCatalog, PromptCompiler
 from nous.models.tasks import TaskCatalog, builtin_tasks
 from nous.network import ModelConnections
@@ -50,11 +104,27 @@ from nous.storage.content import ContentStore
 from nous.storage.database import Database
 from nous.temporal.domains import TimeService, bind_domains, check_domains
 from nous.temporal.values import Clock
-from nous.wave.operations import WaveOperations
+from nous.wave.operations import (
+    WAVE_BUILD,
+    WAVE_CLEANUP,
+    WAVE_INSPECT,
+    WAVE_QUERY,
+    WAVE_READ,
+    WAVE_SEGMENT,
+    WaveOperations,
+)
 
 from .bindings import InstanceBinding, prepare_resource_directories
 from .execution import ExecutionManager
 from .instance import InstanceDescriptor, InstanceLocator, InstanceLock
+from .operations import (
+    CANCEL_OPERATION,
+    CHECK_RUNTIME,
+    LIST_OPERATIONS,
+    READ_OPERATION,
+    WAIT_OPERATION,
+    RuntimeOperations,
+)
 from .paths import ResolvedPaths
 from .schema import BUSINESS_METADATA
 
@@ -88,8 +158,7 @@ class Runtime:
 
     Acquire this object with ``open_instance`` and use its services only inside
     that context. The runtime owns their shared resources and shutdown; callers
-    should not close the individual services. Use ``cognition`` to bind work to
-    a stable namespace identity.
+    use ``app`` to invoke complete operations.
     """
 
     paths: ResolvedPaths
@@ -119,77 +188,10 @@ class Runtime:
     cognitive_retrieval: CognitiveRetrieval
     feedback: FeedbackOperations
     maintenance: MaintenanceOperations
-    jobs: JobOperations
-    job_runtime: JobRuntime
+    records: RecordOperations
+    writing: WritingOperations
+    app: Application = field(init=False)
     state: str = "starting"
-    _cognition: dict[str, CognitiveServices] = field(default_factory=dict)
-
-    async def cognition(self, namespace: str | NamespaceRef | None = None) -> CognitiveServices:
-        """Bind shared services to a resolved immutable namespace identity.
-
-        Args:
-            namespace: Namespace identity or selector; None or an empty selector
-                uses the current configured default. The namespace must exist.
-
-        Returns:
-            A runtime-owned service set cached by resolved namespace identity.
-        """
-        selected = namespace or self.configuration.snapshot.values.cognition.default_namespace
-        async with self.database.read() as tx:
-            identity = (await self.namespaces.get_in(tx, selected)).ref
-        cached = self._cognition.get(identity.id)
-        if cached is not None:
-            return cached
-        reader = RecordReader(
-            self.database, self.execution, self.artifacts, self.namespaces, identity
-        )
-        concepts = ConceptOperations(
-            self.database,
-            self.execution,
-            self.namespaces,
-            self.descriptor.instance_id,
-            self.time.clock,
-            namespace=identity,
-        )
-        annotations = AnnotationOperations(
-            self.database, self.execution, reader, concepts, self.generation
-        )
-        retrieval = self.cognitive_retrieval.bind(identity)
-        feedback = FeedbackOperations(
-            self.database,
-            self.execution,
-            self.namespaces,
-            reader,
-            self.wave,
-            self.time.clock,
-            namespace_id=identity.id,
-        )
-        drafts = DraftStore(
-            self.database,
-            self.execution,
-            self.written_records,
-            reader,
-            self.generation,
-            self.results,
-        )
-        records = RecordOperations(
-            identity,
-            self.written_records,
-            reader,
-            drafts,
-            annotations,
-            retrieval,
-            feedback,
-            self.maintenance,
-        )
-        writing = WritingOperations(
-            identity, self.written_records, reader, self.generation, drafts, records
-        )
-        services = CognitiveServices(
-            identity, records, writing, annotations, concepts, retrieval, feedback
-        )
-        self._cognition[identity.id] = services
-        return services
 
     def status(self) -> dict[str, object]:
         effective = self.configuration.snapshot.values
@@ -208,7 +210,6 @@ class Runtime:
                 "models": "configured" if configured_models else "unconfigured",
                 "network": "ready",
                 "content": "ready",
-                "durable_execution": "ready" if self.job_runtime.worker_running else "available",
             },
             "in_flight": self.execution.in_flight,
             "model_execution": "configured" if configured_models else "unconfigured",
@@ -245,16 +246,6 @@ class Runtime:
                 "retrieval": await self.cognitive_retrieval.status(),
             }
             result["execution"] = self.execution.status()
-            jobs, _ = await self.jobs.list(limit=20)
-            failed_jobs = [job for job in jobs if job.status == "ERROR"][:3]
-            failures = [await self.jobs.read(job.ref) for job in failed_jobs]
-            result["jobs"] = {
-                "worker_running": self.job_runtime.worker_running,
-                "active_stages": self.execution.status()["durable_tasks"],
-                "queues": await self.jobs.queues(),
-                "recent": [job.model_dump(mode="json") for job in jobs],
-                "recent_failures": [job.model_dump(mode="json") for job in failures],
-            }
             result["recent_results"] = await self.results.recent()
             result["observability"] = {
                 "logs": str(self.paths.logs / "nous.jsonl")
@@ -377,12 +368,6 @@ async def initialize_instance(
                     candidate = configuration.save_change(change)
                     configuration.publish_change(change, candidate, pending=False)
                 await database.check()
-                await initialize_jobs(
-                    database,
-                    descriptor.instance_id,
-                    settings.jobs,
-                    maintenance_queues(settings.jobs),
-                )
                 if not existing:
                     binding.write(selected, paths)
             paths.create_runtime_directories()
@@ -395,6 +380,7 @@ async def open_instance(
     *,
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
+    allow_background: bool = False,
 ) -> AsyncGenerator[Runtime]:
     """Open an initialized instance and own its resources until context exit.
 
@@ -443,6 +429,7 @@ async def open_instance(
             settings.execution,
             lambda: configuration.snapshot,
             observability_scope=lambda: observability.scope(descriptor.instance_id, startup_id),
+            allow_background=allow_background,
         )
         connections = ModelConnections(selected.directory, settings, configuration.environment)
         stack.push_async_callback(connections.aclose)
@@ -481,16 +468,6 @@ async def open_instance(
                         additional_metadata=BUSINESS_METADATA,
                     )
                 )
-                job_runtime = await stack.enter_async_context(
-                    open_jobs(
-                        database,
-                        descriptor.instance_id,
-                        settings.jobs,
-                        execution,
-                        maintenance_queues(settings.jobs),
-                    )
-                )
-                # Admitted saves may still enqueue until execution has drained.
                 stack.push_async_callback(close_execution)
                 embedding_spaces = EmbeddingSpaceRegistry(database)
                 await check_domains(database, settings.time.domains)
@@ -586,9 +563,7 @@ async def open_instance(
                     record_reader,
                     SourceResolver(record_reader, preparer),
                 )
-                drafts = DraftStore(
-                    database, execution, written_records, record_reader, generation, results
-                )
+                drafts = DraftStore(database, execution, written_records, record_reader, results)
                 feedback = FeedbackOperations(
                     database, execution, namespaces, record_reader, wave, clock
                 )
@@ -597,10 +572,14 @@ async def open_instance(
                     execution,
                     namespaces,
                     record_reader,
-                    generation,
                     annotations,
                     cognitive_retrieval,
-                    job_runtime.operations,
+                )
+                records = RecordOperations(
+                    written_records, record_reader, drafts, feedback, maintenance
+                )
+                writing = WritingOperations(
+                    written_records, record_reader, generation, drafts, records
                 )
                 runtime = Runtime(
                     paths=paths,
@@ -630,9 +609,90 @@ async def open_instance(
                     cognitive_retrieval=cognitive_retrieval,
                     feedback=feedback,
                     maintenance=maintenance,
-                    jobs=job_runtime.operations,
-                    job_runtime=job_runtime,
+                    records=records,
+                    writing=writing,
                     state="ready",
+                )
+                content_operations = ContentOperations(results, artifacts)
+                runtime_operations = RuntimeOperations(execution, runtime.check)
+                configuration_calls = OfflineCalls(
+                    configuration,
+                    prompts,
+                    execution,
+                    temp=paths.temp,
+                    writer=configuration_operations,
+                )
+                operations = (
+                    BoundOperation(ACCEPT_CONTENT, content_operations.accept),
+                    BoundOperation(READ_ARTIFACT, content_operations.read_artifact),
+                    BoundOperation(READ_RESULT, content_operations.read_result),
+                    BoundOperation(READ_SELECTIONS, content_operations.read_selections),
+                    BoundOperation(EXPORT_CONTENT, content_operations.export_offer),
+                    BoundOperation(CHECK_RUNTIME, runtime_operations.check),
+                    BoundOperation(LIST_OPERATIONS, runtime_operations.list),
+                    BoundOperation(READ_OPERATION, runtime_operations.read),
+                    BoundOperation(WAIT_OPERATION, runtime_operations.wait),
+                    BoundOperation(CANCEL_OPERATION, runtime_operations.cancel),
+                    BoundOperation(CREATE_CONCEPT, concepts.create),
+                    BoundOperation(READ_CONCEPT, concepts.read),
+                    BoundOperation(FIND_CONCEPTS, concepts.find),
+                    BoundOperation(REVISE_CONCEPT, concepts.revise),
+                    BoundOperation(PROPOSE_ANNOTATION, annotations.propose),
+                    BoundOperation(ADOPT_ANNOTATION, annotations.adopt),
+                    BoundOperation(ANNOTATE_RECORD, annotations.annotate),
+                    BoundOperation(READ_ANNOTATION, annotations.read_annotation),
+                    BoundOperation(READ_ANNOTATION_PROPOSAL, annotations.read_annotation_proposal),
+                    BoundOperation(MAINTAIN_RECORD, maintenance.run),
+                    BoundOperation(QUERY, cognitive_retrieval.handle_query),
+                    BoundOperation(REFRESH, cognitive_retrieval.handle_refresh),
+                    BoundOperation(RECORD_QUERY_FEEDBACK, feedback.record_query),
+                    BoundOperation(RECORD_FEEDBACK, feedback.record),
+                    BoundOperation(READ_FEEDBACK, feedback.read),
+                    BoundOperation(LIST_FEEDBACK, feedback.list),
+                    BoundOperation(RESOLVE_FEEDBACK, feedback.resolve),
+                    BoundOperation(MODEL_RUN, generation.run),
+                    BoundOperation(MODEL_DISCOVER, generation.discover),
+                    BoundOperation(PROBE_EMBEDDING, embedding.probe),
+                    BoundOperation(RUN_EMBEDDING, embedding.run),
+                    BoundOperation(MODEL_PROBE, generation.probe),
+                    BoundOperation(PROMPT_PREVIEW, generation.preview),
+                    BoundOperation(ANALYZE_MEDIA, media.analyze),
+                    BoundOperation(INSPECT_MEDIA, media.inspect),
+                    BoundOperation(WAVE_BUILD, wave.handle_build),
+                    BoundOperation(WAVE_QUERY, wave.handle_query),
+                    BoundOperation(WAVE_READ, wave.handle_read),
+                    BoundOperation(WAVE_INSPECT, wave.handle_inspect),
+                    BoundOperation(WAVE_SEGMENT, wave.handle_segment),
+                    BoundOperation(WAVE_CLEANUP, wave.handle_cleanup),
+                    BoundOperation(CREATE_NAMESPACE, namespaces.create),
+                    BoundOperation(LIST_NAMESPACES, namespaces.list),
+                    BoundOperation(SELECT_NAMESPACE, namespaces.select),
+                    BoundOperation(RENAME_NAMESPACE, namespaces.rename),
+                    BoundOperation(CREATE_JOURNAL, records.create_journal),
+                    BoundOperation(ADD_NOTE, records.add_note),
+                    BoundOperation(READ_RECORD, records.read_record),
+                    BoundOperation(REPLACE_RECORD, records.replace_record),
+                    BoundOperation(APPLY_EDITS, records.apply_edits),
+                    BoundOperation(ARCHIVE_RECORD, records.archive_record),
+                    BoundOperation(RESTORE_RECORD, records.restore_record),
+                    BoundOperation(SET_RECALL, records.set_recall),
+                    BoundOperation(HISTORY_RECORD, records.history_record),
+                    BoundOperation(LIST_RECORDS, records.list_records),
+                    BoundOperation(DIFF_RECORDS, records.diff_records),
+                    BoundOperation(ADOPT_DRAFT, records.adopt_draft),
+                    BoundOperation(WRITE_DRAFT, writing.generate),
+                    BoundOperation(DRAFT_FROM_RESULT, writing.draft_from_result),
+                    BoundOperation(READ_DRAFT, writing.read_draft),
+                    BoundOperation(REVISE_DRAFT, writing.revise_draft),
+                )
+                runtime.app = Application(
+                    cast(tuple[BoundOperation[object, object], ...], operations)
+                    + configuration_calls.bindings(writable=True),
+                    execution=execution,
+                    artifacts=artifacts,
+                    results=results,
+                    readers=content.file_readers,
+                    chunk_size=settings.content.io_chunk_bytes,
                 )
             with observability.scope(descriptor.instance_id, startup_id):
                 get_logger(__name__).info("runtime.ready")

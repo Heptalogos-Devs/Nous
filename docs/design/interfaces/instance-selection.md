@@ -24,6 +24,6 @@ InstanceLocator 统一解析：显式 path/profile → NOUS_INSTANCE → 用户�
 
 open_instance 仍持有唯一运行期资源锁。一次长程序持续使用同一 Runtime，不每次业务调用重新启动模型连接、数据库和 Native。profile 选择不改变锁模型，也不启动后台守护进程。
 
-后续 DBOS 与服务化使用拥有实例的同一宿主。当前不为此加入远程 socket、HTTP、自动启动和多进程竞争补偿。
+常驻宿主通过本地认证通道提供同一应用操作；实例不自动启动后台服务。
 
 `instance current` 返回本次实际选中的 profile、配置目录和 nous.toml；显式路径与 NOUS_INSTANCE 选择保留 profile 为 null。register 校验现有实例的配置与资源绑定，use 校验配置路径存在；都不打开模型连接或启动 Runtime。

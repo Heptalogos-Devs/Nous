@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 from weakref import WeakValueDictionary
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai.messages import BinaryContent
 
 from nous.common.errors import NousError
@@ -22,6 +22,10 @@ from nous.content.contracts import (
     OriginSlice,
     OutputContent,
     OutputMapping,
+    ProgramProducer,
+    ResultFacts,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
 )
 from nous.content.results import ResultStore
@@ -122,10 +126,10 @@ class VisualPreparation:
         }
         cache_key = self.derivatives.key(original, selection, "media.prepare.image", parameters)
         lock = self._conversion_locks.setdefault(cache_key, asyncio.Lock())
-        async with self.execution.keyed_operation("media.prepare_image", lock):
+        async with self.execution.operation("media.prepare_image"), lock:
             cached = await self.results.find_cached("media.prepare.image", cache_key)
             if cached is not None:
-                track_completed(cached.ref.identifier)
+                track_completed(cached.ref)
                 frame_info = cast(list[dict[str, JsonValue]], cached.parameters["frames"])
                 derivatives = {
                     output.name: await self.artifacts.get(output.artifact)
@@ -164,57 +168,63 @@ class VisualPreparation:
                             data=await self.execution.blocking(frame.path.read_bytes),
                             media_type=target,
                             display_name=f"frame-{frame.metadata['frame']}.{image_extension(target)}",
+                            representation_kind="prepared",
                         )
                         for index, frame in enumerate(frames)
                     }
                     derived = await self.results.adopt(
-                        operation="media.prepare.image",
-                        producer={"kind": "deterministic", **parameters},
-                        inputs=tuple(
-                            make_group(
-                                f"S1:F{frame['frame']}",
-                                original.display_name,
-                                original,
-                                SourceSelection.model_validate(frame["selection"]),
-                            )
-                            for frame in frame_info
-                        ),
-                        outputs=outputs,
-                        parameters={
-                            **parameters,
-                            "cache_key": cache_key,
-                            "frames": frame_info,
-                            "representations": {
-                                f"image-{index}": {
-                                    "kind": "prepared",
-                                    "sources": [
+                        facts=ResultFacts(
+                            operation="media.prepare.image",
+                            producer=ProgramProducer(
+                                operation="media.prepare.image", parameters=parameters
+                            ),
+                            selected_inputs=SelectedInputs(
+                                sources=(
+                                    SelectedSource(
+                                        slot_key="S1",
+                                        selections=(
+                                            ContentSelection(
+                                                artifact=original.ref, selection=selection
+                                            ),
+                                        ),
+                                        display_name=original.display_name,
+                                    ),
+                                )
+                            ),
+                            inputs=tuple(
+                                make_group(
+                                    f"S1:F{frame['frame']}",
+                                    original.display_name,
+                                    original,
+                                    SourceSelection.model_validate(frame["selection"]),
+                                )
+                                for frame in frame_info
+                            ),
+                            parameters=TypeAdapter(dict[str, JsonValue]).validate_python(
+                                {**parameters, "cache_key": cache_key, "frames": frame_info}
+                            ),
+                            coverage={"selection": selection.model_dump(mode="json")},
+                            mappings=tuple(
+                                OutputMapping(
+                                    output_name=f"image-{index}",
+                                    selection=SourceSelection(
+                                        start_byte=0, end_byte=len(outputs[f"image-{index}"].data)
+                                    ),
+                                    relation="atomic",
+                                    origins=(
                                         ContentSelection(
                                             artifact=original.ref, selection=frame.selection
-                                        ).model_dump(mode="json")
-                                    ],
-                                }
-                                for index, frame in enumerate(frames)
-                            },
-                        },
-                        coverage={"selection": selection.model_dump(mode="json")},
-                        mappings=tuple(
-                            OutputMapping(
-                                output_name=f"image-{index}",
-                                selection=SourceSelection(
-                                    start_byte=0, end_byte=len(outputs[f"image-{index}"].data)
-                                ),
-                                relation="atomic",
-                                origins=(
-                                    ContentSelection(
-                                        artifact=original.ref, selection=frame.selection
+                                        ),
                                     ),
-                                ),
-                            )
-                            for index, frame in enumerate(frames)
-                            if outputs[f"image-{index}"].data
+                                )
+                                for index, frame in enumerate(frames)
+                                if outputs[f"image-{index}"].data
+                            ),
+                            formed_at=self.artifacts.clock.utc_now(),
                         ),
+                        outputs=outputs,
                     )
-                    track_completed(derived.ref.identifier)
+                    track_completed(derived.ref)
                     derivatives = {
                         output.name: await self.artifacts.get(output.artifact)
                         for output in derived.outputs
@@ -322,7 +332,7 @@ class VisualPreparation:
         if lock is None:
             lock = asyncio.Lock()
             self._pdf_locks[original.ref.id] = lock
-        async with self.execution.keyed_operation("media.prepare_pdf", lock):
+        async with self.execution.operation("media.prepare_pdf"), lock:
             return await self._render_pdf(
                 original,
                 selection,
@@ -549,6 +559,7 @@ class VisualPreparation:
                                                 artifact=original.ref, selection=page_selection
                                             ),
                                             transform_ref=derivative.producer_result_ref,
+                                            precision="atomic",
                                         ),
                                     ),
                                 )

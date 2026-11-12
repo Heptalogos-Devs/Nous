@@ -1,4 +1,4 @@
-"""在同一个宿主中保存正式文稿、执行持久维护并检索。
+"""在同一个宿主中保存正式文稿、执行后台维护并检索。
 
 在已初始化实例上运行：python host-use.py INSTANCE_DIRECTORY
 本例默认跳过语言标注，只演示真实后台刷新与精确查询；
@@ -10,39 +10,43 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nous.cognition import AfterWrite, CognitiveQuery
-from nous.cognition.maintenance.contracts import MaintenanceOutcome
+from nous.cognition.retrieval.contracts import CognitiveQuery
+from nous.cognition.retrieval.operations import QUERY
+from nous.cognition.writing.contracts import AfterWrite, CreateJournal, ReadRecord
+from nous.cognition.writing.operations import CREATE_JOURNAL, READ_RECORD
+from nous.content.contracts import InlineText
 from nous.runtime.bootstrap import Runtime
 from nous.runtime.host import run_host
+from nous.runtime.operations import WAIT_OPERATION, SelectOperation
 
 
 async def main(runtime: Runtime, namespace: str, annotate: bool) -> None:
-    cognition = await runtime.cognition(namespace)
-    saved = await cognition.records.create_journal(
-        "# 资源生命周期\n\n取消等待后，需要等实际工作退出再释放资源。\n",
-        after=AfterWrite(
-            annotation="run" if annotate else "skip",
-            retrieval="refresh",
-            retrieval_mode="lexical",
-            execution="background",
+    saved = await runtime.app.call(
+        CREATE_JOURNAL,
+        CreateJournal(
+            namespace=namespace,
+            body=InlineText(text="# 资源生命周期\n\n取消等待后，需要等实际工作退出再释放资源。\n"),
+            after=AfterWrite(
+                annotation="run" if annotate else "skip",
+                refresh="run",
+                mode="lexical",
+                execution="background",
+            ),
         ),
     )
-    print("已保存：", saved.record.revision_ref.identifier)
-    pending = list(saved.jobs)
-    seen: set[str] = set()
-    while pending:
-        job = pending.pop(0)
-        if job.workflow_id in seen:
-            continue
-        seen.add(job.workflow_id)
-        completed = MaintenanceOutcome.model_validate(await runtime.jobs.wait(job))
-        print("维护结果：", job.workflow_id, completed.state)
-        pending.extend(completed.related_jobs)
-    result = await cognition.retrieval.query(
-        CognitiveQuery(text="取消后何时释放资源？", mode="lexical")
+    print("已保存：", saved.commit.revision_ref.identifier)
+    if saved.maintenance.execution == "started":
+        completed = await runtime.app.call(
+            WAIT_OPERATION, SelectOperation(ref=saved.maintenance.operation_ref)
+        )
+        print("维护结果：", completed.ref.operation_id, completed.status)
+    result = await runtime.app.call(
+        QUERY, CognitiveQuery(namespace=namespace, text="取消后何时释放资源？", mode="lexical")
     )
     for group in result.groups:
-        view = await cognition.records.read(group.revision_ref, sources=True)
+        view = await runtime.app.call(
+            READ_RECORD, ReadRecord(target=group.context.revision_ref, sources=True)
+        )
         print(view.revision_ref.identifier, view.body)
 
 

@@ -17,6 +17,9 @@ from nous.content.contracts import (
     BlobRef,
     ContentSelection,
     OutputContent,
+    ProgramProducer,
+    ResultFacts,
+    SelectedInputs,
     SourceSelection,
     is_text_media_type,
 )
@@ -309,9 +312,13 @@ class TextPreparation:
         result = await self.preparer.results.find_cached("content.literal_text", key)
         if result is None:
             result = await self.preparer.results.adopt(
-                operation="content.literal_text",
-                producer={"kind": "deterministic"},
-                inputs=(),
+                facts=ResultFacts(
+                    operation="content.literal_text",
+                    producer=ProgramProducer(operation="content.literal_text"),
+                    selected_inputs=SelectedInputs(sources=()),
+                    parameters={"cache_key": key},
+                    formed_at=self.artifacts.clock.utc_now(),
+                ),
                 outputs={
                     "text": OutputContent(
                         data=text.encode("utf-8"),
@@ -319,7 +326,6 @@ class TextPreparation:
                         display_name=display_name,
                     )
                 },
-                parameters={"cache_key": key},
             )
         return ContentSelection(
             artifact=next(item.artifact for item in result.outputs if item.name == "text")

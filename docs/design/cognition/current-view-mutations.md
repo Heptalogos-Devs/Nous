@@ -16,7 +16,7 @@ Annotation 是固定正文修订、Concept 意义版本、位置和路径的不�
 2. 找到相同 adoption_key 或创建一次 Annotation。
 3. 独立处理是否激活：核对 expected_active_annotation；没有变化则返回 unchanged，有变化则写 annotation_heads。
 4. 若受影响正文是 record.current_revision，且 recall=true、archived=false，则推进 generation。
-5. 若本次维护要求自动发布，将新 generation 的 refresh Job 在同一事务登记。
+5. 事务提交后，调用方按明确的维护请求执行或启动刷新。
 
 historical 仅表示允许作用于旧正文。调用者以 historical 指向实际当前正文并改变活动标注，仍必须推进 generation。调用参数 activate_for_current 不再参与“是否需要使当前快照过期”的事实判断，可改为明确的 require_current 前置条件。
 
@@ -32,10 +32,10 @@ historical 仅表示允许作用于旧正文。调用者以 historical 指向实
 
 ## 当前快照发布
 
-构建采用一次 ReadTx 捕获 G 和各 owner 的批量只读值；CAS、向量、Native 运算在事务外；发布时短 WriteTx 检查该 profile 与 namespace generation 是否仍匹配。匹配才更新 current 指针。发现更晚代次时保留本次快照，返回 pending/superseded 等准确业务状态；不回滚文稿，不循环追新写入。
+构建在一次 ReadTx 捕获 G、轻量目录以及变化材料的正式引用；CAS、向量、Native 运算在事务外。发布时短 WriteTx 检查 namespace generation；匹配才更新 current 指针。发现更晚代次时保留本次快照，返回 captured_generation 和 current=false，不回滚文稿或循环追新写入。
 
-Job 的 SUCCESS 表示这次工作已按其合同结束。Job 结果必须另外表达 captured_generation、covered_generation 和 publication_state，防止把“任务已完成”呈现成“此刻检索绝对最新”。
+后台操作的完成状态和索引新鲜度分别表达；刷新结果保留捕获代次、当前代次与 current 状态。
 
 ## 修改位置与检查
 
-`cognition/annotation/`、`maintenance/`、`scope.py`、`writing/records.py`、`basis.py`、`retrieval/{capture,projection,operations}.py` 与 `wave/snapshots.py`。标注采用返回真实变化，完整用例组合刷新入队；覆盖当前/historical、重复采用后激活、旧修订处理、归档恢复、明确依据更正、并发写入和旧快照读取，保留 Concept 独立意义修订语义。
+`cognition/annotation/`、`maintenance/`、`scope.py`、`writing/records.py`、`basis.py`、`retrieval/{capture,projection,operations}.py` 与 `wave/snapshots.py`。标注采用返回真实变化，完整用例在提交后组合刷新；保留当前与历史标注、重复采用后的激活、明确依据更正和旧快照读取语义。

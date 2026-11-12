@@ -30,7 +30,7 @@ runtime logs: result=partial，错误 code/message/stage 可以读取
 runtime check: 最近问题包含该操作及已保存内容
 ```
 
-正常 defer 检索是 pending，但没有请求失败，结果是 success。保存前验证失败没有已保存内容；标注后索引失败只附相应问题，不能把已经采用的标注标成失败。
+正常 defer 返回检索 not_requested，结果是 success。保存前验证失败没有已保存内容；标注后索引失败只附相应问题，不能把已经采用的标注标成失败。
 
 取消保持 Python 原异常语义，附已提交引用与当前阶段；程序中止不会靠 catch 后返回 success 伪装完成。
 

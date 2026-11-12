@@ -13,6 +13,10 @@ from nous.content.contracts import (
     InputPart,
     OutputContent,
     OutputMapping,
+    ProgramProducer,
+    ResultFacts,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
 )
 from nous.content.results import PreparedOutputs
@@ -26,6 +30,7 @@ async def prepare_candidates(
     accepted: dict[str, ArtifactRef],
     preparation: TextPreparation,
     cached: dict[str, list[dict[str, object]]],
+    layouts: dict[str, list[dict[str, object]]],
 ) -> AsyncIterator[tuple[Candidate | None, PreparedText | None, dict[str, object] | None]]:
     """Normalize exact inputs and document layouts through one content preparation session."""
     await preparation.prepare_many(
@@ -37,7 +42,7 @@ async def prepare_candidates(
                 ),
             )
             for declaration in manifest.candidates
-            if declaration.document not in cached
+            if declaration.document not in cached and declaration.document not in layouts
         )
     )
     for declaration in manifest.candidates:
@@ -54,6 +59,37 @@ async def prepare_candidates(
                     )
                 ):
                     yield None, None, item
+            continue
+        if declaration.document in layouts:
+            assert isinstance(declaration, DocumentCandidates)
+            for item in layouts[declaration.document]:
+                mapping = cast(dict[str, object], item["mapping"])
+                local = cast(bool, mapping["local"])
+                old_key = cast(str, mapping["key"])
+                key = (
+                    f"{declaration.group_key}:part:{old_key.rsplit(':part:', 1)[1]}"
+                    if local
+                    else f"{declaration.group_key}:whole"
+                )
+                selection = ContentSelection.model_validate(mapping["content"]).selection
+                yield (
+                    Candidate(
+                        key=key,
+                        document=declaration.document,
+                        group_key=declaration.group_key,
+                        content=CandidateContent(
+                            document=declaration.document,
+                            selector=selection if local else SourceSelection(),
+                        ),
+                        concepts=declaration.concepts,
+                        occurrences=declaration.occurrences,
+                        paths=declaration.paths,
+                        annotation_ref=declaration.annotation_ref,
+                        annotation_concepts=declaration.annotation_concepts,
+                    ),
+                    None,
+                    item,
+                )
             continue
         document = documents[declaration.content.document]
         origin = ContentSelection(
@@ -79,7 +115,6 @@ async def prepare_candidates(
                 paths=declaration.paths,
                 annotation_ref=declaration.annotation_ref,
                 annotation_concepts=declaration.annotation_concepts,
-                metadata=declaration.metadata,
             )
 
         if declaration.whole:
@@ -102,17 +137,17 @@ async def prepare_candidates(
 
 
 async def covers(
-    prepared: PreparedText, selections: Sequence[SourceSelection], preparation: TextPreparation
+    content: ContentSelection, selections: Sequence[SourceSelection], preparation: TextPreparation
 ) -> bool:
-    low = prepared.view.byte_offset
-    high = low + len(prepared.view.text.encode("utf-8"))
     normalized = await preparation.artifacts.normalize_selections(
-        tuple(
-            ContentSelection(artifact=prepared.view.body.artifact, selection=part)
-            for part in selections
+        (
+            content,
+            *(ContentSelection(artifact=content.artifact, selection=part) for part in selections),
         )
     )
-    for value in normalized:
+    low, high = normalized[0].selection.start_byte, normalized[0].selection.end_byte
+    assert low is not None and high is not None
+    for value in normalized[1:]:
         start, end = value.selection.start_byte, value.selection.end_byte
         assert start is not None and end is not None
         if start < low or end > high:
@@ -183,34 +218,40 @@ async def titled_semantics(
                 offset = len(f"{title}\n\n".encode())
                 result = await results.adopt_in(
                     tx,
-                    operation="wave.titled_semantic_text",
-                    producer={"kind": "deterministic"},
-                    inputs=(
-                        InputGroup(
-                            key="body",
-                            slot_key="body",
-                            name="Body",
-                            parts=(
-                                InputPart(
-                                    content=source,
-                                    representation="semantic_text",
-                                    media_type=artifact.media_type,
+                    facts=ResultFacts(
+                        operation="wave.titled_semantic_text",
+                        producer=ProgramProducer(operation="wave.titled_semantic_text"),
+                        selected_inputs=SelectedInputs(
+                            sources=(SelectedSource(slot_key="body", selections=(source,)),)
+                        ),
+                        inputs=(
+                            InputGroup(
+                                key="body",
+                                slot_key="body",
+                                name="Body",
+                                parts=(
+                                    InputPart(
+                                        content=source,
+                                        representation="semantic_text",
+                                        media_type=artifact.media_type,
+                                    ),
                                 ),
                             ),
                         ),
-                    ),
-                    prepared_outputs=output,
-                    parameters={"cache_key": key, "title": title, "title_field": "title"},
-                    mappings=(
-                        OutputMapping(
-                            output_name="text",
-                            relation="identity",
-                            origins=(source,),
-                            selection=SourceSelection(
-                                start_byte=offset, end_byte=offset + len(text.encode("utf-8"))
+                        parameters={"cache_key": key, "title": title, "title_field": "title"},
+                        mappings=(
+                            OutputMapping(
+                                output_name="text",
+                                relation="identity",
+                                origins=(source,),
+                                selection=SourceSelection(
+                                    start_byte=offset, end_byte=offset + len(text.encode("utf-8"))
+                                ),
                             ),
                         ),
+                        formed_at=preparation.artifacts.clock.utc_now(),
                     ),
+                    prepared_outputs=output,
                 )
                 adopted[key] = (
                     result.ref,

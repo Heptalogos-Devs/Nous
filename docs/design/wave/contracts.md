@@ -20,7 +20,7 @@ Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须�
 
 认知 owner 从同一读事务捕获的正式 revision/source bindings 解释独立来源。实验清单适配器以 ResultStore.support_roots 校验 derived_from 后产生同一份投影。Wave 的资产构建只消费这份固定投影，Native 只接收数值集合与行号。
 
-`resolve_build_profile` 固定空间和构建配置；`prepare_build` 在异步作用域中借出可恢复的 PreparedSnapshot，并在退出时释放临时持有。`accept_in` 在调用者的 WriteTx 将已持久准备的快照切换为已采用，`promote_in` 在领域资格成立后切换指针。
+`resolve_build_profile` 确定空间和构建配置；`build_product` 在异步作用域中形成当前调用的完整构建结果并管理临时持有。`publish_in` 在调用者的 WriteTx 中登记完整快照，`promote_in` 在领域资格成立后切换指针。
 
 ## 查询请求
 
@@ -36,24 +36,27 @@ ThinkingStage(name, candidates=[candidate_key], top_k)
 
 ContextFragment 的 content/text 二选一；序位允许不同角色共享同一轮次，排序用 sequence 然后输入次序。时间只作明确记录/查询条件，不默认参与序位衰减。用户显式配置基于时间的策略另需可比较域当前点，本轮不隐式转换。
 
-candidate_filter 可包含 candidate_keys 与按现行时间值定义的条件，AND 条件作用于同一事实组。Namespace/权限 owner 尚未接入，接口不宣称提供完整授权隔离。证据 scope 从构建清单确定，严格缩小需要新证据视图。
+candidate_filter 可包含 candidate_keys 与按现行时间值定义的条件，AND 条件作用于同一事实组。认知查询核验快照所属 Namespace；证据 scope 从构建清单确定，严格缩小需要新证据视图。
 
 ThinkingStage 的候选均先与本次允许集合相交；不存在 key 是输入错误，合法但不满足 closure/真实路径的候选可不返回。无完整 transitions 时产生明确 thinking.unavailable 及原因，普通检索结果可继续交付。
 
 ## 查询结果
 
 ```text
-WaveResult:
-  snapshot_ref
+WaveSearchResult:
+  snapshot
   mode, used_lanes, skipped_lanes_with_reason
-  hits: ordered WaveHit[]
+  groups: ordered GroupHit[]       # 文稿粒度
+  hits: ordered {basis, passage}[] # 候选粒度
   context_summary, cue_summary
   algorithm_versions, scope, coverage
   thinking: stages/routes | unavailable(reason)
   diagnostics?  # include_trace / explain 时展开
 ```
 
-WaveHit 的 rank 决定呈现次序；quality/ranking/score_kind 见 ranking。annotation_ref 的无序概念归属来自候选实际覆盖的 occurrences，空 paths 不清空归属。`content` 保留可完整回读的候选，`passage_contents`、`text`、`matched_fields` 和 `passage_reason` 描述实际交付原文；read 返回冻结 concepts/paths 与完整候选。
+GroupHit 的 rank 决定组次序，basis 的 RankEvidence 记录实际排名候选及分数。PassageDelivery 分别保存交付候选、精确 fragments、匹配字段和原因；其 evidence 只在该交付候选确有已计算排名证据时提供。read 返回完整候选及其概念、路径和来源。
+
+构建、读取、清理、分段和检查操作分别返回 `WaveBuildResult`、`WaveReadResult`、`WaveCleanupResult`、`WaveSegmentResult` 与 `WaveInspection` / `WaveNeighborhoodResult`。这些结果直接包含类型化引用及固定字段；构建统计和诊断等开放内容以 JSON 值携带。
 
 coverage 包含候选预算、返回上限、实际候选数量及预算或 top_k 是否触发截断。
 

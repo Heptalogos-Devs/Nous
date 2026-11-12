@@ -9,19 +9,29 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ContentSelection, SourceSelection
+from nous.content.contracts import ContentSelection, ExternalInput
 from nous.models.embeddings import resolved_space
+from nous.models.vector_contracts import VectorRef
 from nous.runtime.execution import ExecutionManager
 from nous.temporal.domains import TimeService
 from nous.temporal.values import CognitiveTimes, Instant, Unknown, match_range
 
-from .contracts import CandidateFilter, Concept, ContextFragment, WaveQuery
+from .contracts import (
+    CandidateFilter,
+    CandidatePool,
+    Concept,
+    ContextFragment,
+    ThinkingStage,
+    WaveNeighborhoodResult,
+    WaveQuery,
+    WaveReadResult,
+)
 from .mapping import (
     ConceptMapping,
     SnapshotMapping,
@@ -31,6 +41,37 @@ from .serialization import encode_json
 
 if TYPE_CHECKING:
     import nous_native
+
+
+@dataclass(frozen=True)
+class BoundQuery:
+    """WaveQuery after external inputs have been read and validated."""
+
+    vector: VectorRef | None
+    candidate_pool: CandidatePool | None
+    context: tuple[ContextFragment, ...]
+    candidate_filter: CandidateFilter | None
+    thinking_stages: tuple[ThinkingStage, ...]
+
+
+def require_bound_query(request: WaveQuery) -> BoundQuery:
+    """Reject a query that still carries unread external inputs."""
+    vector = request.vector
+    candidate_pool = request.candidate_pool
+    context = request.context
+    candidate_filter = request.candidate_filter
+    thinking_stages = request.thinking_stages
+    if (
+        isinstance(vector, ExternalInput)
+        or isinstance(candidate_pool, ExternalInput)
+        or isinstance(context, ExternalInput)
+        or isinstance(candidate_filter, ExternalInput)
+        or isinstance(thinking_stages, ExternalInput)
+    ):
+        raise NousError(
+            "input.missing_binding", "External query inputs require an application call"
+        )
+    return BoundQuery(vector, candidate_pool, context, candidate_filter, thinking_stages)
 
 
 @dataclass(frozen=True)
@@ -120,6 +161,7 @@ class WaveQueries:
     ) -> tuple[npt.NDArray[np.float32] | None, npt.NDArray[np.float32] | None, dict[str, object]]:
         import nous_native as native
 
+        bound = require_bound_query(request)
         mode = request.mode or self.execution.snapshot.values.wave.query.default_mode
         concepts = row["mapping"]["concepts"]
         by_key = {item["key"]: item for item in concepts}
@@ -146,7 +188,7 @@ class WaveQueries:
                     details={"concept": key, "matches": [item["key"] for item in matches]},
                 )
             resolved_core.append(matches[0])
-        if mode == "lexical" and request.vector is not None:
+        if mode == "lexical" and bound.vector is not None:
             raise NousError("wave.invalid_input", "Lexical mode does not consume query vectors")
         if mode == "lexical" or row["space_id"] is None and mode == "hybrid":
             return (
@@ -156,7 +198,7 @@ class WaveQueries:
                     "query_origin": "text",
                     "context_used": False,
                     "selected_context": [],
-                    "omitted_context_count": len(request.context),
+                    "omitted_context_count": len(bound.context),
                     "core_keys": [concept["key"] for concept in resolved_core],
                     "core_labels": [concept["label"] for concept in resolved_core],
                 },
@@ -169,22 +211,22 @@ class WaveQueries:
         options = self.execution.snapshot.values.wave.context
         query_selections: list[str | ContentSelection] = []
         raw_vector = None
-        if request.vector is not None:
+        if bound.vector is not None:
             if (
-                request.vector.space.model_dump(mode="json") != row["space_definition"]
-                or request.vector.purpose != "query"
+                bound.vector.space.model_dump(mode="json") != row["space_definition"]
+                or bound.vector.purpose != "query"
             ):
                 raise NousError(
                     "wave.space_mismatch",
                     "Query vector requires this snapshot space and query purpose",
                 )
-            raw_vector = await self.embedding.read_vector(request.vector)
+            raw_vector = await self.embedding.read_vector(bound.vector)
         raw_present = raw_vector is not None or bool(request.text.strip())
         encoded_raw = raw_vector is None and bool(request.text.strip())
         if encoded_raw:
             query_selections.append(request.text)
         fragments = (
-            sorted(enumerate(request.context), key=lambda pair: (pair[1].sequence, pair[0]))
+            sorted(enumerate(bound.context), key=lambda pair: (pair[1].sequence, pair[0]))
             if options.enabled
             else []
         )
@@ -297,28 +339,27 @@ class WaveQueries:
             if part["key"] in resolved_fragments
         ]
         summary["selected_context"] = selected_context
-        summary["omitted_context_count"] = len(request.context) - len(selected_context)
+        summary["omitted_context_count"] = len(bound.context) - len(selected_context)
         ghosts: npt.NDArray[np.float32] | None = None
         if request.cues:
             ghosts = await self.embedding.encode_query(
                 tuple(cue.embedding_text() for cue in request.cues), row["space_id"]
             )
-        if request.vector is not None:
+        if bound.vector is not None:
             summary["query_origin"] = "vector+context" if len(context_vectors) else "vector"
             summary["vector_ref"] = {
-                "artifact": request.vector.artifact.identifier,
-                "row_index": request.vector.row_index,
+                "artifact": bound.vector.artifact.identifier,
+                "row_index": bound.vector.row_index,
             }
         summary["core_keys"] = [concept["key"] for concept in resolved_core]
         summary["core_labels"] = [concept["label"] for concept in resolved_core]
         return effective, ghosts, summary
 
     async def prepare(self, request: WaveQuery, row: SnapshotRow) -> QueryPlan:
-        await self.time.validate(fragment.time for fragment in request.context)
-        if request.candidate_filter is not None:
-            await self.time.validate(
-                condition.range for condition in request.candidate_filter.times
-            )
+        bound = require_bound_query(request)
+        await self.time.validate(fragment.time for fragment in bound.context)
+        if bound.candidate_filter is not None:
+            await self.time.validate(condition.range for condition in bound.candidate_filter.times)
         wave = self.execution.snapshot.values.wave
         mode = request.mode or wave.query.default_mode
         query_settings = wave.native.model_dump(mode="json")["query"]
@@ -334,7 +375,7 @@ class WaveQueries:
                 },
             )
         mapping = row["mapping"]
-        allowed = self._allowed_rows(mapping, request.candidate_filter)
+        allowed = self._allowed_rows(mapping, bound.candidate_filter)
         vector, ghosts, query_summary = await self._query_inputs(request, row)
         concepts = mapping["concepts"]
         keys = {item["key"]: index for index, item in enumerate(concepts)}
@@ -342,7 +383,7 @@ class WaveQueries:
         candidates = mapping["candidates"]
         candidate_rows = {candidate["key"]: index for index, candidate in enumerate(candidates)}
         stages: list[dict[str, object]] = []
-        for stage in request.thinking_stages:
+        for stage in bound.thinking_stages:
             unknown = set(stage.candidates) - candidate_rows.keys()
             if unknown:
                 raise NousError(
@@ -390,8 +431,8 @@ class WaveQueries:
                 "wave.empty_query", "Lexical retrieval requires query text or cue labels"
             )
         native_pool = None
-        if request.candidate_pool is not None:
-            pool = request.candidate_pool
+        if bound.candidate_pool is not None:
+            pool = bound.candidate_pool
             if pool.snapshot not in {row["identifier"], row["id"]}:
                 raise NousError(
                     "wave.candidate_pool_mismatch", "Candidate pool belongs to another snapshot"
@@ -447,251 +488,9 @@ class WaveQueries:
             query_summary,
         )
 
-    async def materialize(
-        self,
-        request: WaveQuery,
-        row: SnapshotRow,
-        result: nous_native.NativeQueryResult,
-        query_summary: dict[str, object],
-        *,
-        local_passages: Mapping[int, tuple[int, dict[str, object]]] | None = None,
-    ) -> dict[str, object]:
-        mapping = row["mapping"]
-        candidates = mapping["candidates"]
-        concepts = mapping["concepts"]
-        groups = {group["key"]: group for group in mapping["support_groups"]}
-        values = json.loads(result.result_json)
-        hits: list[dict[str, object]] = []
-        for hit in values["hits"]:
-            hit_row = cast(int, hit["row"])
-            candidate = candidates[hit_row]
-            local = local_passages.get(hit_row) if local_passages else None
-            passage_candidate = candidates[local[0]] if local else candidate
-            selection = ContentSelection.model_validate(passage_candidate["content"])
-            evidence = TypeAdapter(dict[str, JsonValue]).validate_python(
-                local[1] if local else hit.get("lexical_evidence") or {}
-            )
-            body_range = TypeAdapter(tuple[int, int] | None).validate_python(
-                evidence.get("body_range")
-            )
-            matched_fields = TypeAdapter(list[str]).validate_python(
-                evidence.get("matched_fields", [])
-            )
-            if body_range:
-                represented = ContentSelection.model_validate(
-                    passage_candidate["retrieval_content"]
-                )
-                represented = (await self.artifacts.normalize_selections((represented,)))[0]
-                start = represented.selection.start_byte
-                assert start is not None
-                selected = ContentSelection(
-                    artifact=represented.artifact,
-                    selection=SourceSelection(
-                        start_byte=start + body_range[0], end_byte=start + body_range[1]
-                    ),
-                )
-                origins = await self.artifacts.map_origins(selected, selection.artifact)
-                merged: list[ContentSelection] = []
-                for item in origins:
-                    current = item.origin
-                    if (
-                        merged
-                        and merged[-1].artifact == current.artifact
-                        and merged[-1].selection.end_byte is not None
-                        and current.selection.start_byte is not None
-                        and current.selection.start_byte <= merged[-1].selection.end_byte
-                        and current.selection.end_byte is not None
-                    ):
-                        previous = merged[-1]
-                        merged[-1] = ContentSelection(
-                            artifact=previous.artifact,
-                            selection=SourceSelection(
-                                start_byte=previous.selection.start_byte,
-                                end_byte=max(
-                                    previous.selection.end_byte or 0, current.selection.end_byte
-                                ),
-                            ),
-                        )
-                    else:
-                        merged.append(current)
-                passage_contents = tuple(merged)
-                passage_reason = "body_match"
-            else:
-                whole = (await self.artifacts.normalize_selections((selection,)))[0]
-                if local or not selection.selection.is_whole:
-                    passage_contents = (whole,)
-                    passage_reason = "local_candidate"
-                else:
-                    text = await self.artifacts.read_selection(whole)
-                    start = whole.selection.start_byte
-                    assert start is not None
-                    end = start + len(text[:500].encode("utf-8"))
-                    passage_contents = (
-                        ContentSelection(
-                            artifact=whole.artifact,
-                            selection=SourceSelection(start_byte=start, end_byte=end),
-                        ),
-                    )
-                    passage_reason = (
-                        "title_preview" if "title" in matched_fields else "candidate_preview"
-                    )
-            parts = [await self.artifacts.read_selection(part) for part in passage_contents]
-            snippet = "…".join(parts)
-            counterevidence: list[dict[str, object]] = []
-            for link in hit.get("counterevidence_links", []):
-                related = candidates[cast(int, link["row"])]
-                for index in link["associations"]:
-                    association = mapping["associations"][cast(int, index)]
-                    counterevidence.append(
-                        {
-                            "candidate": related["key"],
-                            "content": related["content"],
-                            "relation": association["relation"],
-                            "source": association["source"],
-                            "target": association["target"],
-                            "support_group": groups[association["support_group"]],
-                            "evidence": [
-                                {"root": root, "artifacts": mapping["roots"][root]}
-                                for root in association["roots"]
-                            ],
-                        }
-                    )
-            converted: dict[str, object] = {
-                **hit,
-                "candidate": candidate["key"],
-                "candidate_ref": {"snapshot": row["identifier"], "key": candidate["key"]},
-                "content": candidate["content"],
-                "origin_contents": candidate["origin_contents"],
-                "text": snippet,
-                "snippet": snippet,
-                "passage_contents": [part.model_dump(mode="json") for part in passage_contents],
-                "matched_fields": matched_fields,
-                "passage_reason": passage_reason,
-                "metadata": candidate["metadata"],
-                "concepts": [concepts[index]["key"] for index in hit.get("concept_rows", [])],
-                "sources": candidate["roots"],
-                "folded_refs": [
-                    {
-                        "candidate": candidates[item["row"]]["key"],
-                        "similarity": item["similarity"],
-                    }
-                    for item in hit.get("folded_rows", [])
-                ],
-                "counterevidence_refs": [
-                    candidates[link["row"]]["key"] for link in hit.get("counterevidence_links", [])
-                ],
-                "counterevidence": counterevidence,
-            }
-            for support in cast(list[dict[str, object]], converted.get("independent_support", [])):
-                support["source"] = concepts[cast(int, support["source"])]["key"]
-                support["target"] = concepts[cast(int, support["target"])]["key"]
-            chosen_path = hit.get("chosen_path")
-            converted["chosen_path"] = (
-                candidate["paths"][chosen_path] if chosen_path is not None else None
-            )
-            converted["paths"] = [
-                {**path, "path": candidate["paths"][path["path"]]}
-                for path in hit.get("paths", [])
-                if path.get("path") is not None
-            ]
-            if not request.include_trace:
-                converted.pop("trace", None)
-            for internal in (
-                "row",
-                "concept_rows",
-                "evidence_roots",
-                "folded_rows",
-                "counterevidence_links",
-                "lexical_evidence",
-            ):
-                converted.pop(internal, None)
-            hits.append(converted)
-        thinking = values.get("thinking")
-        if isinstance(thinking, dict):
-            thinking = cast(dict[str, object], thinking)
-            for stage_value in cast(list[dict[str, object]], thinking.get("stages", [])):
-                for item in cast(list[dict[str, object]], stage_value.get("results", [])):
-                    candidate = candidates[cast(int, item.pop("row"))]
-                    item["candidate"] = candidate["key"]
-                    chosen = item.get("chosen_path")
-                    item["chosen_path"] = (
-                        candidate["paths"][cast(int, chosen)] if chosen is not None else None
-                    )
-                    item["parents"] = [
-                        candidates[index]["key"]
-                        for index in cast(list[int], item.get("parents", []))
-                    ]
-                    route = item.get("route")
-                    if isinstance(route, dict):
-                        route = cast(dict[str, object], route)
-                        for field, output_field in (
-                            ("sourceId", "source"),
-                            ("targetId", "target"),
-                            ("previousId", "previous"),
-                        ):
-                            concept_id = route.pop(field, None)
-                            if concept_id is None:
-                                route[output_field] = None
-                                continue
-                            if (
-                                not isinstance(concept_id, int)
-                                or isinstance(concept_id, bool)
-                                or not 1 <= concept_id <= len(concepts)
-                            ):
-                                raise NousError(
-                                    "wave.invalid_native_result",
-                                    "Thinking route references an unknown concept",
-                                )
-                            route[output_field] = concepts[concept_id - 1]["key"]
-        hits_by_key = {cast(str, hit["candidate"]): hit for hit in hits}
-        search_groups: list[dict[str, object]] = []
-        for group in cast(list[dict[str, object]], values.get("groups", [])):
-            representative = candidates[cast(int, group["representative_row"])]
-            passages = [
-                hits_by_key[candidates[index]["key"]]
-                for index in cast(list[int], group["passage_rows"])
-            ]
-            search_groups.append(
-                {
-                    "group_key": group["group_key"],
-                    "group_rank": group["group_rank"],
-                    "representative": {"snapshot": row["identifier"], "key": representative["key"]},
-                    "revision_ref": representative["metadata"].get("record_revision"),
-                    "title": representative["metadata"].get("title"),
-                    "passages": passages,
-                }
-            )
-        output: dict[str, object] = {
-            "snapshot": {
-                "instance_id": self.instance_id,
-                "id": row["id"],
-                "identifier": row["identifier"],
-            },
-            "mode": values["mode"],
-            "score_kind": values["score_kind"],
-            "used_lanes": values["used_lanes"],
-            "skipped_lanes": values["skipped_lanes"],
-            "hits": hits,
-            "groups": search_groups,
-            "grouping": values["grouping"],
-            "rank_scope": values["rank_scope"],
-            "context_summary": query_summary,
-            "cue_summary": [{"label": cue.label, "is_core": cue.is_core} for cue in request.cues],
-            "algorithm_versions": values["algorithm_versions"],
-            "scope": {
-                "source_roots": len(mapping["roots"]),
-                "candidate_filter": request.candidate_filter is not None,
-            },
-            "coverage": values["coverage"],
-            "thinking": thinking,
-        }
-        if request.include_trace:
-            output["diagnostics"] = values["diagnostics"]
-        return output
-
     async def read(
         self, row: SnapshotRow, candidate_key: str, *, sources: bool = False
-    ) -> dict[str, object]:
+    ) -> WaveReadResult:
         mapping = row["mapping"]
         candidate = next(
             (item for item in mapping["candidates"] if item["key"] == candidate_key), None
@@ -703,25 +502,28 @@ class WaveQueries:
                 details={"candidate": candidate_key},
             )
         content = ContentSelection.model_validate(candidate["content"])
-        result: dict[str, object] = {
-            "snapshot": row["identifier"],
-            "candidate": candidate_key,
-            "content": content.model_dump(mode="json"),
-            "origin_contents": candidate["origin_contents"],
-            "text": await self.artifacts.read_selection(content),
-            "metadata": candidate["metadata"],
-            "concepts": candidate["concepts"],
-            "paths": candidate["paths"],
-        }
-        if sources:
-            result["sources"] = [
-                {
-                    "evidence_root": root,
-                    "artifacts": mapping["roots"][root],
-                }
-                for root in candidate["roots"]
-            ]
-        return result
+        return WaveReadResult.model_validate(
+            {
+                "snapshot": {
+                    "instance_id": self.instance_id,
+                    "id": row["id"],
+                    "identifier": row["identifier"],
+                },
+                "candidate": {"snapshot": row["identifier"], "key": candidate_key},
+                "content": content,
+                "origin_contents": candidate["origin_contents"],
+                "text": await self.artifacts.read_selection(content),
+                "group": row["mapping"]["groups"][candidate["group_key"]],
+                "concepts": candidate["concepts"],
+                "paths": candidate["paths"],
+                "sources": [
+                    {"evidence_root": root, "artifacts": mapping["roots"][root]}
+                    for root in candidate["roots"]
+                ]
+                if sources
+                else None,
+            }
+        )
 
     @staticmethod
     def neighborhood_rows(row: SnapshotRow, concepts: Sequence[str]) -> npt.NDArray[np.uint64]:
@@ -736,8 +538,9 @@ class WaveQueries:
             )
         return np.asarray([rows[key] for key in concepts], dtype=np.uint64)
 
-    @staticmethod
-    def neighborhood(row: SnapshotRow, concepts: Sequence[str], result: str) -> dict[str, object]:
+    def neighborhood(
+        self, row: SnapshotRow, concepts: Sequence[str], result: str
+    ) -> WaveNeighborhoodResult:
         all_concepts = row["mapping"]["concepts"]
         neighborhood = json.loads(result)
         for edge in neighborhood.get("edges", []):
@@ -773,11 +576,17 @@ class WaveQueries:
             association["evidence_roots"] = [
                 row["mapping"]["root_order"][index] for index in association["evidence_roots"]
             ]
-        return {
-            "snapshot": row["identifier"],
-            "concepts": list(concepts),
-            "neighborhood": neighborhood,
-        }
+        return WaveNeighborhoodResult.model_validate(
+            {
+                "snapshot": {
+                    "instance_id": self.instance_id,
+                    "id": row["id"],
+                    "identifier": row["identifier"],
+                },
+                "concepts": concepts,
+                "neighborhood": neighborhood,
+            }
+        )
 
     async def segment_vectors(
         self, row: SnapshotRow, fragments: Sequence[ContextFragment]

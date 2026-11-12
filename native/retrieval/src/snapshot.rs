@@ -42,6 +42,7 @@ pub struct CandidateMeta {
     pub titles: Vec<String>,
     pub group_keys: Vec<String>,
     pub group_rows: Vec<u64>,
+    pub local: Vec<bool>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct ConceptMeta {

@@ -8,6 +8,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import threading
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from .content_schema import blobs, references
 from .content_types import BlobRef
 from .database import ReadTx, WriteTx
 from .file_input import FileReaderPool
+from .file_output import deliver_file
 
 
 @dataclass(frozen=True)
@@ -363,30 +365,15 @@ class ContentStore:
             raise NousError("content.not_text", "Content is not UTF-8 text; use export") from exc
 
     async def export(self, blob: BlobRef, destination: Path) -> Path:
-        """Create and verify a copy at destination, returning that path.
-
-        The destination must not already exist. A failed copy removes the file
-        created by this call when possible; parent directories may remain.
-        """
-
-        def copy() -> Path:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            created = False
-            try:
-                with self.path_for(blob).open("rb") as source, destination.open("xb") as output:
-                    created = True
-                    shutil.copyfileobj(source, output, length=self.io_chunk_bytes)
-                # Verify the delivered bytes, including mutations during the copy.
-                self._verify(destination, blob)
-                return destination
-            except BaseException as error:
-                if created:
-                    try:
-                        destination.unlink(missing_ok=True)
-                    except OSError as cleanup:
-                        error.add_note(
-                            f"Failed export could not be removed: {destination}: {cleanup}"
-                        )
-                raise
-
-        return await self._file_work(copy)
+        """Deliver a verified copy without exposing a partially written destination."""
+        cancelled = threading.Event()
+        async with self.borrow_local(blob) as source:
+            return await self.execution.blocking(
+                deliver_file,
+                source,
+                destination,
+                digest=blob.digest,
+                length=blob.byte_length,
+                cancelled=cancelled.is_set,
+                on_cancel=cancelled.set,
+            )

@@ -1,7 +1,8 @@
 """Immutable user content and the precise sources of processing results."""
 
+import codecs
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -18,20 +19,44 @@ def is_text_media_type(media_type: str) -> bool:
     }
 
 
+def is_utf8_text_prefix(header: bytes) -> bool:
+    """Recognize the text prefix used by media inspection and content reading."""
+    if header.startswith(b"%PDF-"):
+        return False
+    try:
+        decoded = codecs.getincrementaldecoder("utf-8")().decode(header, final=False)
+    except UnicodeDecodeError:
+        return False
+    controls = sum(ord(char) < 32 and char not in "\r\n\t" for char in decoded)
+    return "\x00" not in decoded and controls <= len(decoded) // 100
+
+
 class ContentValue(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class ArtifactRef(ContentValue):
+    kind: Literal["artifact"] = "artifact"
     id: str
     identifier: str
     instance_id: str
 
 
 class ResultRef(ContentValue):
+    kind: Literal["result"] = "result"
     id: str
     identifier: str
     instance_id: str
+
+
+type ContentDependency = Annotated[ArtifactRef | ResultRef, Field(discriminator="kind")]
+
+
+class ResultOutputRef(ContentValue):
+    """Address a named output of one completed result."""
+
+    result: ResultRef
+    output: str = Field(min_length=1)
 
 
 class SourceSelection(ContentValue):
@@ -196,6 +221,7 @@ class ContentReadView(ContentValue):
     source: ContentSelection
     name: str
     media_type: str
+    detected_media_type: str | None = None
     byte_length: int
     body_text: str | None = None
     available_representations: tuple[ContentRepresentation, ...] = ()
@@ -206,6 +232,7 @@ class ContentReadView(ContentValue):
 class OriginSlice(ContentValue):
     origin: ContentSelection
     transform_ref: ResultRef | None = None
+    precision: Literal["identity", "atomic"] = "identity"
 
 
 class InputPart(ContentValue):
@@ -275,40 +302,54 @@ class InputGroup(ContentValue):
     context: SourceContext | None = None
 
 
-class TextInput(ContentValue):
-    """A file, text or artifact and its exact selection for text operations."""
+class InlineText(ContentValue):
+    kind: Literal["text"] = "text"
+    text: str
+    name: str | None = None
 
-    kind: Literal["file", "text", "artifact"]
-    path: str | None = None
-    text: str | None = None
-    artifact: ArtifactRef | str | None = None
+
+class ArtifactInput(ContentValue):
+    kind: Literal["artifact"] = "artifact"
+    artifact: ArtifactRef | str
     selection: SourceSelection = Field(default_factory=SourceSelection)
 
-    @model_validator(mode="after")
-    def matching_payload(self) -> TextInput:
-        payload = {"file": self.path, "text": self.text, "artifact": self.artifact}
-        if payload[self.kind] is None or any(
-            value is not None for key, value in payload.items() if key != self.kind
-        ):
-            raise ValueError("An input must contain exactly its declared payload")
-        return self
+
+class ResultOutputInput(ContentValue):
+    kind: Literal["result_output"] = "result_output"
+    result: ResultRef | str
+    output: str = Field(min_length=1)
+    selection: SourceSelection = Field(default_factory=SourceSelection)
 
 
-class InputSpec(TextInput):
-    role: SourceRole = "source"
-    slot_key: str | None = Field(default=None, min_length=1)
-    display_name: str | None = None
+class ExternalInput(ContentValue):
+    kind: Literal["external"] = "external"
+    key: str = Field(min_length=1)
+    selection: SourceSelection = Field(default_factory=SourceSelection)
+
+
+type SourceTarget = Annotated[
+    InlineText | ArtifactInput | ResultOutputInput | ExternalInput,
+    Field(discriminator="kind"),
+]
+type BodySpec = SourceTarget
+
+
+type OutputRole = Literal["primary", "auxiliary", "diagnostic"]
 
 
 class OutputContent(ContentValue):
     data: bytes
     media_type: str = "text/markdown"
     display_name: str = "result.md"
+    role: OutputRole = "primary"
+    representation_kind: str | None = None
 
 
 class ResultOutput(ContentValue):
     name: str
     artifact: ArtifactRef
+    role: OutputRole = "primary"
+    representation_kind: str | None = None
 
 
 class OutputMapping(ContentValue):
@@ -320,19 +361,105 @@ class OutputMapping(ContentValue):
     origins: tuple[ContentSelection, ...] = Field(min_length=1)
 
 
-class ProcessingResult(ContentValue):
-    ref: ResultRef
-    operation: str
-    inputs: tuple[InputGroup, ...]
-    outputs: tuple[ResultOutput, ...]
+class ModelProducer(ContentValue):
+    """The model route and provider response that produced the result."""
+
+    kind: Literal["model"] = "model"
+    provider: str
+    protocol: str
+    model_id: str
+    requested_model_name: str
+    returned_model_name: str | None = None
+    deployment_revision: str | None = None
+    request_id: str | None = None
+    generated_at: datetime | None = None
+    template_version: str | None = None
+    execution_signature: str | None = None
+    documentation_signature: str | None = None
+
+
+class ProgramProducer(ContentValue):
+    """A deterministic or local program responsible for the completed output."""
+
+    kind: Literal["program"] = "program"
+    operation: str = Field(min_length=1)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class UserProducer(ContentValue):
+    kind: Literal["user"] = "user"
+    author: str | None = None
+
+
+type ProducerFacts = Annotated[
+    ModelProducer | ProgramProducer | UserProducer, Field(discriminator="kind")
+]
+
+
+class ResultFacts(ContentValue):
+    """Facts known when a computation has completed, before adoption."""
+
+    operation: str = Field(min_length=1)
+    producer: ProducerFacts
+    selected_inputs: SelectedInputs
+    inputs: tuple[InputGroup, ...] = ()
+    request: dict[str, JsonValue] = Field(default_factory=dict)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    coverage: dict[str, JsonValue] = Field(default_factory=dict)
     mappings: tuple[OutputMapping, ...] = ()
-    dependencies: tuple[ArtifactRef | ResultRef, ...] = ()
-    producer: dict[str, JsonValue]
-    request: dict[str, JsonValue]
-    parameters: dict[str, JsonValue]
-    coverage: dict[str, JsonValue]
+    dependencies: tuple[ContentDependency, ...] = ()
     formed_at: datetime
+
+
+class ProcessingResult(ResultFacts):
+    ref: ResultRef
+    outputs: tuple[ResultOutput, ...]
     recorded_at: datetime
+
+
+class ResultOutputView(ResultOutput):
+    view: ContentReadView
+
+
+class ResultView(ResultFacts):
+    ref: ResultRef
+    outputs: tuple[ResultOutputView, ...]
+    recorded_at: datetime
+    request: dict[str, JsonValue] = Field(default_factory=dict)
+    source_views: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
+    input_views: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
+
+
+class ReadResult(ContentValue):
+    ref: str | ResultRef
+    details: bool = False
+    sources: bool = True
+
+
+class ReadSelections(ContentValue):
+    selections: tuple[ContentSelection, ...]
+    representations: Literal["existing", "none"] = "existing"
+
+
+class ReadArtifact(ContentValue):
+    ref: str | ArtifactRef
+    selection: SourceSelection = Field(default_factory=SourceSelection)
+    representations: Literal["existing", "none"] = "existing"
+
+
+class AcceptContent(ContentValue):
+    key: str = Field(min_length=1)
+    name: str | None = None
+
+
+class ExportContent(ContentValue):
+    ref: str | ArtifactRef
+
+
+class ExportOffer(ContentValue):
+    artifact_ref: ArtifactRef
+    suggested_name: str
+    media_type: str
 
 
 MediaStrategy = Literal["description_only", "direct_structured", "describe_then_structure"]

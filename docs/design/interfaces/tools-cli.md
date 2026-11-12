@@ -15,7 +15,6 @@ nous tools model list
 nous tools model discover gateway
 nous tools model probe vision --input ./photo.png
 nous tools model run --task summarize --input ./notes.md --show-request
-nous tools model recover --producer-key "<失败时返回的响应键>"
 nous tools model run --task summarize --input ./A.md --input ./B.md --question "比较发布日期"
 nous tools model run --task describe-media --input ./long-video.mp4 --per-batch
 nous tools prompt preview summarize --input ./notes.md
@@ -29,7 +28,6 @@ nous tools prompt restore summarize
 nous tools content add ./clip.mp4
 nous tools media inspect "<完整Artifact标识符>"
 nous tools media analyze "<完整Artifact标识符>" --strategy describe_then_structure
-nous tools media recover "<失败时返回的媒体请求标识符>"
 nous tools result read "<完整结果标识符>" --sources --details
 nous tools embedding run --space chosen-text --purpose document --input ./notes.md
 ```
@@ -38,9 +36,9 @@ nous tools embedding run --space chosen-text --purpose document --input ./notes.
 
 ## 返回、流与错误
 
-model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。结果 view/provenance 来自共同 owner。模型已成功而本地发布失败时，可用错误详情中的 `producer_key` 调用 model recover；该命令恢复并保存单个模型结果，重复调用返回同一结果。媒体分析失败时使用错误中的 `media_request_ref` 调用 media recover，继续未完成批次并保留原选区与阶段结果。转写完成而采用失败时，错误详情包含原始来源、响应键和持久恢复状态。
+model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。已完成的描述和转写保留正式引用；结构化失败后可用描述引用发起新的媒体分析。
 
-保留当前 CLI 的取消/总超时/部分成功信息。文本流直接交付；JSON 流为 NDJSON delta/completed/failed；completed 必须在正式采用后发出，失败信息保留 partial_output_delivered 和已完成引用。不要将普通 dict 全量挤成不可读的默认产品文案。
+CLI 保留取消、总超时和部分成功信息。文本流直接交付；JSON 流以 NDJSON 输出 text_delta 和已提交的 saved 事件，最后返回正常结果或错误。失败信息保留 partial_output_delivered 和已完成引用。
 
 独立样本生成和 New API 本地补丁不属于生产 tools，它们继续在自己的开发位置使用。
 
@@ -50,9 +48,9 @@ model run、media analyze 和 result read 的普通输出显示有名正文与�
 
 参数解析错误也遵守 --json 的结构化错误和非零退出状态；无法归类的异常默认显示清楚的通用失败原因，--debug 展开原始异常链。实际操作错误另带 operation/trace 关联、失败阶段、尝试与部分结果。取消使用现有约定，不输出虚构成功。
 
-model run --show-request 写 stderr 后执行同一请求；纯 preview 只显示并结束。--json --stream 保持 NDJSON delta/completed/failed，completed 在正式采用后发出。帮助文案说明混合 --input/--text 的既定顺序。
+model run --show-request 写 stderr 后执行同一请求；纯 preview 只显示并结束。--json --stream 使用共同事件与最终结果，saved 在正式采用后发出。帮助文案说明混合 --input/--text 的既定顺序。
 
-model run 与 prompt preview 的 `--per-batch` 显式要求各批独立回答；默认多个输入共同参与一次任务，见 [输入规划](../models/input-planning.md)。Embedding run 的多批结果显示有序完整行和成功引用。诊断用法见 [操作诊断](diagnostics.md)。
+model run 与 prompt preview 的 `--per-batch` 显式要求各批独立回答；默认多个输入共同参与一次任务，见 [输入规划](../models/input-planning.md)。media analyze 可用 `--per-batch` 独立处理所选范围，也可重复传入 `--range 0:10 --range 30:40` 指定以秒计的独立片段，或使用 `--range pages:2-4,6` 指定页选区。每个范围产生独立结果。Embedding run 的多批结果显示有序完整行和成功引用。诊断用法见 [操作诊断](diagnostics.md)。
 
 ## 已有管理与持续读取
 

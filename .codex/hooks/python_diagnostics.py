@@ -42,8 +42,12 @@ def generated_stub_rules() -> tuple[GeneratedStubRule, ...]:
             raise ValueError("Each generated-stubs rule must be a TOML table")
         rule = cast(dict[str, object], value)
         paths, marker = rule.get("paths"), rule.get("marker")
-        if not isinstance(paths, list) or not paths or not all(
-            isinstance(pattern, str) and pattern for pattern in cast(list[object], paths)
+        if (
+            not isinstance(paths, list)
+            or not paths
+            or not all(
+                isinstance(pattern, str) and pattern for pattern in cast(list[object], paths)
+            )
         ):
             raise ValueError("generated-stubs paths must be a nonempty list of glob strings")
         if not isinstance(marker, str) or not marker:
@@ -56,7 +60,9 @@ def generated_stub(path: Path, rules: tuple[GeneratedStubRule, ...]) -> bool:
     if path.suffix != ".pyi":
         return False
     relative = PurePosixPath(path.relative_to(ROOT).as_posix())
-    matching = [rule for rule in rules if any(relative.full_match(pattern) for pattern in rule.paths)]
+    matching = [
+        rule for rule in rules if any(relative.full_match(pattern) for pattern in rule.paths)
+    ]
     if not matching:
         return False
     with path.open("rb") as stream:
@@ -77,7 +83,7 @@ def generated_stub(path: Path, rules: tuple[GeneratedStubRule, ...]) -> bool:
                 docstring_seen = True
             else:
                 break
-    except (tokenize.TokenError, SyntaxError, UnicodeError):
+    except tokenize.TokenError, SyntaxError, UnicodeError:
         return False
     provenance = "\n".join(comments).encode("utf-8")
     return any(rule.marker in provenance for rule in matching)
@@ -132,7 +138,9 @@ def main() -> None:
     rules = generated_stub_rules() if files else ()
     files = [path for path in files if not generated_stub(path, rules)]
     configuration = ROOT / "pyproject.toml"
-    settings_digest = hashlib.sha256(configuration.read_bytes() if configuration.is_file() else b"").digest()
+    settings_digest = hashlib.sha256(
+        configuration.read_bytes() if configuration.is_file() else b""
+    ).digest()
     current = {
         str(path.relative_to(ROOT)): hashlib.sha256(settings_digest + path.read_bytes()).hexdigest()
         for path in files
@@ -158,7 +166,10 @@ def main() -> None:
     selected_paths = {(ROOT / name).resolve() for name in selected}
     messages: list[str] = []
     for label, command in (
-        ("Python syntax", [str(ruff), "check", "--no-cache", "--no-fix", "--select", "E9", *selected]),
+        (
+            "Python syntax",
+            [str(ruff), "check", "--no-cache", "--no-fix", "--select", "E9", *selected],
+        ),
         ("Python types", [str(pyright), "--outputjson", *selected]),
     ):
         result = subprocess.run(

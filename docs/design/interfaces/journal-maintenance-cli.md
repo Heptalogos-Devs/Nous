@@ -19,7 +19,8 @@ nous journal diff "jrn(…)@2" "jrn(…)@3"
 nous journal history "jrn(…)"
 nous journal draft read "drf(…)"
 nous journal draft adopt "drf(…)"
-nous journal draft recover "res(…)"
+nous journal draft revise "drf(…)" --file complete.md
+nous journal draft from-result "res(…)"
 nous journalize --source "note(…)" --source "art(…)" --topic "新篇主题"
 ```
 
@@ -27,7 +28,7 @@ nous journalize --source "note(…)" --source "art(…)" --topic "新篇主题"
 
 patch/edit/replace 不发语言请求。rewrite 是明确全文操作，journalize 不再接受已有 Journal 或 target。无需让每项人工编辑走提案审批；需要提案的自然语言操作可 --save 直接接续采用。
 
-生成后的解释或草稿保存失败时，错误包含 writing_request_ref。使用 `journal draft recover` 传入该结果引用，按原基准、来源和采用选择继续。
+模型成果已保存而后续草稿组装失败时，使用错误中的成果引用执行 `journal draft from-result`，重新进行本地组装。
 
 `--changes` 文件是 TextChange 数组，每项通过 `action` 指定 `replace_quote`、`insert_before`、`insert_after` 或 `replace_selection`；`scope` 或 `selection` 使用读取到的精确正文选区或块引用。字段与坐标见[精确编辑](../cognition/exact-editing.md)。
 
@@ -65,7 +66,7 @@ JSON 中保留 title=null 和 kind，不能把当前终端语言写入持久数�
 
 ## 已保存但未完成的进程退出
 
-明确要求或已启用的维护发生失败时，CLI 先输出包含已保存引用和阶段错误的正常结果，退出码为 3。正常 defer/pending 返回 0；主操作失败沿现有失败退出码。`--json` 同样输出 RecordOutcome，不在 JSON 前后插入说明。宿主调用直接处理类型化 status，无 CLI 退出语义。
+明确要求或已启用的维护发生失败时，CLI 先输出包含已保存引用和阶段错误的正常结果，退出码为 3。正常 defer 返回 not_requested 和退出码 0；主操作失败沿现有失败退出码。`--json` 同样输出 RecordOutcome，不在 JSON 前后插入说明。宿主调用直接处理类型化结果，无 CLI 退出语义。
 
 这个区别让自动调用者不会把已保存误判为未保存而重做 journalize，也不会忽略维护失败。重新尝试时调用标注/refresh 或提案采用的正式操作，不能重做已经提交的正文。
 
@@ -86,7 +87,7 @@ Path("edits.json").write_text(
 
 patch/replace 的 `--sources` 接收 SourceChanges JSON（preserve、add、remove）。缺省保留旧目录；add 只列新增 SourceBinding，remove 列旧键。replace --source 等逻辑来源在同一操作内分配不与旧目录冲突的 N 槽；--clear-sources 明确清空目录，正文仍必须通过真实引用校验。
 
-`journal draft adopt --file complete.md [--sources source-changes.json]` 是显式全篇覆盖。来源变更须伴随完整 Markdown；草稿读取默认显示生成差异，--body 读取原生成全文，已采用的人工覆盖另标 adopted_as=override。
+`journal draft revise "drf(…)" --file complete.md [--sources source-changes.json]` 保存修改后的完整新草稿；随后使用返回的草稿引用执行 adopt。草稿读取默认显示差异，--body 读取完整正文。
 
 revise/rewrite 的 --intent correction 明确按更正采用；省略时是普通 edit，不按意见词汇推断更正。
 

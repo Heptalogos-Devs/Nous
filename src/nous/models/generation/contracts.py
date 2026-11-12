@@ -2,37 +2,78 @@
 
 from __future__ import annotations
 
-import copy
-import hashlib
-import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from nous.content.contracts import (
     Artifact,
-    ArtifactRef,
-    InputGroup,
+    ContentValue,
+    ExternalInput,
     OutputContent,
-    OutputMapping,
-    ProcessingResult,
+    ResultFacts,
     ResultRef,
     SelectedInputs,
+    SourceTarget,
 )
-from nous.content.results import PreparedOutputs
 
-from ..contracts import GenerationResult, ReadingInput
+from ..contracts import ReadingInput
 from ..input import InputPlan
 from ..requests import FrozenTask
-from .computation import FrozenLanguageTask
 
 
-def schema_request_value(schema: dict[str, JsonValue] | None) -> str | None:
-    """Represent the complete schema in the order supplied to the model."""
-    if schema is None:
-        return None
-    return json.dumps(schema, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+class PromptText(ContentValue):
+    type: Literal["text"]
+    text: str
+
+
+class PromptMedia(ContentValue):
+    type: Literal["media"]
+    media_type: str
+    bytes: int = Field(ge=0)
+    source_key: str
+    metadata: dict[str, JsonValue]
+
+
+type PromptPart = Annotated[PromptText | PromptMedia, Field(discriminator="type")]
+
+
+class PromptMessage(ContentValue):
+    role: Literal["system", "user", "assistant"]
+    content: tuple[PromptPart, ...]
+
+
+class GenerationRequestFacts(ContentValue):
+    """The actual model-visible task, prompt, schema and selected route."""
+
+    task: str
+    contract_id: str
+    prompt_id: str
+    question: str
+    instructions: str
+    messages: tuple[PromptMessage, ...]
+    output_schema: dict[str, JsonValue] | None = Field(default=None, alias="schema")
+    model_id: str
+    requested_model_name: str
+    parameters: dict[str, JsonValue]
+    output_mode: str
+    max_output_tokens: int = Field(gt=0)
+    attempt_reports: tuple[dict[str, JsonValue], ...] = ()
+    structured_repairs: int = Field(default=0, ge=0)
+    repair_feedbacks: tuple[dict[str, JsonValue], ...] = ()
+
+
+class TranscriptionRequestFacts(ContentValue):
+    """The actual transcription request; audio bytes remain in the input artifact."""
+
+    task: str
+    filename: str
+    bytes: int = Field(ge=0)
+    language: str | None = None
+    hint: str | None = None
+    attempt_reports: tuple[dict[str, JsonValue], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -40,107 +81,62 @@ class PreparedRun:
     artifacts: tuple[Artifact, ...]
     frozen: FrozenTask
     input_plan: InputPlan
-    preparations: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class GenerationOutcome:
-    artifacts: tuple[Artifact, ...]
-    results: tuple[ProcessingResult, ...]
-    coverage: dict[str, JsonValue]
-    preparations: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ProducedTask:
-    """A successful language computation whose named outputs can be adopted without another call."""
-
-    operation: str
-    producer: dict[str, JsonValue]
-    actual_inputs: tuple[InputGroup, ...]
-    outputs: dict[str, OutputContent]
-    request: dict[str, JsonValue]
-    parameters: dict[str, JsonValue]
-    coverage: dict[str, JsonValue]
-    completed_stage_refs: tuple[str, ...]
-    selected_inputs: SelectedInputs | None = None
-    dependencies: tuple[ArtifactRef | ResultRef, ...] = ()
+    preparations: tuple[ResultRef, ...] = ()
 
 
 @dataclass(frozen=True)
 class GenerationRequest:
-    task: str | FrozenLanguageTask
+    task: str
     inputs: SelectedInputs
     question: str = ""
     instructions: str = ""
-    schema: dict[str, JsonValue] | None = None
-    mode: Literal["joint", "independent_batches"] = "joint"
-    dependencies: tuple[ArtifactRef | ResultRef, ...] = ()
-    document_mode: str = "auto"
+    output_schema: dict[str, JsonValue] | None = None
+    input_mode: Literal["joint", "independent"] = "joint"
+    document_mode: Literal["auto", "text", "visual"] = "auto"
     without_audio: bool = False
-    context: tuple[InputGroup, ...] = ()
-
-    def capture(self) -> GenerationRequest:
-        """Detach the request from caller-owned values before an operation waits."""
-        return copy.deepcopy(self)
-
-    def identity(self) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                {
-                    "task": self.task
-                    if isinstance(self.task, str)
-                    else self.task.model_dump(mode="json"),
-                    "inputs": self.inputs.identity(),
-                    "question": self.question,
-                    "instructions": self.instructions,
-                    "schema": schema_request_value(self.schema),
-                    "mode": self.mode,
-                    "dependencies": [ref.model_dump(mode="json") for ref in self.dependencies],
-                    "document_mode": self.document_mode,
-                    "without_audio": self.without_audio,
-                    **(
-                        {"context": [group.model_dump(mode="json") for group in self.context]}
-                        if self.context
-                        else {}
-                    ),
-                },
-                sort_keys=True,
-                ensure_ascii=False,
-            ).encode()
-        ).hexdigest()
+    stream: bool = False
 
 
 @dataclass(frozen=True)
-class PreparedProduction:
-    """Published outputs and their adoption facts, reusable after a transaction rollback."""
+class CompletedTask:
+    facts: ResultFacts
+    outputs: Mapping[str, OutputContent]
 
-    operation: str
-    producer: dict[str, JsonValue]
-    actual_inputs: tuple[InputGroup, ...]
-    outputs: PreparedOutputs
-    request: dict[str, JsonValue]
-    parameters: dict[str, JsonValue]
+
+class RunModel(ContentValue):
+    task: str
+    sources: tuple[SourceTarget, ...] = Field(min_length=1)
+    question: str = ""
+    instructions: str = ""
+    output_schema: dict[str, JsonValue] | ExternalInput | None = None
+    input_mode: Literal["joint", "independent"] = "joint"
+    document_mode: Literal["auto", "text", "visual"] = "auto"
+    without_audio: bool = False
+    stream: bool = False
+
+
+class PreviewPrompt(ContentValue):
+    prompt: str
+    sources: tuple[SourceTarget, ...] = ()
+    question: str = ""
+    instructions: str = ""
+    output_schema: dict[str, JsonValue] | ExternalInput | None = None
+    task: str | None = None
+    input_mode: Literal["joint", "independent"] = "joint"
+
+
+class ProbeModel(ContentValue):
+    model: str
+    source: SourceTarget | None = None
+
+
+class DiscoverModels(ContentValue):
+    provider: str
+
+
+class ModelOutcome(ContentValue):
+    results: tuple[ResultRef, ...]
     coverage: dict[str, JsonValue]
-    producer_key: str | None
-    dependencies: tuple[ArtifactRef | ResultRef, ...]
-    mappings: tuple[OutputMapping, ...]
-
-
-@dataclass(frozen=True)
-class PendingResponse:
-    """A successful response and any published bytes awaiting adoption."""
-
-    generated: GenerationResult
-    outputs: PreparedOutputs | None
-    reading: ReadingInput
-    inputs: tuple[InputGroup, ...]
-    identity: str
-    producer_key: str
-    frozen_task_ref: ArtifactRef | None
-    selected_inputs: SelectedInputs | None
-    dependencies: tuple[ArtifactRef | ResultRef, ...]
-    interpretation_contract: dict[str, JsonValue]
 
 
 @dataclass(frozen=True)

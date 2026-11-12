@@ -13,13 +13,14 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import RowMapping
 
 from nous.common.errors import NousError
+from nous.common.identifier import new_identifier
 from nous.storage.database import WriteTx
 
 from . import schema
 from .contracts import (
-    PreparedSnapshot,
+    BuiltProduct,
+    GroupDescriptor,
     SnapshotDescriptor,
-    SnapshotDraft,
     SnapshotOwner,
     SnapshotRef,
 )
@@ -39,35 +40,11 @@ class SnapshotRegistry:
     def __init__(self, instance_id: str) -> None:
         self.instance_id = instance_id
 
-    async def prepare_in(self, tx: WriteTx, prepared: SnapshotDraft) -> SnapshotDescriptor:
-        """Register exactly the prepared files and their dependencies in the caller's transaction."""
-        if prepared.ref.instance_id != self.instance_id:
-            raise NousError(
-                "wave.instance_mismatch", "Prepared snapshot belongs to another instance"
-            )
-        previous = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.snapshots, schema.collections.c.name)
-                    .join(
-                        schema.collections,
-                        schema.snapshots.c.collection_id == schema.collections.c.id,
-                    )
-                    .where(schema.snapshots.c.id == prepared.ref.id)
-                )
-            )
-            .mappings()
-            .one_or_none()
+    async def publish_in(self, tx: WriteTx, prepared: BuiltProduct) -> SnapshotDescriptor:
+        """Publish a complete build and all of its references in one transaction."""
+        ref = SnapshotRef(
+            instance_id=self.instance_id, id=str(uuid4()), identifier=new_identifier("wav")
         )
-        if previous is not None:
-            if (
-                previous["build_signature"] != prepared.build_signature
-                or previous["identifier"] != prepared.ref.identifier
-            ):
-                raise NousError(
-                    "wave.build_key_conflict", "Build key identifies a different captured view"
-                )
-            return self.descriptor(previous)
         await tx.connection.execute(
             insert(schema.collections)
             .values(id=str(uuid4()), name=prepared.view.name)
@@ -123,8 +100,8 @@ class SnapshotRegistry:
             )
         await tx.connection.execute(
             schema.snapshots.insert().values(
-                id=prepared.ref.id,
-                identifier=prepared.ref.identifier,
+                id=ref.id,
+                identifier=ref.identifier,
                 collection_id=collection_id,
                 manifest_artifact_id=prepared.view.manifest_artifact.id
                 if prepared.view.manifest_artifact
@@ -145,6 +122,7 @@ class SnapshotRegistry:
                         "name",
                         "owner",
                         "metadata",
+                        "groups",
                         "concepts",
                         "associations",
                         "support_groups",
@@ -152,15 +130,41 @@ class SnapshotRegistry:
                 },
                 owner=prepared.view.owner.model_dump(mode="json"),
                 metadata=prepared.view.metadata,
-                build_key=prepared.build_key,
-                build_signature=prepared.build_signature,
                 component_signature=prepared.component_signature,
                 graph_signature=prepared.graph_signature,
                 build_summary=prepared.summary,
                 created_at=prepared.created_at,
-                accepted=False,
             )
         )
+        declared_groups = {group.key: group for group in prepared.view.groups}
+        documents = {document.key: document for document in prepared.view.documents}
+        groups: dict[str, GroupDescriptor] = {}
+        for unit in prepared.units:
+            for candidate in unit.candidates:
+                key = cast(str, candidate["group_key"])
+                document_key = cast(str, candidate["document"])
+                groups.setdefault(
+                    key,
+                    declared_groups.get(key)
+                    or GroupDescriptor(
+                        key=key, document_key=document_key, title=documents[document_key].title
+                    ),
+                )
+        if groups:
+            await tx.connection.execute(
+                schema.snapshot_groups.insert(),
+                [
+                    {
+                        "snapshot_id": ref.id,
+                        "key": group.key,
+                        "ordinal": ordinal,
+                        "document_key": group.document_key,
+                        "title": group.title,
+                        "context": group.context,
+                    }
+                    for ordinal, group in enumerate(groups.values())
+                ],
+            )
         if prepared.units:
             await tx.connection.execute(
                 insert(schema.projection_units).on_conflict_do_nothing(
@@ -170,6 +174,11 @@ class SnapshotRegistry:
                     {
                         "signature": unit.signature,
                         "input_signature": unit.input_signature,
+                        "layout_signature": unit.layout_signature,
+                        "capture_stamp": unit.capture_stamp,
+                        "projection": unit.projection.model_dump(mode="json")
+                        if unit.projection is not None
+                        else None,
                         "document_key": unit.document_key,
                         "document": unit.document,
                         "roots": unit.roots,
@@ -183,7 +192,7 @@ class SnapshotRegistry:
                 schema.snapshot_members.insert(),
                 [
                     {
-                        "snapshot_id": prepared.ref.id,
+                        "snapshot_id": ref.id,
                         "ordinal": ordinal,
                         "unit_signature": unit.signature,
                     }
@@ -192,8 +201,9 @@ class SnapshotRegistry:
             )
             candidates = [
                 {
-                    "snapshot_id": prepared.ref.id,
+                    "snapshot_id": ref.id,
                     "key": candidate["key"],
+                    "group_key": candidate["group_key"],
                     "unit_signature": unit.signature,
                     "unit_index": index,
                     "row_index": row,
@@ -233,10 +243,13 @@ class SnapshotRegistry:
         if artifacts:
             await tx.connection.execute(
                 schema.snapshot_artifacts.insert(),
-                [{"snapshot_id": prepared.ref.id, "artifact_id": ref} for ref in sorted(artifacts)],
+                [
+                    {"snapshot_id": ref.id, "artifact_id": artifact_id}
+                    for artifact_id in sorted(artifacts)
+                ],
             )
         return SnapshotDescriptor(
-            ref=prepared.ref,
+            ref=ref,
             owner=prepared.view.owner,
             collection=prepared.view.name,
             captured_generation=prepared.view.generation,
@@ -247,35 +260,8 @@ class SnapshotRegistry:
             metadata=prepared.view.metadata,
         )
 
-    async def accept_in(self, tx: WriteTx, prepared: PreparedSnapshot) -> SnapshotDescriptor:
-        row = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.snapshots, schema.collections.c.name)
-                    .join(schema.collections)
-                    .where(schema.snapshots.c.id == prepared.ref.id)
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None or row["identifier"] != prepared.ref.identifier:
-            raise NousError("wave.snapshot_not_found", "Prepared snapshot does not exist")
-        if (
-            prepared.ref.instance_id != self.instance_id
-            or row["build_signature"] != prepared.build_signature
-        ):
-            raise NousError("wave.build_key_conflict", "Prepared snapshot identity differs")
-        if not row["accepted"]:
-            await tx.connection.execute(
-                schema.snapshots.update()
-                .where(schema.snapshots.c.id == prepared.ref.id)
-                .values(accepted=True)
-            )
-        return self.descriptor(row)
-
     async def promote_in(self, tx: WriteTx, ref: SnapshotRef) -> None:
-        """Point the owning collection to an already accepted snapshot."""
+        """Point the owning collection to a published snapshot."""
         if ref.instance_id != self.instance_id:
             raise NousError("wave.instance_mismatch", "Snapshot belongs to another instance")
         snapshot = (
@@ -283,7 +269,7 @@ class SnapshotRegistry:
                 await tx.connection.execute(
                     sa.select(
                         schema.snapshots.c.collection_id, schema.snapshots.c.identifier
-                    ).where(schema.snapshots.c.id == ref.id, schema.snapshots.c.accepted.is_(True))
+                    ).where(schema.snapshots.c.id == ref.id)
                 )
             )
             .mappings()
@@ -308,9 +294,7 @@ class SnapshotRegistry:
         if ref.instance_id != self.instance_id or not owner_kind or not owner_id:
             raise NousError("wave.invalid_reference", "Invalid snapshot retention reference")
         identifier = await tx.connection.scalar(
-            sa.select(schema.snapshots.c.identifier).where(
-                schema.snapshots.c.id == ref.id, schema.snapshots.c.accepted.is_(True)
-            )
+            sa.select(schema.snapshots.c.identifier).where(schema.snapshots.c.id == ref.id)
         )
         if identifier != ref.identifier:
             raise NousError("wave.snapshot_not_found", "Snapshot is no longer available")
@@ -362,7 +346,6 @@ class SnapshotRegistry:
                         schema.snapshots.c.identifier,
                         schema.snapshots.c.index_location,
                         schema.snapshots.c.collection_id,
-                        schema.snapshots.c.accepted,
                         schema.collections.c.current_snapshot_id,
                     )
                     .join(schema.collections)
@@ -377,20 +360,16 @@ class SnapshotRegistry:
             if (
                 ref.instance_id != self.instance_id
                 or ref.id not in by_id
-                or not by_id[ref.id]["accepted"]
                 or by_id[ref.id]["identifier"] != ref.identifier
             ):
                 raise NousError("wave.snapshot_not_found", "Retained snapshot does not exist")
         protected = set(protected) | {ref.id for ref in retain}
         protected.update(row["current_snapshot_id"] for row in rows)
-        protected.update(row["id"] for row in rows if not row["accepted"])
         protected.update(
             (await tx.connection.scalars(sa.select(schema.snapshot_references.c.snapshot_id))).all()
         )
         per_collection: dict[str, int] = {}
         for row in rows:
-            if not row["accepted"]:
-                continue
             count = per_collection.get(row["collection_id"], 0)
             if count < keep_recent:
                 protected.add(row["id"])
@@ -400,6 +379,7 @@ class SnapshotRegistry:
         if ids:
             for table in (
                 schema.snapshot_candidates,
+                schema.snapshot_groups,
                 schema.snapshot_members,
                 schema.snapshot_artifacts,
             ):

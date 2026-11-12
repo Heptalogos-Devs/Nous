@@ -650,7 +650,7 @@ modes = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
-question = "Can a durable job resume without sending a previously completed model request again?"
+question = "How can a saved model result be read or used for a new draft after an interruption?"
 modes = ["hybrid", "dense", "lexical"]
 top_k = 8
 

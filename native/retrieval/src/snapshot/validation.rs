@@ -47,6 +47,7 @@ impl Input {
                 && c.group_rows.iter().all(|r| *r < c.group_keys.len() as u64)
                 && c.documents.len() == n
                 && c.titles.len() == n
+                && c.local.len() == n
                 && self.candidates.texts.len() == n
                 && c.documents.iter().all(|d| !d.is_empty()),
             "Candidate metadata/text length mismatch"

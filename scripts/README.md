@@ -2,7 +2,7 @@
 
 除了工作区设定和管理，工具按下面的结构放置。
 
-工作区设定是 `workspace.ps1`、`workspace.sh` 和 `workspace.py`。在仓库根目录用 `. ./scripts/workspace.ps1 env` 或 `source scripts/workspace.sh env` 配置当前 shell 并创建所需的 `temp/` 目录，不初始化检索工具。需要设置检索工具时，把 `env` 换成 `init`；它会安装缺失的工具、创建索引并更新用户的 Codex MCP 配置。省略参数仍默认执行 `init`。
+工作区设定入口是根目录的 `dev.ps1`、`dev.sh`，它们调用 `scripts/workspace.py`。在仓库根目录用 `. ./dev.ps1` 或 `source ./dev.sh` 配置当前 shell 并创建所需的 `temp/` 目录；省略参数默认执行 `env`，也可显式指定 `env`。需要设置检索工具时，显式传入 `init`；它会安装缺失的工具、创建索引并更新用户的 Codex MCP 配置。
 
 ## 结构
 

@@ -40,7 +40,6 @@ _LABELS = {
     "time": "Time",
     "models": "Models",
     "network": "Network",
-    "durable_execution": "Durable execution",
     "config_version": "Configuration version",
     "in_flight": "Operations in flight",
     "bindings": "Persistent bindings",

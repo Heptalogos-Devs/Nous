@@ -16,7 +16,7 @@ TaskDefinition 管理输入输出类型及引用规则。system/user/assistant �
 
 根操作开始时捕获其所有计划内任务资源，内容、manifest、literal include/extends 和输入输出合同共同确定版本。Jinja 使用 DictLoader 冻结本次实际内容、StrictUndefined、已配置编译缓存和 bytecode cache。后续阶段与 fallback 使用同一份已捕获资源。
 
-输入正文只作为值插入一次，原文中的模板符号原样保留。动态文件名 include 本轮不支持。模板修改影响下一次普通根操作。已排队任务使用 GenerationOperations.freeze_language_task 发布的正式 FrozenLanguageTask；其中保留 manifest、实际模板及 include/import 内容，load_language_task 在当前 Runtime 核验资源绑定后恢复，既有任务继续使用接受时的模板。冻结保存与资源绑定详见[成功计算恢复](durable-computation.md)。
+输入正文只作为值插入一次，原文中的模板符号原样保留。动态文件名 include 本轮不支持。一次调用使用其取得的模板与配置，模板修改影响下一次调用。已保存成果包含实际请求和必要模板信息，读取无需旧模板。
 
 ## 共同编译
 

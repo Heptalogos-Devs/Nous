@@ -60,6 +60,19 @@ class ConfigurationOperations:
         return self._configuration.snapshot
 
     @property
+    def configuration(self) -> Configuration:
+        """The configuration owner used by the application composition root."""
+        return self._configuration
+
+    @property
+    def execution(self) -> ExecutionManager:
+        return self._execution
+
+    @property
+    def paths(self) -> ResolvedPaths:
+        return self._paths
+
+    @property
     def version(self) -> int:
         return self._configuration.version
 

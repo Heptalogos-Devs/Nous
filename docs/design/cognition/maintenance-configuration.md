@@ -18,7 +18,7 @@ journalize adoption、模型/媒体技术限额、具体检索通道、正文分
 
 模板说明由 prompt.toml 和 TaskDefinition 拥有，实际模型资源仍由 tasks 配置引用；不在 cognition 定义 Provider 客户端或备用列表副本。
 
-保存后维护的执行方式与 Job 队列参数见[持久维护配置](../foundation/durable-configuration.md)。任务在登记时冻结所需策略，运行资源及上限继续由当前 Runtime 持有。
+保存后维护的执行方式见[提交后维护](durable-maintenance.md)。后台并发上限由当前 Runtime 的 `execution.max_background_tasks` 控制。
 
 ## 字段信息
 

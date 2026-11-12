@@ -61,11 +61,11 @@ create/replace/apply 的语义验证进入同一 WrittenRecords；patch 不另�
 
 ## 来源映射继承
 
-`SourceChanges(preserve=True, add=(), remove=())` 负责目录合并：省略时沿用全部旧绑定；add 仅列新增 SourceBinding；remove 列确切旧键；preserve=False 明确清空旧目录再加入 add。新增重复键、未知移除键和移除后正文仍残留的真实 source 链接都会失败。调用者不需要为增加或移除一项来源重新提供整个旧目录。手工 apply/replace 和 DraftOverride.source_changes 使用同一值与合并能力。
+`SourceChanges(preserve=True, add=(), remove=())` 负责目录合并：省略时沿用全部旧绑定；add 仅列新增 SourceBinding；remove 列确切旧键；preserve=False 明确清空旧目录再加入 add。新增重复键、未知移除键和移除后正文仍残留的真实 source 链接都会失败。手工 apply/replace 和 ReviseDraft 使用同一值与合并能力。
 
 `CitationContext` 在准备修改时固定：base_revision、原 source-key→精确来源映射、本次新来源、允许编辑范围。旧正文中的 key 原样可解释，不让模型重新为未改动内容编号。
 
-给新材料分配与旧键不冲突的局部根键（N1、N2…）；共同 InputPlan 保留显式根键，媒体分片可以追加已有 C/P 等子键。使用实际成功路线最终提供的键与表示，不能使用未提交的备用路线映射。输入键能力是共同 InputSpec 的正式字段，所有消费者使用同一个解析位置。
+给新材料分配与旧键不冲突的局部根键（N1、N2…）；共同 SelectedInputs 和 InputPlan 保留来源槽，媒体分片可以追加已有 C/P 等子键。使用实际成功路线最终提供的键与表示。
 
 基准正文以 revision_base 输入，保存编辑血缘；它不增加独立事实见证。未改动部分沿用原 bindings。新材料加入引用目录，实际引用与明确 current_basis 各自保存；读过的材料始终保留在 ProcessingResult 中，不用引用数量推断独立支持。
 
@@ -91,9 +91,9 @@ recorded 由提交写入。排版和文字编辑默认保留原 formed；调用�
 
 ## 来源槽与不连续来源的完整迁移
 
-共同输入增加 `InputSpec.slot_key: str | None`，缺省由 planner 分配 S1/S2；`InputGroup.slot_key` 持有它，`InputGroup.key` 是本次实际显示键。同一逻辑来源的多个离散 InputSpec 可以共享 slot_key，planner 分配 F1/F2 子键并拒绝同槽不同角色；媒体分片、转写、任务特有分块和备用路线完整保留 slot_key；例如 key=N1:P3 仍明确属于 slot_key=N1。表示如何命名不决定来源归属，消费者不得 split 冒号来恢复关系。根键与所有实际组键的唯一性由共同 planner 检查。
+`SelectedSource.slot_key` 标识逻辑槽，`InputGroup.slot_key` 保留它，`InputGroup.key` 是本次实际显示键。同槽的多个离散选区使用 F1/F2 子键；媒体分片、转写、任务特有分块和备用路线完整保留 slot_key。例如 key=N1:P3 属于 slot_key=N1；消费者不解析冒号恢复来源归属。
 
-SourceBinding 的正式目标收敛为 `selections: tuple[ContentSelection, ...]`，普通单来源也是长度一的同一形状。保留 key、owner_revision?、usage、name。多个不连续实际源片段分别保存，不能以最小起点和最大终点扩大。所有 targets 需要属于声明的精确认知正文时逐个核对。`CitationContext` 另保留调用者选定的范围；实际阅读覆盖以 ProducedTask.actual_inputs 及其 origins 为准，不把 requested 范围冒充 observed 覆盖。
+SourceBinding 的正式目标为 `selections: tuple[ContentSelection, ...]`，普通单来源也是长度一的同一形状。保留 key、owner_revision?、usage、name。多个不连续实际源片段分别保存，不能以最小起点和最大终点扩大。所有 targets 需要属于声明的精确认知正文时逐个核对。`CitationContext` 保留调用者选定的范围；实际阅读覆盖以 ResultFacts.inputs 及其 origins 为准。
 
 持久来源使用 `revision_sources` 保存有序 source group，`revision_source_targets` 按组和 ordinal 保存每项 ContentSelection。迁移 `contracts/schema/reading/records/drafts/feedback/basis/capture/projection` 和 JSON 示例、CLI 反序列化；删除原单 ContentSelection 字段的读写分支。Content InputGroup 表同步持久 slot_key，ResultStore 读写使用新正式定义。已授权开发实例按当前表结构重建；无内部旧格式兼容。
 
@@ -103,8 +103,8 @@ SourceBinding 的正式目标收敛为 `selections: tuple[ContentSelection, ...]
 
 ## 小型任务输入的具体准备
 
-`propose_edit(scopes=None)` 使用基准 TextView 的完整根块作为 T1/T2 目标；给了 scopes 就只开放这些选区。一个目标的实际内容通过 InputSpec(role="edit_target", slot_key="T1", artifact=..., selection=...) 进入共同 InputPlan；必要的其它块使用只读 context 角色。重复正文不再以“全文＋全部块”发送两遍。
+`EditDraftRequest` 明确给出基准和允许编辑的选区。每个目标通过 SelectedSource 的 edit_target 角色和局部槽进入共同 InputPlan；必要的其它材料使用只读 context 角色。完整基准由后续程序组装使用。
 
-TaskDefinition 从 ReadingInput 中的 edit_target 分组读取程序保存的精确 ContentSelection。模型输出 target 只匹配这些键；outputs 阶段调用 `resolve_edits(body, target_map, proposal)` 和 `apply_resolved_edits`，生成 output（组装 Markdown）、edits（规范变更）与 diff（展示）三个有名产物。原始模型响应沿现有 ResultStore 请求/响应产物保存，不用另一个 LLM 重写结果。所需引用目录由 WritingOperations 传入既有 instructions/user 材料槽，正式编辑坐标保留在程序输入值，不写进 system 指令。
+TaskDefinition 从实际 edit_target 分组读取精确 ContentSelection；模型输出 target 只匹配这些键。模型结果先保存结构化编辑提案，再由写作 owner 根据完整基准调用共同编辑算法，形成 `writing.compose` 结果与完整草稿。正式编辑坐标保留在程序输入值。
 
 用户要求改动超出允许范围时只返回实际可应用部分或空 edits；不能通过静默扩大范围完成。调用者需要全文自由组织时使用 rewrite。

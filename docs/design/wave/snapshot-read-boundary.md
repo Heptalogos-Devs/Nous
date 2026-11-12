@@ -8,7 +8,9 @@
 
 ```python
 async def describe(ref: str | SnapshotRef) -> SnapshotDescriptor: ...
-async def describe_candidates(ref: SnapshotRef, keys: Sequence[str]) -> tuple[CandidateDescriptor, ...]: ...
+async def describe_candidates(
+    ref: SnapshotRef, keys: Sequence[str]
+) -> tuple[CandidateDescriptor, ...]: ...
 ```
 
 describe 只读取所需元数据。owner 与 metadata 保存为快照独立列，collection 名由集合表取得；current 与 describe 不加载 Native 或候选单元。
@@ -19,9 +21,9 @@ typed SnapshotRef 核验 instance/id/identifier；cognition owner 核验 namespa
 
 ## 反馈路径
 
-FeedbackOperations.record_query 接收正式 QueryResult，校验真实 snapshot、实际 selected_context、delivery 及 target。一次调用 describe + 一次 describe_candidates，候选较多也不逐项查询。绑定已知 exact revision/selection 时由共同认知来源能力保留 RevisionSelection。
+FeedbackOperations.record_query 接收正式 QueryResult，校验真实 snapshot、实际 selected_context、各组交付片段及 target。候选与组分别批量读取；绑定已知 exact revision/selection 时保留 RevisionSelection。
 
-持久 feedback 的 `QueryFeedback` 保存 QueryContext、交付顺序和操作关联，目标继续使用精确修订/选区；同一事务登记对原快照的正式保留引用。未交付候选不被推成负反馈。
+持久 feedback 的 `QueryFeedback` 保存 QueryContext、操作关联、所选组排名依据及实际交付候选，目标使用精确修订/选区；同一事务登记对原快照的正式保留引用。未交付候选不被推成负反馈。
 
 保留 category/value/comment 与 accuracy/agreement/usefulness/retrieval 的含义。普通意见不调用模型、不改文稿、不推进 generation。明确更正通过文稿 owner 并与 resolution 同事务提交。
 

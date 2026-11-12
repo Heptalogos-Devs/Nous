@@ -4,12 +4,13 @@ from typing import Literal
 
 from pydantic import Field, JsonValue
 
-from nous.content.contracts import ContentSelection
+from nous.content.contracts import ExternalInput
 from nous.wave.contracts import (
     CandidateFilter,
-    CandidateRef,
     ContextFragment,
+    PassageDelivery,
     QueryCue,
+    RankEvidence,
     SearchCoverage,
     SelectedContext,
     SnapshotRef,
@@ -18,6 +19,7 @@ from nous.wave.contracts import (
 from ..contracts import (
     CognitiveValue,
     Namespace,
+    NamespaceSelector,
     RecordRevisionRef,
     RevisionSelection,
     SourceBinding,
@@ -27,20 +29,45 @@ Mode = Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dt
 SearchMode = Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
 
 
+class CognitiveGroupContext(CognitiveValue):
+    revision_ref: RecordRevisionRef
+    kind: Literal["note", "journal"]
+    purpose: str | None
+    sources: tuple[SourceBinding, ...]
+    needs_review: bool
+
+
 class CognitiveQuery(CognitiveValue):
     text: str = ""
-    namespace: str | None = None
+    namespace: NamespaceSelector = None
     mode: Mode | None = None
-    snapshot: str | None = None
+    snapshot: str | SnapshotRef | None = None
     top_k: int | None = Field(default=None, ge=1)
     include_review: bool | None = None
     include_exploration: bool | None = None
     explain: bool = False
-    context: tuple[ContextFragment, ...] = ()
+    context: tuple[ContextFragment, ...] | ExternalInput = ()
     core_concepts: tuple[str, ...] = ()
     cues: tuple[QueryCue, ...] = ()
-    filters: CandidateFilter | None = None
+    filters: CandidateFilter | ExternalInput | None = None
     purpose: str | None = None
+
+
+class RefreshRetrieval(CognitiveValue):
+    namespace: NamespaceSelector = None
+    mode: Mode | None = None
+    include_review: bool | None = None
+    include_exploration: bool | None = None
+
+
+class RefreshResult(CognitiveValue):
+    namespace: Namespace
+    snapshot: SnapshotRef
+    captured_generation: int | None
+    current_generation: int
+    profile: str | None
+    metadata: dict[str, JsonValue]
+    current: bool
 
 
 class QueryContext(CognitiveValue):
@@ -60,46 +87,18 @@ class QueryContext(CognitiveValue):
     purpose: str | None = None
 
 
-class SearchPassage(CognitiveValue):
-    candidate_ref: CandidateRef
+class RevisionPassage(CognitiveValue):
     selection: RevisionSelection
-    content: ContentSelection
-    origin_contents: tuple[ContentSelection, ...] = Field(min_length=1)
-    passage_contents: tuple[ContentSelection, ...] = Field(min_length=1)
-    matched_fields: tuple[Literal["title", "body"], ...]
-    passage_reason: Literal["body_match", "title_preview", "candidate_preview", "local_candidate"]
-    candidate_rank: int = Field(ge=1)
-    text: str
-    snippet: str
-    quality_score: float | None
-    ranking_score: float
-    score_kind: str
-    channels: tuple[str, ...]
-    evidence_roots: tuple[str, ...]
-    concept_refs: tuple[str, ...]
-    channel_ranks: dict[str, int]
-    channel_scores: dict[str, float]
-    details: dict[str, JsonValue] = Field(default_factory=dict)
+    delivery: PassageDelivery
 
 
-class SearchGroup(CognitiveValue):
+class CognitiveGroup(CognitiveValue):
     group_key: str
-    revision_ref: RecordRevisionRef
+    context: CognitiveGroupContext
     title: str | None
-    group_rank: int = Field(ge=1)
-    representative: CandidateRef
-    passages: tuple[SearchPassage, ...] = Field(min_length=1)
-    sources: tuple[SourceBinding, ...]
-    needs_review: bool
-
-
-class DeliveredSelection(CognitiveValue):
-    revision_ref: RecordRevisionRef
-    selection: RevisionSelection
-    candidate_ref: CandidateRef
-    content: ContentSelection
-    group_rank: int
-    candidate_rank: int
+    rank: int = Field(ge=1)
+    basis: RankEvidence
+    passages: tuple[RevisionPassage, ...]
 
 
 class QueryOperationContext(CognitiveValue):
@@ -111,8 +110,8 @@ class QueryOperationContext(CognitiveValue):
 class QueryResult(CognitiveValue):
     context: QueryContext
     namespace: Namespace
-    groups: tuple[SearchGroup, ...]
-    delivery: tuple[DeliveredSelection, ...]
+    current: bool
+    groups: tuple[CognitiveGroup, ...]
     coverage: SearchCoverage
     operation_context: QueryOperationContext
     score_kind: str

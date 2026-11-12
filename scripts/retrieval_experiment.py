@@ -14,16 +14,31 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
-from nous.cognition import AfterWrite, CognitiveQuery, SourceRequest
+from nous.application.inputs import FileInput
+from nous.cognition.annotation.contracts import AnnotateRecord
+from nous.cognition.annotation.operations import ANNOTATE_RECORD
 from nous.cognition.contracts import RecordRevisionRef
-from nous.cognition.retrieval.contracts import QueryResult
-from nous.cognition.writing.contracts import DraftOverride
+from nous.cognition.retrieval.contracts import CognitiveQuery, QueryResult
+from nous.cognition.retrieval.operations import QUERY
+from nous.cognition.writing.contracts import (
+    AddNote,
+    AdoptDraft,
+    AfterWrite,
+    NewDraftRequest,
+    ReadDraft,
+    ReplaceRecord,
+    ReviseDraft,
+    SourceChoice,
+)
+from nous.cognition.writing.generation import READ_DRAFT, REVISE_DRAFT, WRITE_DRAFT
+from nous.cognition.writing.operations import ADD_NOTE, ADOPT_DRAFT, REPLACE_RECORD
 from nous.common.errors import NousError
 from nous.content.citations import parse_citations
-from nous.content.contracts import ContentSelection, SourceSelection
+from nous.content.contracts import ExternalInput, InlineText, ReadResult, SourceSelection
+from nous.content.operations import READ_RESULT
 from nous.runtime.bootstrap import open_instance
 
-AFTER = AfterWrite(annotation="skip", retrieval="defer", execution="inline")
+AFTER = AfterWrite(annotation="skip")
 
 
 class Corpus(BaseModel):
@@ -168,9 +183,9 @@ def write_queries(output: Path, results: list[SearchResult]) -> None:
         for group in entry.result.groups:
             passage = group.passages[0]
             sections.append(
-                f"{group.group_rank}. **{group.title or '未命名'}** "
-                f"`{group.revision_ref.identifier}`\n\n"
-                f"   {passage.snippet}\n"
+                f"{group.rank}. **{group.title or '未命名'}** "
+                f"`{group.context.revision_ref.identifier}`\n\n"
+                f"   {passage.delivery.text}\n"
             )
     (output / "queries.md").write_text("\n".join(sections), encoding="utf-8")
 
@@ -197,8 +212,6 @@ async def run(args: argparse.Namespace) -> None:
         if not state:
             state = ExperimentState(instance_id=instance_id, namespace=args.namespace)
             save_json(state_path, state.model_dump(mode="json"))
-        cognition = await runtime.cognition(args.namespace)
-
         if args.command == "ingest":
             groups = [
                 ("text", selected_files(root, plan.corpus.text)),
@@ -220,7 +233,6 @@ async def run(args: argparse.Namespace) -> None:
                         previous = state.notes.get(name)
                         if previous and previous.digest == digest:
                             continue
-                        artifact = (await runtime.artifacts.ingest(path)).ref
                         literal = bool(parse_citations(body).citations)
                         if literal:
                             # Existing source links in imported material are literal text.
@@ -229,22 +241,32 @@ async def run(args: argparse.Namespace) -> None:
                             )
                             body = f"{fence}markdown\n{body}\n{fence}\n"
                         if previous:
-                            outcome = await cognition.records.replace(
-                                previous.ref,
-                                body,
-                                source_requests=[SourceRequest(target=artifact)],
-                                after=AFTER,
+                            outcome = await runtime.app.call(
+                                REPLACE_RECORD,
+                                ReplaceRecord(
+                                    target=previous.ref,
+                                    namespace=args.namespace,
+                                    body=InlineText(text=body),
+                                    sources=(SourceChoice(target=ExternalInput(key="original")),),
+                                    after=AFTER,
+                                ),
+                                inputs={"original": FileInput(path)},
                             )
                         else:
-                            outcome = await cognition.records.add_note(
-                                body,
-                                remember=True,
-                                title=name,
-                                source_requests=[SourceRequest(target=artifact)],
-                                after=AFTER,
+                            outcome = await runtime.app.call(
+                                ADD_NOTE,
+                                AddNote(
+                                    namespace=args.namespace,
+                                    body=InlineText(text=body),
+                                    remember=True,
+                                    title=name,
+                                    sources=(SourceChoice(target=ExternalInput(key="original")),),
+                                    after=AFTER,
+                                ),
+                                inputs={"original": FileInput(path)},
                             )
                         state.notes[name] = ImportedNote(
-                            digest=digest, ref=outcome.record.revision_ref, literal_markdown=literal
+                            digest=digest, ref=outcome.commit.revision_ref, literal_markdown=literal
                         )
                         save_json(state_path, state.model_dump(mode="json"))
                         print(f"{'已修订' if previous else '已导入'} {name}", flush=True)
@@ -265,28 +287,32 @@ async def run(args: argparse.Namespace) -> None:
             failures = 0
             for case in cases:
                 try:
-                    requests: list[SourceRequest] = []
-                    for source in case.sources:
+                    requests: list[SourceChoice] = []
+                    inputs: dict[str, FileInput] = {}
+                    for index, source in enumerate(case.sources):
                         name = source.path
                         note = state.notes.get(name)
                         if note and source.selection is None:
                             target = note.ref
                         else:
-                            artifact = (await runtime.artifacts.ingest(root / name)).ref
-                            target = (
-                                ContentSelection(artifact=artifact, selection=source.selection)
-                                if source.selection is not None
-                                else artifact
+                            key = f"source_{index}"
+                            inputs[key] = FileInput(root / name)
+                            target = ExternalInput(
+                                key=key, selection=source.selection or SourceSelection()
                             )
-                        requests.append(SourceRequest(target=target, usage=source.usage))
-                    outcome = await cognition.writing.journalize(
-                        requests, topic=case.topic, adoption="draft"
+                        requests.append(SourceChoice(target=target, usage=source.usage))
+                    outcome = await runtime.app.call(
+                        WRITE_DRAFT,
+                        NewDraftRequest(
+                            namespace=args.namespace, sources=tuple(requests), topic=case.topic
+                        ),
+                        inputs=inputs,
                     )
                     if outcome.draft is None:
                         print(f"无草稿 {case.name}: {outcome.status}", flush=True)
                         continue
-                    draft = outcome.draft
-                    result = await runtime.results.get(draft.result_ref)
+                    draft = await runtime.app.call(READ_DRAFT, ReadDraft(draft=outcome.draft))
+                    result = await runtime.app.call(READ_RESULT, ReadResult(ref=draft.result_ref))
                     state.drafts.append(
                         SavedDraft(
                             name=case.name,
@@ -296,7 +322,7 @@ async def run(args: argparse.Namespace) -> None:
                                 binding.model_dump(mode="json")
                                 for binding in draft.context.source_bindings
                             ],
-                            producer=result.producer,
+                            producer=result.producer.model_dump(mode="json"),
                             inputs=[group.model_dump(mode="json") for group in result.inputs],
                         )
                     )
@@ -310,19 +336,31 @@ async def run(args: argparse.Namespace) -> None:
                 raise SystemExit(1)
 
         elif args.command == "adopt":
-            override = (
-                DraftOverride(markdown=args.body.read_text(encoding="utf-8")) if args.body else None
+            draft_ref = args.ref
+            if args.body:
+                revised = await runtime.app.call(
+                    REVISE_DRAFT,
+                    ReviseDraft(
+                        draft=draft_ref,
+                        namespace=args.namespace,
+                        markdown=ExternalInput(key="body"),
+                    ),
+                    inputs={"body": FileInput(args.body)},
+                )
+                draft_ref = revised.ref.identifier
+            outcome = await runtime.app.call(
+                ADOPT_DRAFT,
+                AdoptDraft(
+                    draft=draft_ref, namespace=args.namespace, title=args.title, after=AFTER
+                ),
             )
-            outcome = await cognition.records.adopt(
-                args.ref, title=args.title, override=override, after=AFTER
-            )
-            identifier = outcome.record.revision_ref.identifier
-            state.adopted.append(AdoptedDraft(draft=args.ref, record=identifier))
+            identifier = outcome.commit.revision_ref.identifier
+            state.adopted.append(AdoptedDraft(draft=draft_ref, record=identifier))
             save_json(state_path, state.model_dump(mode="json"))
             print(f"已采用：{identifier}")
             if args.annotate:
-                annotation = await runtime.annotations.annotate(
-                    identifier, namespace=args.namespace
+                annotation = await runtime.app.call(
+                    ANNOTATE_RECORD, AnnotateRecord(target=identifier, namespace=args.namespace)
                 )
                 print(f"已采用标注：{annotation.model_dump_json()}")
 
@@ -374,8 +412,14 @@ async def run(args: argparse.Namespace) -> None:
                     write_queries(args.output, results)
                     continue
                 try:
-                    answer = await cognition.retrieval.query(
-                        CognitiveQuery(text=entry.question, mode=entry.mode, top_k=entry.top_k)
+                    answer = await runtime.app.call(
+                        QUERY,
+                        CognitiveQuery(
+                            namespace=args.namespace,
+                            text=entry.question,
+                            mode=entry.mode,
+                            top_k=entry.top_k,
+                        ),
                     )
                     results[index] = entry.model_copy(update={"result": answer, "error": None})
                     print(f"查询完成 {entry.mode}: {entry.question}", flush=True)

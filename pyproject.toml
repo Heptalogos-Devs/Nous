@@ -35,7 +35,6 @@ dependencies = [
   "httpx2[socks]>=2.16,<3",
   "openai>=3.42.1,<4",
   "markdown-it-py>=4.2,<5",
-  "dbos==3.4.0",
 ]
 
 [project.scripts]
@@ -65,15 +64,16 @@ cache-keys = [
   { file = "native/**/*.rs" }, { file = "src/**/*.py" },
   { file = "src/**/*.pyi" }, { file = "src/**/py.typed" },
   { file = "src/**/licenses/*" }, { file = "src/nous/models/resources/**/*" },
+  { file = "src/nous/presentation/locales/**/*" },
   { file = "src/nous_native/resources/*.json" },
 ]
 
 [tool.basedpyright]
 stubPath = "typings"
 extraPaths = ["src"]
-include = ["src", "tests/python", "scripts/check"]
+include = ["src", "tests", "scripts/check"]
 exclude = ["legacy", "temp", ".venv", "dist"]
-ignore = ["legacy", "temp"]
+ignore = ["legacy", "temp", "typings/pypdfium2"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportExplicitAny = "error"
@@ -89,13 +89,19 @@ extend-exclude = ["legacy", "temp", ".venv", "dist"]
 "scripts/temp/*.py" = "py39"
 
 [tool.ruff.lint]
+exclude = ["typings/pypdfium2"]
 select = ["E4", "E7", "E9", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nous", "nous_native"]
 
 [tool.ruff.lint.per-file-ignores]
 "*.pyi" = ["E701"]
+"typings/pypdfium2/**" = ["ALL"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/python"]
+testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra"
 cache_dir = "temp/cache/pytest"
 

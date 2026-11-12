@@ -66,13 +66,13 @@ Use Python 3.14 and uv. When running or building the project, first set up the d
 Linux / macOS:
 
 ```bash
-source scripts/workspace.sh env
+source ./dev.sh env
 ```
 
 Windows PowerShell:
 
 ```powershell
-. ./scripts/workspace.ps1 env
+. ./dev.ps1 env
 ```
 
 Install development dependencies with `uv sync --locked`. Product entry points are in [README.md](README.md); use `uv run --locked nous --help` or `uv run --locked nous tools --help` for command help.
@@ -103,16 +103,10 @@ Use the [temp management tool](scripts/temp/README.md) to create directories, vi
 
 ## Code and Reference Retrieval
 
-### Nous Source Code
-
 `src/nous/INDEX.md` owns the file, symbol and owner map; the `AGENTS.md` files state the constraints at each insertion point. When a `.codegraph/` index exists, use CodeGraph for symbols and code relationships; otherwise skip it. Use Zvec-grep for semantic and lexical discovery when available. See the [retrieval handbook](docs/agents/retrieval.md) for tool usage and reference projects.
 
 ```sh
 codegraph explore "<symbols or questions>"
 ```
 
-Refresh an existing index when needed. Initialize retrieval tools through `. ./scripts/workspace.ps1 init` or `source scripts/workspace.sh init` when the user requests setup; initialization installs tools, creates indexes and updates Codex MCP configuration. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.
-
-### Reference Implementations
-
-When retrieving reference implementations, read the [retrieval handbook](docs/agents/retrieval.md).
+Refresh an existing index when needed. Initialize retrieval tools through `. ./dev.ps1 init` or `source ./dev.sh init` when the user requests setup; initialization installs tools, creates indexes and updates Codex MCP configuration. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.

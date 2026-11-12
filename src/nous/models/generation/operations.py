@@ -1,70 +1,88 @@
-"""Complete generation, template preview and model probes over shared content plans."""
+"""Execute language tasks and adopt completed results."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
-from dataclasses import replace
-from pathlib import Path
+import json
 from typing import TYPE_CHECKING
-from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
+from nous.application.contracts import CallContext, LanguageEvents, TextDelta, define_operation
 from nous.common.errors import NousError
-from nous.common.operations import add_error_context, record_completed
+from nous.common.operations import add_error_context
 from nous.content.contracts import (
-    Artifact,
-    ArtifactRef,
-    InputSpec,
+    ExternalInput,
+    InlineText,
+    ModelProducer,
+    OutputContent,
     OutputMapping,
     ProcessingResult,
+    ResultFacts,
     ResultRef,
     SelectedInputs,
     SourceSelection,
 )
 from nous.content.results import ResultStore
-from nous.media.contracts import PreparedSource
-from nous.models.configuration import ModelRoute
+from nous.models.configuration import ModelRoute, PresetConfig, TaskAssignment
 from nous.runtime.execution import ExecutionManager
 
-from ..input import RequestGroup
-from ..requests import FrozenTask, PreparedGeneration, UnavailableTask
-from . import inspection
-from .computation import (
-    FrozenLanguageTask,
-    freeze_task,
-    load_task,
-)
+from ..contracts import ReadingInput
+from ..input import RoutePlan, SemanticUnit, materialize, plan_inputs
+from ..requests import FrozenTask, PreparedGeneration
 from .contracts import (
-    GenerationOutcome,
+    CompletedTask,
+    DiscoverModels,
     GenerationRequest,
-    PendingResponse,
-    PreparedProduction,
-    ProducedTask,
+    GenerationRequestFacts,
+    ModelOutcome,
+    PreviewPrompt,
+    ProbeModel,
+    RunModel,
 )
 from .preparation import GenerationPreparation
-from .response import ResponseRecovery
 from .transcription import TranscriptionOperations
 
 if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot
     from nous.media.preparation import MediaPreparer
-    from nous.storage.database import WriteTx
 
     from ..executor import ModelExecutor
 
-InputValue = InputSpec | Path | Artifact | ArtifactRef | str
+
+MODEL_RUN = define_operation(
+    "models.run",
+    request=RunModel,
+    result=ModelOutcome,
+    events=LanguageEvents,
+    description="Run a model task on selected sources and save its results.",
+)
+PROMPT_PREVIEW = define_operation(
+    "prompts.preview",
+    request=PreviewPrompt,
+    result=dict[str, JsonValue],
+    events=LanguageEvents,
+    description="Preview the prompt and selected input representations for a task.",
+)
+MODEL_PROBE = define_operation(
+    "models.probe",
+    request=ProbeModel,
+    result=ModelOutcome,
+    events=LanguageEvents,
+    description="Test a configured model with a small request.",
+)
+MODEL_DISCOVER = define_operation(
+    "models.discover",
+    request=DiscoverModels,
+    result=dict[str, JsonValue],
+    events=LanguageEvents,
+    description="Discover models offered by a configured provider.",
+)
 
 
 class GenerationOperations:
-    """Coordinate language preparation, execution and result adoption.
-
-    Only the active bounded request is materialized. Use ``produce`` when a
-    caller must combine a completed model output with its own adoption. Dependencies
-    are borrowed from the runtime.
-    """
+    """Interpret a language call once; the caller decides where to adopt its output."""
 
     def __init__(
         self,
@@ -79,543 +97,334 @@ class GenerationOperations:
             execution,
             preparer,
         )
-        self._computation_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
-        self._result_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
-        self.responses = ResponseRecovery(executor, results, execution, self._computation_locks)
+        self._transcription_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self.transcription = TranscriptionOperations(
-            executor, results, execution, self._computation_locks
+            executor, results, execution, self._transcription_locks
         )
         self.preparation = GenerationPreparation(
             executor, results, execution, preparer, self.transcription
-        )
-        self.accept_inputs = self.preparation.accept_inputs
-        self.prepare_input = self.preparation.prepare_input
-
-    async def freeze_language_task(
-        self,
-        task: str | FrozenTask,
-        snapshot: ConfigSnapshot,
-        *,
-        requires_transcription: bool = False,
-        inputs: SelectedInputs | None = None,
-        without_audio: bool = False,
-    ) -> FrozenLanguageTask:
-        frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-        if inputs is not None:
-            for fact in inputs.facts:
-                if fact.kind == "audio" and any(
-                    not any(fmt.startswith("audio/") for fmt in route.model.input_formats)
-                    for route in frozen.routes
-                ):
-                    requires_transcription = True
-                if (
-                    fact.kind == "video"
-                    and not without_audio
-                    and fact.details.get("has_audio")
-                    and any(
-                        not any(
-                            fmt.startswith(("video/", "audio/"))
-                            for fmt in route.model.input_formats
-                        )
-                        for route in frozen.routes
-                    )
-                ):
-                    requires_transcription = True
-        contract = (
-            self.executor.compiler.catalog.tasks[
-                frozen.resource.manifest.contract_id
-            ].execution_contract()
-            if frozen.resource
-            else {}
-        )
-        transcription = frozen.transcription
-        transcription_task = snapshot.values.media.audio.transcription_task
-        if (
-            requires_transcription
-            and transcription_task
-            and transcription_task != frozen.task
-            and frozen.assignment.operation != "transcription"
-            and transcription is None
-        ):
-            try:
-                prerequisite = self.executor.freeze(transcription_task, snapshot)
-            except NousError as error:
-                transcription = UnavailableTask(
-                    task=transcription_task,
-                    code=error.code,
-                    message=error.message,
-                    details=error.details,
-                    retryable=error.retryable,
-                )
-            else:
-                transcription_contract = (
-                    self.executor.compiler.catalog.tasks[
-                        prerequisite.resource.manifest.contract_id
-                    ].execution_contract()
-                    if prerequisite.resource
-                    else {}
-                )
-                transcription = (
-                    await freeze_task(self.results, prerequisite, snapshot, transcription_contract)
-                ).descriptor
-        return await freeze_task(self.results, frozen, snapshot, contract, transcription)
-
-    async def load_language_task(
-        self, ref: ArtifactRef | FrozenLanguageTask, snapshot: ConfigSnapshot
-    ) -> FrozenTask:
-        return await load_task(
-            self.results,
-            ref.descriptor if isinstance(ref, FrozenLanguageTask) else ref,
-            snapshot,
-            self.executor.compiler.catalog.tasks,
         )
 
     def capabilities(self, snapshot: ConfigSnapshot) -> dict[str, JsonValue]:
         tasks: dict[str, JsonValue] = {}
         for name in snapshot.values.tasks:
             try:
-                frozen = self.executor.freeze(name, snapshot)
+                task = self.executor.freeze(name, snapshot)
                 tasks[name] = {
                     "ready": True,
-                    "prompt": frozen.resource.id if frozen.resource else None,
-                    "routes": [route.model_id for route in frozen.routes],
+                    "prompt": task.resource.id if task.resource else None,
+                    "routes": [route.model_id for route in task.routes],
                 }
             except NousError as error:
                 tasks[name] = {"ready": False, "error": error.to_dict()}
         return {"tasks": tasks}
 
     def require_contract(self, task: str, contract: str, snapshot: ConfigSnapshot) -> None:
-        frozen = self.executor.freeze(task, snapshot)
-        if frozen.resource is None or frozen.resource.manifest.contract_id != contract:
+        resolved = self.executor.freeze(task, snapshot)
+        if resolved.resource is None or resolved.resource.manifest.contract_id != contract:
             raise NousError(
                 "model.task_contract_mismatch",
                 "Task uses another output contract",
                 details={"task": task, "expected_contract": contract},
             )
 
-    async def produce(
+    async def resolve_schema(
+        self, value: dict[str, JsonValue] | ExternalInput | None, call: CallContext
+    ) -> dict[str, JsonValue] | None:
+        """Read a caller-provided schema within this request's input deadline."""
+        if isinstance(value, ExternalInput):
+            selected = await call.inputs.read_text(
+                value.key, value.selection, call.settings.values.content.text_read_max_bytes
+            )
+            return TypeAdapter(dict[str, JsonValue]).validate_json(selected.data)
+        return value
+
+    async def compute(self, request: GenerationRequest, call: CallContext) -> CompletedTask:
+        """Complete one semantic task without persisting its output."""
+        if (
+            request.input_mode == "independent"
+            and sum(
+                len(source.selections)
+                for source in request.inputs.sources
+                if source.role != "context"
+            )
+            > 1
+        ):
+            raise NousError(
+                "model.single_computation_required", "Compute requires one semantic unit"
+            )
+        prepared = await self.preparation.prepare_input(
+            request.task,
+            request.inputs,
+            call.settings,
+            document_mode=request.document_mode,
+            without_audio=request.without_audio,
+            input_mode=request.input_mode,
+            unit=SemanticUnit("U1", request.inputs, request.input_mode),
+        )
+        if len(prepared.input_plan.route_plans) != 1:
+            raise NousError(
+                "model.single_computation_required", "Compute requires one semantic unit"
+            )
+        return await self._compute_group(
+            request,
+            prepared.frozen,
+            prepared.input_plan.route_plans[0],
+            call,
+            list(prepared.preparations),
+        )
+
+    async def _compute_group(
         self,
         request: GenerationRequest,
-        *,
-        computation_key: str,
-        snapshot: ConfigSnapshot,
-        on_delta: Callable[[str], None] | None = None,
-    ) -> ProducedTask:
-        """Restore an accepted response or perform one semantic language computation."""
-        request = request.capture()
-        lock = self._computation_locks.setdefault(computation_key, asyncio.Lock())
-        async with self.execution.keyed_operation("model.produce", lock, snapshot):
-            identity = request.identity()
-            accepted = await self.results.find_producer(computation_key + ":response")
-            if accepted is not None:
-                if accepted.parameters.get("request_identity") != identity:
-                    raise NousError(
-                        "content.producer_conflict",
-                        "Saved response belongs to a different language request",
-                        details={"producer_key": computation_key},
-                    )
-                await self.responses.forget(computation_key + ":response")
-                return await self.recover_response(accepted.ref, snapshot)
-            pending = await self.responses.pending_for(computation_key + ":response")
-            if pending is not None:
-                if pending.identity != identity:
-                    raise NousError(
-                        "content.producer_conflict",
-                        "Saved response belongs to a different language request",
-                        details={"producer_key": computation_key},
-                    )
-                return await self.responses.resume_in_lock(pending)
-            frozen = (
-                await self.load_language_task(request.task, snapshot)
-                if isinstance(request.task, FrozenLanguageTask)
-                else self.executor.freeze(request.task, snapshot)
-            )
-            prepared = await self.prepare_input(
+        frozen: FrozenTask,
+        group: RoutePlan,
+        call: CallContext,
+        completed: list[ResultRef],
+    ) -> CompletedTask:
+        async def resolve(route: ModelRoute | None = None) -> PreparedGeneration:
+            value = await self.preparation.prepare_group(
                 frozen,
-                request.inputs,
-                snapshot,
-                document_mode=request.document_mode,
-                without_audio=request.without_audio,
-                per_batch=request.mode == "independent_batches",
-            )
-            if len(prepared.input_plan.request_groups) != 1:
-                raise NousError(
-                    "model.single_computation_required",
-                    "This computation requires one semantic request group",
-                )
-            selected_inputs = prepared.input_plan.selected_inputs
-            task_ref = (
-                request.task
-                if isinstance(request.task, FrozenLanguageTask)
-                else await self.freeze_language_task(
-                    frozen, snapshot, inputs=selected_inputs, without_audio=request.without_audio
-                )
-            )
-            if isinstance(request.task, str):
-                retained = await self.load_language_task(task_ref, snapshot)
-                prepared = replace(
-                    prepared,
-                    frozen=replace(
-                        prepared.frozen,
-                        execution_limits=retained.execution_limits,
-                        media_settings=retained.media_settings,
-                        transcription=retained.transcription,
-                    ),
-                )
-            context_sources = tuple(
-                [
-                    PreparedSource(
-                        key=group.key,
-                        name=group.name,
-                        text="\n".join(
-                            [
-                                await self.results.artifacts.read_selection(part.content)
-                                for part in group.parts
-                            ]
-                        ),
-                        group=group,
-                        metadata={"representation": group.parts[0].representation},
-                    )
-                    for group in request.context
-                ]
-            )
-            return await self._produce_group(
-                prepared.frozen,
-                prepared.input_plan.request_groups[0],
-                snapshot,
+                group,
+                call.settings,
                 question=request.question,
                 instructions=request.instructions,
-                schema=request.schema,
-                completed=list(prepared.preparations),
-                on_delta=on_delta,
-                producer_key=computation_key,
-                frozen_task_ref=task_ref.descriptor,
-                request_identity=identity,
-                selected_inputs=selected_inputs,
-                dependencies=(*request.dependencies, task_ref.descriptor),
-                extra_sources=context_sources,
+                schema=request.output_schema,
+                route=route,
+                completed=completed,
+                streaming=request.stream,
             )
+            assert isinstance(value, PreparedGeneration)
+            return value
 
-    async def _produce_group(
-        self,
-        frozen: FrozenTask,
-        group: RequestGroup,
-        snapshot: ConfigSnapshot,
-        *,
-        question: str = "",
-        instructions: str = "",
-        schema: dict[str, JsonValue] | None = None,
-        extra_sources: Sequence[PreparedSource] = (),
-        completed: list[str] | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        on_prepared: Callable[[PreparedGeneration], None] | None = None,
-        producer_key: str | None = None,
-        frozen_task_ref: ArtifactRef | None = None,
-        request_identity: str | None = None,
-        selected_inputs: SelectedInputs | None = None,
-        dependencies: Sequence[ArtifactRef | ResultRef] = (),
-    ) -> ProducedTask:
-        """Compute one semantic group without adopting its named outputs.
-
-        The executor requests another representation only when switching routes.
-        The returned ``ProducedTask`` retains the successful output and its actual
-        inputs; prepare and adopt them in the caller-owned transaction without
-        making another model request. Completed preparation stages may already
-        have been adopted before this method returns or fails.
-
-        Returns:
-            The successful output, actual inputs and completed preparation
-            references, ready for adoption.
-
-        Raises:
-            NousError: If no eligible route can prepare or complete the request.
-        """
-        completed = completed if completed is not None else []
-        async with self.execution.operation("model.generate", snapshot) as context:
-            selected_inputs = selected_inputs or group.selected_inputs
-            producer_key = producer_key or "generation:" + str(uuid4())
-
-            async def resolve(route: ModelRoute | None = None) -> PreparedGeneration:
-                request = await self.preparation.prepare_group(
-                    frozen,
-                    group,
-                    snapshot,
-                    question=question,
-                    instructions=instructions,
-                    schema=schema,
-                    extra_sources=extra_sources,
-                    route=route,
-                    completed=completed,
-                    on_prepared=on_prepared,
-                    streaming=on_delta is not None,
-                )
-                assert isinstance(request, PreparedGeneration)
-                return request
-
-            prepared = await resolve()
-            if on_delta is None:
-                generated = await self.executor.execute(
-                    prepared, context=context, prepare_route=resolve
-                )
-            else:
-                async with self.executor.stream(
-                    prepared, context=context, prepare_route=resolve
-                ) as stream:
-                    async for delta in stream:
-                        on_delta(delta)
-                    if stream.result is None:
-                        raise NousError(
-                            "model.incomplete_stream", "The stream returned no completed result"
-                        )
-                    generated = stream.result
-            reading = generated.reading or prepared.compiled.reading
-            response_key = producer_key + ":response"
-            pending = PendingResponse(
-                generated,
-                None,
-                reading,
-                tuple(source.group for source in reading.sources if source.group),
-                request_identity or producer_key,
-                response_key,
-                frozen_task_ref,
-                selected_inputs,
-                tuple(dependencies),
-                self.executor.compiler.catalog.tasks[
-                    str(generated.request["contract_id"])
-                ].interpretation_contract(),
-            )
-            self.responses.pending[response_key] = pending
-            return await self.responses.resume_in_lock(pending)
-
-    async def run_input(
-        self,
-        task: str | FrozenTask,
-        input: InputValue | Sequence[InputValue],
-        snapshot: ConfigSnapshot,
-        *,
-        question: str = "",
-        instructions: str = "",
-        schema: dict[str, JsonValue] | None = None,
-        document_mode: str = "auto",
-        without_audio: bool = False,
-        on_delta: Callable[[str], None] | None = None,
-        on_prepared: Callable[[PreparedGeneration], None] | None = None,
-        on_completed: Callable[[ProcessingResult], None] | None = None,
-        texts: Sequence[str] = (),
-        per_batch: bool = False,
-    ) -> GenerationOutcome:
-        results: list[ProcessingResult] = []
-        completed: list[str] = []
-        async with self.execution.operation("model.run", snapshot):
-            prepared = await self.prepare_input(
-                task,
-                input,
-                snapshot,
-                document_mode=document_mode,
-                without_audio=without_audio,
-                texts=texts,
-                per_batch=per_batch,
-            )
-            completed.extend(prepared.preparations)
-            try:
-                for plan in prepared.input_plan.request_groups:
-                    produced = await self._produce_group(
-                        prepared.frozen,
-                        plan,
-                        snapshot,
-                        question=question,
-                        instructions=instructions,
-                        schema=schema,
-                        completed=completed,
-                        on_delta=on_delta,
-                        on_prepared=on_prepared,
-                    )
-                    response_key = produced.parameters.get("response_producer_key")
-                    assert isinstance(response_key, str) and response_key.endswith(":response")
-                    result = await self._adopt(
-                        produced, producer_key=response_key.removesuffix(":response") + ":result"
-                    )
-                    results.append(result)
-                    completed.append(result.ref.identifier)
-                    if on_completed:
-                        on_completed(result)
-            except (NousError, asyncio.CancelledError, TimeoutError) as exc:
-                details: dict[str, JsonValue] = {
-                    "artifacts": [artifact.ref.identifier for artifact in prepared.artifacts],
-                    "completed_result_refs": list[JsonValue](completed),
-                    "unfinished_coverage": [
-                        batch.coverage
-                        for batch in prepared.input_plan.request_groups[len(results) :]
-                    ],
-                }
-                record_completed(completed)
-                add_error_context(exc, details)
-                raise
-            return GenerationOutcome(
-                prepared.artifacts,
-                tuple(results),
-                {
-                    **prepared.input_plan.requested_coverage,
-                    "actual": [result.coverage for result in results],
-                },
-                tuple(completed),
-            )
-
-    async def run(
-        self,
-        request: GenerationRequest,
-        snapshot: ConfigSnapshot,
-        *,
-        computation_key: str | None = None,
-    ) -> ProcessingResult:
-        request = request.capture()
-        key = computation_key or "generation:" + str(uuid4())
-        lock = self._result_locks.setdefault(key, asyncio.Lock())
-        async with self.execution.keyed_operation("model.run", lock, snapshot):
-            accepted = await self.results.find_producer(key + ":result")
-            if accepted is not None:
-                if accepted.parameters.get("request_identity") != request.identity():
+        prepared = await resolve()
+        if request.stream:
+            async with self.executor.stream(
+                prepared, context=call.execution, prepare_route=resolve
+            ) as stream:
+                async for delta in stream:
+                    await call.events.emit(TextDelta(channel="output", text=delta))
+                if stream.result is None:
                     raise NousError(
-                        "content.producer_conflict",
-                        "Saved result belongs to a different language request",
-                        details={"producer_key": key},
+                        "model.incomplete_stream", "The stream returned no completed result"
                     )
-                return accepted
-            produced = await self.produce(request, computation_key=key, snapshot=snapshot)
-            return await self._adopt(produced, producer_key=key + ":result")
-
-    async def prepare_adoption(
-        self, produced: ProducedTask, *, producer_key: str | None = None
-    ) -> PreparedProduction:
-        """Publish the computation once before its short adoption transaction."""
-        origins = tuple(
-            dict.fromkeys(part.content for group in produced.actual_inputs for part in group.parts)
-        )
-        output = produced.outputs.get("output")
-        mappings = (
-            (
-                OutputMapping(
-                    output_name="output",
-                    selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
-                    relation="derived",
-                    origins=origins,
-                ),
+                generated = stream.result
+        else:
+            generated = await self.executor.execute(
+                prepared, context=call.execution, prepare_route=resolve
             )
-            if output is not None and output.data and origins
-            else ()
+        reading = generated.reading or prepared.compiled.reading
+        if frozen.resource is None:
+            raise NousError("model.task_contract_missing", "The task has no output contract")
+        definition = self.executor.compiler.catalog.tasks[frozen.resource.manifest.contract_id]
+        outputs = await definition.outputs(
+            generated.output,
+            reading,
+            self.results.artifacts,
+            structured=prepared.compiled.schema is not None,
+            producer=generated.producer,
         )
-        return PreparedProduction(
-            produced.operation,
-            produced.producer,
-            produced.actual_inputs,
-            await self.results.prepare_outputs(produced.outputs),
-            produced.request,
-            produced.parameters,
-            produced.coverage,
-            producer_key,
-            produced.dependencies,
-            mappings,
+        outputs = definition.describe_outputs(outputs)
+        if generated.response:
+            outputs["response"] = OutputContent(
+                data=json.dumps(generated.response, ensure_ascii=False, indent=2).encode(),
+                media_type="application/json",
+                display_name="response.json",
+                role="diagnostic",
+            )
+        actual = tuple(source.group for source in reading.sources if source.group is not None)
+        origins = tuple(dict.fromkeys(part.content for group in actual for part in group.parts))
+        mappings = tuple(
+            OutputMapping(
+                output_name=name,
+                selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
+                relation="derived",
+                origins=origins,
+            )
+            for name, output in outputs.items()
+            if output.role != "diagnostic" and output.data and origins
         )
+        selected = group.unit.inputs
+        artifacts = await self.results.artifacts.get_many(
+            [item.artifact for source in selected.sources for item in source.selections]
+        )
+        dependencies = tuple(
+            dict.fromkeys(
+                [
+                    artifact.producer_result_ref
+                    for artifact in artifacts
+                    if artifact.producer_result_ref
+                ]
+                + [
+                    origin.transform_ref
+                    for item in actual
+                    for part in item.parts
+                    for origin in part.origins
+                    if origin.transform_ref
+                ]
+            )
+        )
+        request_fields = {
+            field.alias or name for name, field in GenerationRequestFacts.model_fields.items()
+        }
+        recorded_request = {
+            key: value for key, value in generated.request.items() if key in request_fields
+        }
+        recorded_request.update(question=request.question, instructions=request.instructions)
+        request_facts = GenerationRequestFacts.model_validate(recorded_request)
+        facts = ResultFacts(
+            operation=request.task,
+            producer=ModelProducer.model_validate(generated.producer),
+            selected_inputs=selected,
+            inputs=actual,
+            request=request_facts.model_dump(mode="json", by_alias=True),
+            parameters={
+                "attempts": generated.attempts,
+                "usage": generated.usage,
+                "finish_reason": generated.finish_reason,
+            },
+            coverage=generated.coverage,
+            mappings=mappings,
+            dependencies=dependencies,
+            formed_at=self.results.artifacts.clock.utc_now(),
+        )
+        return CompletedTask(facts=facts, outputs=outputs)
 
-    async def adopt_in(self, tx: WriteTx, prepared: PreparedProduction) -> ProcessingResult:
-        """Adopt published output alongside the caller's related formal records."""
-        return await self.results.adopt_in(
-            tx,
-            operation=prepared.operation,
-            producer=prepared.producer,
-            inputs=prepared.actual_inputs,
-            prepared_outputs=prepared.outputs,
-            request=prepared.request,
-            parameters=prepared.parameters,
-            coverage=prepared.coverage,
-            producer_key=prepared.producer_key,
-            dependencies=prepared.dependencies,
-            mappings=prepared.mappings,
+    async def run(self, request: RunModel, call: CallContext) -> ModelOutcome:
+        output_schema = await self.resolve_schema(request.output_schema, call)
+        selected = await self.preparation.accept_targets(request.sources, call)
+        internal = GenerationRequest(
+            task=request.task,
+            inputs=selected,
+            question=request.question,
+            instructions=request.instructions,
+            output_schema=output_schema,
+            input_mode=request.input_mode,
+            document_mode=request.document_mode,
+            without_audio=request.without_audio,
+            stream=request.stream,
         )
-
-    async def _adopt(
-        self, produced: ProducedTask, *, producer_key: str | None = None
-    ) -> ProcessingResult:
-        prepared = None
+        planned = await self.preparation.prepare_input(
+            request.task,
+            selected,
+            call.settings,
+            document_mode=request.document_mode,
+            without_audio=request.without_audio,
+            input_mode=request.input_mode,
+        )
+        completed = list(planned.preparations)
+        results: list[ProcessingResult] = []
         try:
-            prepared = await self.prepare_adoption(produced, producer_key=producer_key)
-            async with self.results.database.write() as tx:
-                result = await self.adopt_in(tx, prepared)
-            record_completed(result.ref.identifier)
-            return result
-        except BaseException as error:
+            for group in planned.input_plan.route_plans:
+                task = await self._compute_group(internal, planned.frozen, group, call, completed)
+                result = await self.results.adopt(facts=task.facts, outputs=task.outputs)
+                results.append(result)
+                completed.append(result.ref)
+                await call.saved(result.ref)
+        except (NousError, asyncio.CancelledError, TimeoutError) as error:
             add_error_context(
                 error,
                 {
-                    "stage": "result.adopt",
-                    "model_succeeded": True,
-                    "producer_key": produced.parameters.get("response_producer_key"),
-                    "completed_result_refs": list(produced.completed_stage_refs),
-                    "published_outputs": [
-                        {"name": output.name, "blob": output.content.blob.model_dump(mode="json")}
-                        for output in prepared.outputs.outputs
-                    ]
-                    if prepared is not None
-                    else [],
+                    "completed_refs": [item.model_dump(mode="json") for item in completed],
+                    "unfinished_coverage": [
+                        group.coverage for group in planned.input_plan.route_plans[len(results) :]
+                    ],
                 },
-                recovery=prepared or produced,
             )
             raise
-
-    async def resume_response(
-        self, pending: PendingResponse | str, snapshot: ConfigSnapshot
-    ) -> ProducedTask:
-        """Resume a successful response by its in-memory value or saved producer key."""
-        return await self.responses.resume_response(pending, snapshot)
-
-    async def recover_result(self, response_key: str, snapshot: ConfigSnapshot) -> ProcessingResult:
-        """Resume and adopt one successful response, returning the same result on retry."""
-        if not response_key.endswith(":response"):
-            raise NousError("model.response_required", "Provide the response producer key")
-        key = response_key.removesuffix(":response")
-        result_key = key + ":result"
-        lock = self._result_locks.setdefault(key, asyncio.Lock())
-        async with self.execution.keyed_operation("model.recover_result", lock, snapshot):
-            accepted = await self.results.find_producer(result_key)
-            if accepted is not None:
-                await self.responses.forget(response_key)
-                return accepted
-            produced = await self.resume_response(response_key, snapshot)
-            return await self._adopt(produced, producer_key=result_key)
-
-    async def recover_response(
-        self, ref: str | ResultRef, snapshot: ConfigSnapshot
-    ) -> ProducedTask:
-        """Interpret a previously accepted response without calling the model again."""
-        return await self.responses.recover_response(ref, snapshot)
-
-    async def preview(
-        self,
-        prompt: str,
-        input: Sequence[InputValue],
-        snapshot: ConfigSnapshot,
-        *,
-        texts: Sequence[str] = (),
-        question: str = "",
-        instructions: str = "",
-        schema: dict[str, JsonValue] | None = None,
-        task: str | None = None,
-        per_batch: bool = False,
-    ) -> dict[str, JsonValue]:
-        return await inspection.preview(
-            self,
-            prompt,
-            input,
-            snapshot,
-            texts=texts,
-            question=question,
-            instructions=instructions,
-            schema=schema,
-            task=task,
-            per_batch=per_batch,
+        return ModelOutcome(
+            results=tuple(item.ref for item in results),
+            coverage={
+                **planned.input_plan.requested_coverage,
+                "actual": [item.coverage for item in results],
+            },
         )
 
-    async def probe(
-        self, model: str, input: Path | None, snapshot: ConfigSnapshot
-    ) -> GenerationOutcome:
-        return await inspection.probe(self, model, input, snapshot)
+    async def preview(self, request: PreviewPrompt, call: CallContext) -> dict[str, JsonValue]:
+        output_schema = await self.resolve_schema(request.output_schema, call)
+        resource = self.executor.compiler.catalog.get(request.prompt)
+        frozen = self.executor.freeze(request.task, call.settings) if request.task else None
+        if frozen and (frozen.resource is None or frozen.resource.id != resource.id):
+            raise NousError("model.prompt_conflict", "Prompt does not match the selected task")
+        selected = (
+            await self.preparation.accept_targets(request.sources, call)
+            if request.sources
+            else SelectedInputs(sources=())
+        )
+        if frozen and selected.sources:
+            prepared = await self.preparation.prepare_input(
+                frozen, selected, call.settings, input_mode=request.input_mode
+            )
+            plan, frozen = prepared.input_plan, prepared.frozen
+        else:
+            plan = await plan_inputs(
+                self.preparer,
+                selected,
+                call.settings.values.media,
+                requirements=frozen.routes[0].model.input_formats if frozen else (),
+                input_mode=request.input_mode,
+                contract=self.executor.compiler.catalog.tasks[resource.manifest.contract_id],
+            )
+        previews: list[JsonValue] = []
+        for group in plan.route_plans:
+            if frozen:
+                value = await self.preparation.prepare_group(
+                    frozen,
+                    group,
+                    call.settings,
+                    question=request.question,
+                    instructions=request.instructions,
+                    schema=output_schema,
+                    preview=True,
+                )
+                previews.append(value.to_dict())
+            else:
+                batch = await materialize(
+                    self.preparer, group, call.settings.values.media.max_inline_bytes
+                )
+                previews.append(
+                    self.executor.compiler.compile(
+                        resource,
+                        ReadingInput(request.question, request.instructions, batch.sources),
+                        schema=output_schema,
+                        language=call.settings.values.localization.language,
+                    ).to_dict()
+                )
+        if len(previews) == 1 and isinstance(previews[0], dict):
+            return previews[0]
+        return {"batches": previews}
+
+    async def probe(self, request: ProbeModel, call: CallContext) -> ModelOutcome:
+        model = call.settings.values.models.get(request.model)
+        if model is None:
+            raise NousError(
+                "model.unknown", "The model is not configured", details={"model": request.model}
+            )
+        frozen = FrozenTask(
+            "model.probe",
+            TaskAssignment(model=request.model, prompt="describe-media"),
+            (ModelRoute(request.model, model, PresetConfig()),),
+            self.executor.compiler.catalog.get("describe-media"),
+        )
+        selected = await self.preparation.accept_targets(
+            (request.source or InlineText(text="Describe the supplied content briefly."),), call
+        )
+        plan = await self.preparation.prepare_input(frozen, selected, call.settings)
+        generated = await self._compute_group(
+            GenerationRequest(task="model.probe", inputs=selected),
+            frozen,
+            plan.input_plan.route_plans[0],
+            call,
+            list(plan.preparations),
+        )
+        result = await self.results.adopt(facts=generated.facts, outputs=generated.outputs)
+        await call.saved(result.ref)
+        return ModelOutcome(results=(result.ref,), coverage=result.coverage)
+
+    async def discover(self, request: DiscoverModels, call: CallContext) -> dict[str, JsonValue]:
+        return TypeAdapter(dict[str, JsonValue]).validate_python(
+            {
+                "provider": request.provider,
+                "models": await self.executor.discover(request.provider, call.settings),
+            }
+        )

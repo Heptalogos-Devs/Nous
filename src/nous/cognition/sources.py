@@ -2,30 +2,43 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
-
-import sqlalchemy as sa
+from typing import TYPE_CHECKING, Literal, cast
 
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
 from nous.content.contracts import (
+    ArtifactInput,
     ArtifactRef,
     ContentSelection,
+    ExternalInput,
+    InlineText,
     InputGroup,
+    ResultOutputInput,
+    ResultOutputRef,
     SelectedInputs,
     SelectedSource,
+    SourceTarget,
 )
 from nous.media.preparation import MediaPreparer
 from nous.storage.database import ReadTx
 
-from . import schema
-from .contracts import Namespace, NamespaceRef, RecordRevisionRef, RevisionSelection, SourceBinding
-from .writing.contracts import SourceRequest
+from .contracts import Namespace, NamespaceRef, RevisionSelection, SourceBinding
+from .writing.contracts import SourceChoice
 from .writing.reading import RecordReader, Target
 
 SourceInput = (
-    SourceRequest | SourceBinding | RevisionSelection | Target | ContentSelection | ArtifactRef
+    SourceChoice
+    | SourceBinding
+    | RevisionSelection
+    | Target
+    | ContentSelection
+    | ArtifactRef
+    | ResultOutputRef
+    | SourceTarget
 )
+
+if TYPE_CHECKING:
+    from nous.application.inputs import InputReader
 
 
 @dataclass(frozen=True)
@@ -53,25 +66,36 @@ class SourceResolver:
         reject_journals: bool = False,
         usage: Literal["reference", "current_basis", "inspiration"] = "reference",
         preserve_keys: bool = False,
+        input_reader: InputReader | None = None,
     ) -> PreparedSources:
         """Freeze formal source ownership and the representations selected for use.
 
         Range normalization and mapping run outside database transactions; the final
         read view checks the immutable revision bindings used during adoption.
         """
+        resolved: list[object] = []
+        for value in inputs:
+            source = value.target if isinstance(value, SourceChoice) else value
+            if isinstance(source, (ExternalInput, InlineText, ArtifactInput, ResultOutputInput)):
+                if input_reader is None:
+                    raise NousError(
+                        "input.missing_binding", "Source requires the current input reader"
+                    )
+                artifact, selection = await input_reader.accept_target(source)
+                source = ContentSelection(artifact=artifact.ref, selection=selection)
+            resolved.append(source)
         async with self.reader.database.read() as tx:
             ns = await self.reader.namespace_in(tx, namespace)
             result: list[SourceBinding] = []
             owners: dict[str, ArtifactRef] = {}
             index = 0
-            for value in inputs:
+            for value, source in zip(inputs, resolved, strict=True):
                 while True:
                     index += 1
                     key = f"{prefix}{index}"
                     if not any(old == key or old.startswith(key + ":") for old in reserved_keys):
                         break
-                selected_usage = value.usage if isinstance(value, SourceRequest) else usage
-                source = value.target if isinstance(value, SourceRequest) else value
+                selected_usage = value.usage if isinstance(value, SourceChoice) else usage
                 if isinstance(source, SourceBinding):
                     binding = source if preserve_keys else source.model_copy(update={"key": key})
                 elif isinstance(source, RevisionSelection):
@@ -84,7 +108,22 @@ class SourceResolver:
                         name=revision["title"],
                     )
                 elif isinstance(source, ContentSelection):
-                    binding = SourceBinding(key=key, selections=(source,), usage=selected_usage)
+                    artifact = await self.artifacts.get_in(tx, source.artifact)
+                    binding = SourceBinding(
+                        key=key,
+                        selections=(source,),
+                        usage=selected_usage,
+                        name=artifact.display_name,
+                    )
+                elif isinstance(source, ResultOutputRef):
+                    ref = await self.preparer.results.resolve_output_in(tx, source)
+                    artifact = await self.artifacts.get_in(tx, ref)
+                    binding = SourceBinding(
+                        key=key,
+                        selections=(ContentSelection(artifact=ref),),
+                        name=artifact.display_name,
+                        usage=selected_usage,
+                    )
                 elif isinstance(source, ArtifactRef) or (
                     isinstance(source, str) and identifier_type(source) == "art"
                 ):
@@ -96,7 +135,7 @@ class SourceResolver:
                         usage=selected_usage,
                     )
                 else:
-                    row, revision, _ = await self.reader.resolve_in(tx, source, ns.id)
+                    row, revision, _ = await self.reader.resolve_in(tx, cast(Target, source), ns.id)
                     artifact = await self.artifacts.get_in(tx, revision["body_artifact_id"])
                     binding = SourceBinding(
                         key=key,
@@ -105,42 +144,8 @@ class SourceResolver:
                         name=revision["title"],
                         usage=selected_usage,
                     )
-                if isinstance(value, SourceRequest):
+                if isinstance(value, SourceChoice):
                     binding = binding.model_copy(update={"usage": selected_usage})
-                if binding.owner_revision is None:
-                    matches: dict[str, RecordRevisionRef] = {}
-                    for selection in binding.selections:
-                        rows = (
-                            await tx.connection.execute(
-                                sa.select(schema.records.c.identifier, schema.revisions.c.ordinal)
-                                .join(
-                                    schema.revisions,
-                                    schema.revisions.c.record_id == schema.records.c.id,
-                                )
-                                .where(schema.revisions.c.body_artifact_id == selection.artifact.id)
-                            )
-                        ).all()
-                        for identifier, ordinal in rows:
-                            try:
-                                row, revision, _ = await self.reader.resolve_in(
-                                    tx, f"{identifier}@{ordinal}", ns.id
-                                )
-                            except NousError as error:
-                                if error.code == "cognition.namespace_mismatch":
-                                    raise NousError(
-                                        "cognition.namespace_mismatch",
-                                        "Source belongs to another namespace",
-                                    ) from error
-                                raise
-                            matches[revision["id"]] = self.reader.revision_ref(row, revision)
-                    if len(matches) > 1:
-                        raise NousError(
-                            "cognition.source_ambiguous", "Choose an exact owning revision"
-                        )
-                    if matches:
-                        binding = binding.model_copy(
-                            update={"owner_revision": next(iter(matches.values()))}
-                        )
                 await self.artifacts.get_many_in(tx, [item.artifact for item in binding.selections])
                 if binding.owner_revision:
                     _, revision, _ = await self.reader.resolve_in(tx, binding.owner_revision, ns.id)
@@ -249,11 +254,12 @@ class SourceResolver:
                             raise
                     for origin in origins:
                         try:
-                            target.selection.restrict(origin.origin.selection)
+                            selection = target.selection.restrict(origin.origin.selection)
                         except NousError:
                             continue
-                        if origin.origin not in coordinates:
-                            coordinates.append(origin.origin)
+                        coordinate = origin.origin.model_copy(update={"selection": selection})
+                        if coordinate not in coordinates:
+                            coordinates.append(coordinate)
             if not coordinates:
                 raise NousError(
                     "cognition.source_mismatch",

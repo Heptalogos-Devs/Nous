@@ -21,15 +21,45 @@ results = sa.Table(
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column("operation", sa.String, nullable=False),
-    sa.Column("producer_key", sa.String, unique=True),
-    sa.Column("adoption_signature", sa.String),
     sa.Column("producer", sa.JSON, nullable=False),
     sa.Column("request", sa.JSON, nullable=False),
     sa.Column("parameters", sa.JSON, nullable=False),
     sa.Column("coverage", sa.JSON, nullable=False),
+    sa.Column("selected_facts", sa.JSON, nullable=False),
     sa.Column("formed_at", sa.String, nullable=False),
     sa.Column("recorded_at", sa.String, nullable=False),
 )
+sa.Index(
+    "uq_processing_result_cache",
+    results.c.operation,
+    sa.text("json_extract(parameters, '$.cache_key')"),
+    unique=True,
+    sqlite_where=sa.text("json_extract(parameters, '$.cache_key') IS NOT NULL"),
+)
+selected_sources = sa.Table(
+    "processing_selected_sources",
+    metadata,
+    sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), primary_key=True),
+    sa.Column("slot_key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("role", sa.String, nullable=False),
+    sa.Column("name", sa.String),
+    sa.UniqueConstraint("result_id", "ordinal"),
+)
+selected_targets = sa.Table(
+    "processing_selected_targets",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("slot_key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
+    sa.Column("selector", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["result_id", "slot_key"],
+        ["processing_selected_sources.result_id", "processing_selected_sources.slot_key"],
+    ),
+)
+sa.Index("ix_processing_selected_artifact", selected_targets.c.artifact_id)
 inputs = sa.Table(
     "processing_inputs",
     metadata,
@@ -67,6 +97,7 @@ origins = sa.Table(
     sa.Column("origin_ordinal", sa.Integer, primary_key=True),
     sa.Column("artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False),
     sa.Column("selector", sa.JSON, nullable=False),
+    sa.Column("precision", sa.String, nullable=False),
     sa.Column("transform_result_id", sa.String, sa.ForeignKey("processing_results.id")),
     sa.ForeignKeyConstraint(
         ["result_id", "group_ordinal", "part_ordinal"],
@@ -85,6 +116,8 @@ outputs = sa.Table(
     sa.Column("result_id", sa.String, sa.ForeignKey("processing_results.id"), primary_key=True),
     sa.Column("ordinal", sa.Integer, primary_key=True),
     sa.Column("name", sa.String, nullable=False),
+    sa.Column("role", sa.String, nullable=False),
+    sa.Column("representation_kind", sa.String),
     sa.Column(
         "artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False, unique=True
     ),

@@ -16,20 +16,20 @@ TextPreparation.prepare_many(selections) -> tuple[PreparedText, ...]
 ```text
 ContentReadView (`content.contracts`):
   source: ContentSelection
-  name?, media_type, byte_length
+  name, media_type, detected_media_type?, byte_length
   body_text?: str                 # 真正是文本且范围可读时
   available_representations[]     # 已存在、覆盖明确的转写/描述/页图等
   export_ref: ArtifactRef
   coverage
 ```
 
-文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。没有可读表示也是正常的媒体视图，不尝试把二进制解为 UTF-8。表示由现有 inputs/parts/origins/outputs 查找，只选生产者在 parameters.representations 中按有名输出明确声明的已采用结果，并保留其实际覆盖；每项声明给出 kind，可用 sources 固定该输出的精确来源。转写、媒体描述、页图/媒体转换与确定性文本生产者声明实际表示，文稿写作和概念标注输出不进入已有表示。不能把另一页或较窄时段的描述冒充整个来源。表示的精确坐标换算使用生产者采用时登记的 OutputMapping，见[选区与正文](selection-and-text.md#已采用表示回原文)。
+文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。`media_type` 是接纳类型，`detected_media_type` 是已探测的实际类型；未知类型的 UTF-8 正文也可以直接读取。没有可读表示也是正常的媒体视图。表示由 inputs/parts/origins/outputs 查找，依据输出的 `representation_kind` 和实际覆盖筛选；每项保留命名输出及精确来源。映射指向抽帧等中间表示时，还保留对应实际输入槽关联的原件选区。表示的坐标换算使用生产者采用时登记的 OutputMapping，见[选区与正文](selection-and-text.md#已采用表示回原文)。
 
 内容读取、媒体准备和模型输出共用文本类型判断：`text/*`、JSON、XML 和 XHTML 按 UTF-8 文本处理，选区和原件身份贯穿各入口。
 
 默认阅读不运行新模型、不偷偷转写，也不为缺少描述标成失败。用户需要新解释时显式调用媒体操作。原件不存在或存储错误仍返回实际错误。
 
-RecordReader 和草稿的 `source_views` 按来源键保存有序 ContentReadView；ResultStore.read_view 的 `source_views` 与有名输出 `view` 使用同一形状。Wave 来源展开也使用该方法。CLI 只渲染 ContentReadView；无 PDF/audio/image 专属业务分支。程序可以持有正式引用，必要时通过现有 export/borrow_local 读取实际字节。
+RecordReader 和草稿的 `source_views` 按来源键保存有序 ContentReadView；ResultStore.read_view 的 `source_views` 展开用户所选来源，`input_views` 按实际输入组展开各表示，有名输出 `view` 使用同一形状。重复的精确选区在同次读取内复用，单项文本读取受配置上限约束。Wave 来源展开也使用该方法。程序可以持有正式引用，必要时通过现有 export/borrow_local 读取实际字节。
 
 ## 成批输入与内存所有权
 
@@ -54,7 +54,9 @@ PreparedText:
 
 仅提供 `B1` 等字符串块键时，需要先读取完整正文并建立对应版本的 `TextView` 才能解析键；当前这一入口要求全文符合 `text_read_max_bytes`。已经取得的精确 `BlockRef.content` 或 `RevisionSelection` 可直接按其字节选区读取，读取上限作用于选中范围。`read_blocks` 需要验证块键与原视图的对应关系，因此也会读取其完整视图。
 
-`TextView.complete_chunks` 按完整根块形成检索片段，同时覆盖块前、块间和尾部原文；`chunks` 按实际容量形成连续无损 UTF-8 片段，`slice` 读取精确原文字节。全文 rewrite 与 edit_target 使用无损输入。嵌套块不能与父块重复形成意外覆盖。单个超长代码块/列表保持完整并标明超目标大小；不任意截断源码。whole 与唯一局部选区完全相同时，按同一文稿/同一选区消除重复候选。
+`TextView.complete_chunks` 优先按完整根块形成检索片段，同时覆盖块前、块间和尾部原文；超出目标大小的普通段落使用 UTF-8 安全边界切分，并保留完整的来源链接投影范围。单个超长代码块或列表保持完整。`chunks` 按实际容量形成连续无损 UTF-8 片段，`slice` 读取精确原文字节。全文 rewrite 与 edit_target 使用无损输入。嵌套块不能与父块重复形成意外覆盖。whole 与唯一局部选区完全相同时，按同一文稿/同一选区消除重复候选。
+
+布局在加入下一结构块会超过目标时先封段。截取视图为布局保留相交源块的种类和范围；公开块引用仍只指向完整块，因此截断的代码不会被重新解析成普通段落或冒充完整可编辑块。
 
 同 bytes 可以复用纯解析结果；Artifact 身份、来源、Namespace 和正式修订仍分别保留。不能按摘要合并两次独立接纳。
 
