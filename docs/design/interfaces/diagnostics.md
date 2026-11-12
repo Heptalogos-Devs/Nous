@@ -22,7 +22,7 @@
 | 执行 | 根操作数、排队和正在处理的工作；子阶段不冒充新的根工作 |
 | 观测 | 日志位置、是否持久保存 Span、导出器状态、实际采样配置 |
 
-最近成功结果从已有 ResultStore 读取必要摘要；error、partial、timeout 等根结果由 `recent_problems` 从同一日志的 `operation.terminal` 读取；返回同一份 issues 和 completed_result_refs。已恢复的 attempt 在操作详情展示，不误当未完成根操作。不以“增加健康账本”为前置。尚未加载的 Native 诚实显示未加载，不为状态检查偷偷建图。
+最近成功结果从已有 ResultStore 读取必要摘要；error、partial、timeout 等根结果由 `recent_problems` 从同一日志的 `operation.terminal` 读取；返回同一份 issues 和类型化 completed_refs。已恢复的 attempt 在操作详情展示，不误当未完成根操作。尚未加载的 Native 如实显示未加载。
 
 普通 `runtime check` 同时显示近期问题的阶段、错误、已完成引用和操作短号，以及最近一次正文准备的文稿数、候选数和耗时。完整阶段统计由 `--details` 或 `--json` 读取；这些信息来自已有构建日志，不触发重建。
 

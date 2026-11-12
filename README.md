@@ -17,19 +17,19 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前 CLI 与程序内 SDK 提供 Note、Journal、草稿采用、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。保存可以在同一事务中登记持久维护，DBOS 在宿主运行时执行标注和刷新，关闭重开后继续。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
+当前 CLI 与程序内 SDK 提供 Note、Journal、写作草稿、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。正文提交后可等待标注和刷新，或由正在运行的宿主在后台执行。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
 
 此前的服务、SDK 与未迁入的研究材料保存在 [legacy](legacy/README.md)。现行检索计算与索引位于 [native](native/README.md)。
 
 从源码运行需要 Python 3.14、uv、稳定版 Rust 1.97 及系统 C/C++ 编译工具链。Windows 使用 Visual Studio Build Tools 的 C++ 桌面开发组件；Linux/macOS 使用对应平台的 C++ 编译器。`uv sync --locked` 会通过 maturin 构建包含 Python 主应用、Tantivy/Jieba、USearch 和 Wave 数值内核的 `nous-server` 包。在仓库目录先设置开发环境，使缓存和虚拟环境位于 `temp/`：
 
 ```powershell
-. ./scripts/workspace.ps1
+. ./dev.ps1 env
 ```
 
-Linux 和 macOS 使用 `source scripts/workspace.sh`。该入口同时准备 CodeGraph、Zvec-grep、项目索引和 Codex MCP；首次运行需要 Node.js/npm、uv 和 Codex CLI，Codex 需重连 MCP 或重启后读取新配置。随后安装依赖，初始化一个独立实例并检查运行资源：
+Linux 和 macOS 使用 `source ./dev.sh env`。随后安装依赖，初始化一个独立实例并检查运行资源：
 
-检查工作区索引时运行 `. ./scripts/workspace.ps1 status` 或 `source scripts/workspace.sh status`；再次初始化会复用已有工具并同步索引。
+需要代码检索工具时，可以运行 `. ./dev.ps1 init` 或 `source ./dev.sh init`。该命令准备 CodeGraph、Zvec-grep 和项目索引，并更新用户的 Codex MCP 配置；首次运行需要 Node.js/npm、uv 和 Codex CLI，Codex 需重连 MCP 或重启后读取新配置。检查索引时将 `init` 换成 `status`。
 
 ```sh
 uv sync --locked --no-dev
@@ -42,7 +42,7 @@ nous tools prompt list
 nous tools content add ./notes.md
 ```
 
-工作区初始化会将虚拟环境中的 `nous` 加入当前终端的 PATH。登记并选择实例后，后续命令使用该实例；显式 `--instance` 或环境变量 `NOUS_INSTANCE` 优先。实例切换见[实例选择](docs/design/interfaces/instance-selection.md)。开发和测试时使用 `uv sync --locked` 安装开发依赖。
+工作区环境设定会将虚拟环境中的 `nous` 加入当前终端的 PATH。登记并选择实例后，后续命令使用该实例；显式 `--instance` 或环境变量 `NOUS_INSTANCE` 优先。实例切换见[实例选择](docs/design/interfaces/instance-selection.md)。开发和测试时使用 `uv sync --locked` 安装开发依赖。
 
 记录一段经历或手写一篇 Journal 后，可以直接用自然语言查询当前认识：
 
@@ -53,23 +53,27 @@ nous query "任务结束后文件为什么还被占用" --mode lexical
 nous read "替换为返回的完整修订标识符" --sources
 ```
 
-配置写作和标注任务后，可用 `nous journalize --source "<Note标识符>" --topic "<主题>"` 生成可读草稿，再用 `journal draft read` 查看、`journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
+配置写作和标注任务后，可用 `nous journalize --source "<Note标识符>" --file ./paper.pdf --topic "<主题>"` 生成可读草稿。用 `journal draft read` 查看、`journal draft revise` 修改并产生新草稿，再用 `journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
 
 `note edit` 和 `journal edit` 直接编辑实例持有的恢复文件。保存遇到锁、冲突或其他错误时，保留稿件并显示会话路径；用 `nous journal edit --resume <会话.json>` 或 `nous note edit --resume <会话.json>` 按原基准继续提交。已提交但终端输出失败的恢复复用原修订。
 
 请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。
 
-需要让保存后的维护持续执行时，选择后台方式，并运行待办工作：
+需要在后台运行保存后的维护时，先在一个终端启动实例宿主：
 
 ```sh
-nous journal create --file ./journal.md --background --refresh-mode lexical
-nous job list
-nous job run --until-idle
-nous job read JOB
-nous job wait JOB
+nous runtime run
 ```
 
-配置好标注任务后，保存时增加 `--annotate`。`runtime run` 持续运行同一实例宿主；程序内用 `run_host(instance, application)` 明确拥有持久宿主和应用循环。普通 `async with open_instance(instance)` 提供可嵌入的业务 Runtime。取消的工作通过 `job resume JOB` 继续，ERROR 工作按 `job read` 给出的失败步骤执行 `job retry JOB --from-step STEP`。详情见[宿主与 Job](docs/design/interfaces/jobs-and-host.md)及[程序示例](docs/examples/durable-cognition/host-use.py)。
+在另一个终端保存文稿，并按返回的操作标识查看或等待本次运行的维护：
+
+```sh
+nous journal create --file ./journal.md --annotate --background --refresh-mode lexical
+nous runtime operations list
+nous runtime operations wait <操作标识>
+```
+
+配置好标注任务后，保存时增加 `--annotate`。后台工作由当前 Runtime 持有；运行期结束后，已保存的正文、结果、草稿和快照仍可读取，未完成的维护可重新发起。没有宿主的短命令可以等待维护或只保存正文。程序内使用 `async with open_instance(instance)`；需要在该作用域内启动后台工作时传入 `allow_background=True`。详情见[宿主与运行期操作](docs/design/interfaces/jobs-and-host.md)及[程序示例](docs/examples/durable-cognition/host-use.py)。
 
 源码安装使用仓库中的 `uv sync --locked`。`uv build` 生成同一平台的完整 wheel 与源码分发包；wheel 可用 `pip install <wheel路径>` 安装，无需单独取得 Native 包。源码分发包安装时需要上述构建工具链。
 

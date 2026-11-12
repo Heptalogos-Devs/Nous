@@ -6,6 +6,10 @@ jobs:
   runtime:
     name: check
     runs-on: ubuntu-24.04
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/temp/venvs/nous
+      UV_NO_EDITABLE: "1"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/temp/build/native
     steps:
       - uses: actions/checkout@v7
         with:
@@ -13,12 +17,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
       - name: Install the Python project
         run: |
-          source scripts/dev-env.sh
           uv python install 3.14
           uv sync --locked
       - name: Python contracts
         run: |
-          source scripts/dev-env.sh
           sh scripts/check/run.sh --profile ci

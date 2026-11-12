@@ -29,7 +29,7 @@ impl NativeEngine {
         })
     }
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature=(candidates,concepts,facts,associations,identity_json,output_dir,*,options_json="{}",cancel=None))]
+    #[pyo3(signature=(candidates,concepts,facts,associations,identity_json,output_dir,*,options_json="{}",base=None,cancel=None))]
     fn build(
         &self,
         py: Python<'_>,
@@ -40,6 +40,7 @@ impl NativeEngine {
         identity_json: &str,
         output_dir: String,
         options_json: &str,
+        base: Option<PyRef<'_, NativeSnapshot>>,
         cancel: Option<PyRef<'_, CancellationToken>>,
     ) -> PyResult<String> {
         let input = Input {
@@ -53,11 +54,12 @@ impl NativeEngine {
                 .map_err(|e| native_error(anyhow::Error::from(e)))?,
         };
         let token = cancel.map(|v| v.clone()).unwrap_or_default();
+        let base = base.map(|v| v.inner.inner.clone());
         let state = self.state.clone();
         let frozen = py
             .detach(|| {
                 state.run(&token.inner, || {
-                    snapshot::build(input, Path::new(&output_dir), &token.inner)
+                    snapshot::build(input, Path::new(&output_dir), base.as_deref(), &token.inner)
                 })
             })
             .map_err(native_error)?;

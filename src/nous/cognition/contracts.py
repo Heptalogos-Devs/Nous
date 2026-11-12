@@ -18,8 +18,29 @@ class CognitiveValue(BaseModel):
 class NamespaceRef(CognitiveValue):
     """Stable identity of a namespace within an instance."""
 
+    kind: Literal["namespace"] = "namespace"
     instance_id: str
     id: str
+
+
+type NamespaceSelector = str | NamespaceRef | None
+
+
+class CreateNamespace(CognitiveValue):
+    name: str
+
+
+class ListNamespaces(CognitiveValue):
+    pass
+
+
+class SelectNamespace(CognitiveValue):
+    namespace: str | NamespaceRef
+
+
+class RenameNamespace(CognitiveValue):
+    namespace: str | NamespaceRef
+    name: str
 
 
 class Namespace(CognitiveValue):
@@ -41,6 +62,7 @@ class RecordRef(CognitiveValue):
 
 
 class RecordRevisionRef(CognitiveValue):
+    kind: Literal["record_revision"] = "record_revision"
     record_ref: RecordRef
     revision_id: str
     ordinal: int = Field(ge=1)
@@ -48,6 +70,16 @@ class RecordRevisionRef(CognitiveValue):
     @property
     def identifier(self) -> str:
         return f"{self.record_ref.identifier}@{self.ordinal}"
+
+
+class FeedbackRef(CognitiveValue):
+    """Identify a saved feedback record in its owning instance and namespace."""
+
+    kind: Literal["feedback"] = "feedback"
+    instance_id: str
+    namespace_id: str
+    id: str
+    identifier: str
 
 
 class RevisionSelection(CognitiveValue):
@@ -63,6 +95,14 @@ class SourceBinding(CognitiveValue):
     owner_revision: RecordRevisionRef | None = None
     usage: Literal["reference", "current_basis", "inspiration"] = "reference"
     name: str | None = None
+
+
+class RecordSourceView(CognitiveValue):
+    """One formal source and its readable content at the referenced revision."""
+
+    binding: SourceBinding
+    views: tuple[ContentReadView, ...]
+    title: str | None = None
 
 
 class RevisionSummary(CognitiveValue):
@@ -98,7 +138,7 @@ class RecordView(CognitiveValue):
     viewpoint: str | None = None
     times: CognitiveTimes
     sources: tuple[SourceBinding, ...] = ()
-    source_views: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
+    source_details: tuple[RecordSourceView, ...] = ()
     archived: bool
     recall: bool
     change_kind: str

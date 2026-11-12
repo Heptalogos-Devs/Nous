@@ -10,7 +10,7 @@
 
 本次原生实现基线是 `f724bc92d522372489d15fb6f0a16e436f819d5b`。词项索引使用 Tantivy 0.27、tantivy-jieba 0.21，随后过滤长词并转为小写；查询词项去重后以 OR 组合，候选按 BM25 评分。文稿分组以组内最佳片段选择文稿，避免一篇长文的多个片段占满结果。当前索引的正文记录词频，没有保存用于位置短语查询的词项位置。
 
-源码中的 `match_score` 按不同查询词项的命中比例给出局部分数；当前正式查询的词项召回走索引 BM25，而不是这个函数。正式 hybrid 在完整 VCP 资产下结合词项、原始与场向量、直接锚点等候选，通过 RiverMemo 读出；仅有词项与向量资产时采用两路名次融合。实验中单独构造的等权 RRF 作为策略对照，不代表上述完整 hybrid。实现分别见 [词项索引](../../native/retrieval/src/lexical.rs)、[多路召回](../../native/retrieval/src/query/recall.rs)和[文稿分组](../design/wave/grouped-delivery.md)。
+实验基线中的 [`match_score`](https://github.com/Heptalogos-Devs/Nous/blob/f724bc92d522372489d15fb6f0a16e436f819d5b/native/retrieval/src/lexical.rs) 按不同查询词项的命中比例给出局部分数；正式查询的词项召回走索引 BM25。正式 hybrid 在完整 VCP 资产下结合词项、原始与场向量、直接锚点等候选，通过 RiverMemo 读出；仅有词项与向量资产时采用两路名次融合。实验中单独构造的等权 RRF 作为策略对照，不代表上述完整 hybrid。当前实现分别见 [词项索引](../../native/retrieval/src/lexical.rs)、[多路召回](../../native/retrieval/src/query/recall.rs)和[文稿分组](../design/wave/grouped-delivery.md)。
 
 ## 数据、标注与指标
 

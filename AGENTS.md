@@ -2,17 +2,15 @@
 
 This file applies to the entire repository. When modifying content in one part of it, follow the `AGENTS.md` of the corresponding directory, such as [src/nous/AGENTS.md](src/nous/AGENTS.md). Rules belong in the file that loads where the work happens: native-side constraints live in `native/`, not in `src/nous/`.
 
-No Agent may modify, move, or delete `AGENTS.md` or another file that governs Agents, such as the (*) documents listed in [docs/AGENTS.md](docs/AGENTS.md), unless the developer has explicitly permitted and requested it. Without that permission, deliver the change as `<TOPIC>.proposal.patch` in the repository root, remind the developer to review it, and keep working on unrelated parts. The patch is not repository content: Git ignores it, and you delete it once it has been applied.
+No Agent may modify, move, or delete `AGENTS.md` or another file that governs Agents, such as the (*) documents listed in [docs/AGENTS.md](docs/AGENTS.md), unless the developer has explicitly permitted and requested it. When a requested change requires such a modification and that permission is absent, deliver it as `<TOPIC>.proposal.patch` in the repository root, remind the developer to review it, and keep working on unrelated parts. The patch is not repository content: Git ignores it, and you delete it once it has been applied.
 
 If an action is rejected, do not bypass the rejection by wrapping or rephrasing the same action; report it if no separately authorized safe action is available.
 
-Unless a Skill requires otherwise, proactively use the applicable Skill(s) as needed, without the developer having to specify or request them.
+Proactively use applicable Skills unless they require explicit invocation. Apply their methods within the user's instructions and repository rules; when a Skill conflicts with either, follow the applicable higher-priority instruction.
 
 ## AntiRLHF
 
-**Required** reading before acting (especially for GPT models): the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md), which states the binding behavior requirements. The [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) records the background and the reasoning; read it when writing or assessing governance text (AGENTS.md, Skills, prompts) or when a requirement's intent is unclear. AntiRLHF is the project owner's model-governance scheme, directed at "Local Defensibility Optimization", over-engineering, over-testing, meaningless compatibility, and the behavior of substituting verifying or proving process for *real engineering work*.
-
-Apply these requirements into actual actions and decisions: find where responsibility for the problem lies, complete the usage path the user needs, modify structures that are not appropriate, and clear out the implementations that have been replaced. Do not use extra reports, checklists, or repeated declarations of compliance with the rules as a substitute for the work.
+Read and apply the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md) before acting; if its complete text has already been supplied in the session, use that copy. The [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) explains its background and intent; read it when writing or assessing governance text or when a requirement's intent is unclear.
 
 ## The Project and Current Work
 
@@ -34,18 +32,20 @@ Read the relevant entries according to the task. There is no need to read all of
 
 ## Engineering Choices & Principles
 
-- The project is still in the prototype stage. For the time being, keep `v0.1.0`. It has no external consumers, and it has no need for internal compatibility or for incrementing internal versions. When a structure, the form/shape of the data, or a framework is not appropriate, directly replace the responsible implementation, migrate the actual producers, consumers, configuration, tests, and documents, and delete the replaced code and the support dedicated to it. Internal implementations must not add incrementing identifiers such as `v1`/`v2`, version chains, compatibility branches, or dual-track paths, and must not establish a mechanism of old-format retention or backup migration for internal structures being eliminated. Business revisions of user manuscripts and precise historical citations continue to be preserved according to the product contract.
-- It is prohibited to make local bypasses, wrappers, and duplicate implementations in order to preserve a wrong/inappropriate structure. First judge who should be responsible for a behavior, a piece of data, or a state; then choose where to implement it. Existing modules may be reused, and, because of a real need, may also have their responsibilities redivided and be refactored.
-- Prefer to adopt the formal capabilities of mature dependencies already chosen. DO NOT rewrite, on your own, existing capabilities such as protocol clients, media parsing, and database mechanisms, and do not mechanically establish a service, repository, manager, or forwarding layer for every concept.
+- The project is a prototype with no external consumers; keep `v0.1.0`. Replace unsuitable internal structures directly, migrate their producers, consumers, configuration, tests, and documents, and remove the replaced implementation and its support. Do not add incrementing internal version identifiers such as `v1`/`v2`, version chains, compatibility branches, or dual paths. Do not retain or back up old formats of internal structures being eliminated. Preserve user manuscript revisions and precise historical citations according to the product contract.
+- Use the formal capabilities of the project's mature dependencies for protocol clients, media parsing, and databases; do not duplicate them or add forwarding layers to preserve an unsuitable structure. Do not mechanically create a service, repository, or manager for every concept.
 - Remain vendor-neutral. LLM services are accessed through a unified gateway. "New API" is one usable gateway. Production code does not add special business behavior for a particular external platform. Configure the work according to explicit protocol, capability, and task, and do not guess capabilities from model names.
 - Follow the [LLM usage and prompt guide](docs/agents/llm-use.md) when designing or assessing model calls. Provide the context needed for the task and assess outputs using the information actually available to the model.
-- When completing a capability, also handle the actual producers, consumers, configuration, and user entry points. Do not leave functionality that is valid only in an internal method or in demonstration code.
+
+## Code Review
+
+Review the scope the user requests. For work in progress, inspect the relevant staged, unstaged, and new files; use the user request and available design when there is no separate specification or issue.
 
 ## Verification
 
-TDD and red-green cycles are prohibited. Must not add shallow tests, field-existence tests, or repeated verification of behavior that a dependency library already owns. Except for key contracts, security details, and independent failures that actually have protective value, prefer to verify the complete path through the real user entry point (end to end). Verifying wrong input and failure behavior is not manufacturing failures for a red-green cycle.
+TDD and red-green cycles are prohibited. Do not add shallow tests, field-existence tests, or repeated verification of behavior that a dependency already owns. Prefer the real user entry point for complete-path verification; use focused tests for key contracts, security details, and independently failing behavior with protective value. Testing invalid input or failures does not constitute a red-green cycle.
 
-Choose a verification method that can expose problems in the current change. Check functional results and failure behavior. DO NOT substitute commit count, test count, or an all-green test run for product judgment. State the verification actually executed and the results; distinguish simulation from real external services, and the scope that was not verified. DO NOT treat a development report or remote CI as evidence.
+Choose verification that can expose problems in the change, including relevant success and failure behavior. Report what was actually run, distinguish simulation from real external services, and state unverified scope. Do not substitute test counts or an all-green run for observed results and product judgment. DO NOT treat a development report or remote CI as evidence.
 
 When an old test only protects an old implementation, delete it together with the old implementation. Migrate usage situations that still have value to the new entry point. Do not, for tests, add a dedicated export point or a parallel implementation to production code, or set up an extra test framework.
 
@@ -53,7 +53,7 @@ Tests are located in `tests`; scaffolding, probes and experimental scripts go in
 
 ## Document Maintenance
 
-When design, a public contract, or responsibilities change, update the responsible topic and the source index in place, and remove statements that no longer hold. Define the same rule in only one responsible place; other places cite it and DO NOT copy multiple versions.
+When design, a public contract, or responsibilities change, update the responsible topic and affected indexes in place, and remove statements that no longer hold. Define each rule in one responsible place; other places cite it.
 
 For important classes and methods, use comments to state responsibilities, state boundaries, or non-obvious invariants, and do not restate the implementation line by line. For the details, see [docstring standard](docs/agents/docstring-std.md).
 
@@ -61,47 +61,35 @@ For important classes and methods, use comments to state responsibilities, state
 
 ## Development Environment and Commands
 
-Use Python 3.14 and uv. First set up the development environment in the repository root, so that the virtual environment, downloads, and caches are located in `temp/`. A source build also needs Rust 1.97 and a C/C++ toolchain, because `uv sync --locked` builds the PyO3 extension through maturin.
+Use Python 3.14 and uv. When running or building the project, first set up the development environment in the repository root so the virtual environment, downloads, and caches are located in `temp/`. A source build also needs Rust 1.97 and a C/C++ toolchain: `uv sync --locked` builds the PyO3 extension through maturin.
 
 Linux / macOS:
 
 ```bash
-source scripts/workspace.sh
+source ./dev.sh env
 ```
 
 Windows PowerShell:
 
 ```powershell
-. ./scripts/workspace.ps1
+. ./dev.ps1 env
 ```
 
-Install the development dependencies and view the entry points:
+Install development dependencies with `uv sync --locked`. Product entry points are in [README.md](README.md); use `uv run --locked nous --help` or `uv run --locked nous tools --help` for command help.
 
-```sh
-uv sync --locked
-uv run --locked nous --help
-uv run --locked nous tools --help
-```
-
-Before a commit, run the development check from the repository root. It reads [scripts/check/config/check.toml](scripts/check/config/check.toml), runs length and format before lint, types, and tests, and skips the slower steps when an earlier group fails. Warnings do not fail the run. Choose the command according to the change.
+Before a commit, run the development check from the repository root:
 
 ```powershell
 pwsh -File ./scripts/check/run.ps1
-pwsh -File ./scripts/check/run.ps1 length src/nous/example.py
-pwsh -File ./scripts/check/run.ps1 tests -- tests/python/test_cli.py
-pwsh -File ./scripts/check/run.ps1 all
 ```
 
 ```sh
 sh scripts/check/run.sh
-sh scripts/check/run.sh length src/nous/example.py
-sh scripts/check/run.sh tests -- tests/python/test_cli.py
-sh scripts/check/run.sh all
 ```
 
-`check` runs length, format, lint, and types. `length <path>` prints that file's code-line count. `tests --` adds the named pytest arguments after the faster checks pass. `all` adds the full Python and Rust test commands. Thresholds, the CI profile, and git hook commands are in [scripts/check/README.md](scripts/check/README.md).
+Choose targeted tests or `all` as appropriate for the change. Options, thresholds, the CI profile, and hook commands are in [scripts/check/README.md](scripts/check/README.md).
 
-Check product behavior through a real `nous` command on the instance from [README.md](README.md).
+When a change affects product behavior, check the relevant operation through a real `nous` command on the instance described in [README.md](README.md).
 
 Audio and video processing requires FFmpeg and ffprobe. Configure them through PATH, or through `media.ffmpeg_path` and `media.ffprobe_path`. For the concrete product commands, see the [Tools CLI](docs/design/interfaces/tools-cli.md). When model resources are involved, read the [model configuration example](docs/examples/models.toml) and the related design. Do not write the gateway address, model name, or credentials of a particular development machine as product defaults.
 
@@ -109,22 +97,16 @@ This project is cross-platform. Except where the requirement itself involves pla
 
 ## Temporary Data
 
-Put generated products, reference repositories, worktrees, downloads, installations, and experimental scripts all in `temp/`. Do not scatter them into the user directory or other locations. External development tools that already exist may continue to be used. Newly added temporary project content still follows this convention.
+Put temporary generated products, reference repositories, worktrees, downloads, installations, and experimental scripts in `temp/`. Keep requested deliverables and generated project files at their required destinations. Do not scatter temporary project content into the user directory or other locations; existing external development tools may continue to be used.
 
 Use the [temp management tool](scripts/temp/README.md) to create directories, view status, and clean up. Recursive shell deletion commands are prohibited and usually blocked. For authorized temporary cleanup, use the temp tool to preview and select the specific paths, then apply the intended cleanup.
 
 ## Code and Reference Retrieval
 
-### Nous Source Code
-
-`src/nous/INDEX.md` owns the file, symbol and owner map; the `AGENTS.md` files state the constraints at each insertion point. Use CodeGraph for symbols and code relationships, and Zvec-grep for semantic and lexical discovery across code and documents. See the [retrieval handbook](docs/agents/retrieval.md) for the tools and reference projects.
+`src/nous/INDEX.md` owns the file, symbol and owner map; the `AGENTS.md` files state the constraints at each insertion point. When a `.codegraph/` index exists, use CodeGraph for symbols and code relationships; otherwise skip it. Use Zvec-grep for semantic and lexical discovery when available. See the [retrieval handbook](docs/agents/retrieval.md) for tool usage and reference projects.
 
 ```sh
 codegraph explore "<symbols or questions>"
 ```
 
-Initialize or repair the tools and indexes through `scripts/workspace.ps1` or `scripts/workspace.sh` when needed. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.
-
-### Reference Implementations
-
-When retrieving reference implementations, read the [retrieval handbook](docs/agents/retrieval.md).
+Refresh an existing index when needed. Initialize retrieval tools through `. ./dev.ps1 init` or `source ./dev.sh init` when the user requests setup; initialization installs tools, creates indexes and updates Codex MCP configuration. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.

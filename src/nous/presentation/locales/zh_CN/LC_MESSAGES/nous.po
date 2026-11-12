@@ -192,9 +192,6 @@ msgstr "目录"
 msgid "Disposable cache directory."
 msgstr "可淘汰的缓存目录。"
 
-msgid "Durable execution"
-msgstr "持久执行"
-
 msgid "Effective value"
 msgstr "有效值"
 
@@ -898,27 +895,6 @@ msgstr "没有新增内容"
 msgid "No changes"
 msgstr "没有修改"
 
-msgid "Generated proposal"
-msgstr "原生成提案"
-
-msgid "Adopted as complete Markdown override"
-msgstr "已按完整正文覆盖采用"
-
-msgid "Jobs"
-msgstr "维护工作"
-
-msgid "Worker running"
-msgstr "工作进程运行中"
-
-msgid "Worker not started"
-msgstr "工作进程未启动"
-
-msgid "Recent jobs: {total}; queued: {queued}; running: {running}; failed: {failed}"
-msgstr "近期工作：{total}；排队：{queued}；运行：{running}；失败：{failed}"
-
-msgid "Failed job: {kind} {job_id} — {stage} (step {step}): {reason}"
-msgstr "失败工作：{kind} {job_id} — {stage}（步骤 {step}）：{reason}"
-
 msgid "The model request failed"
 msgstr "模型请求失败"
 
@@ -931,12 +907,6 @@ msgstr "未知"
 msgid "Retrieval refresh"
 msgstr "检索刷新"
 
-msgid "Queued"
-msgstr "已排队"
-
-msgid "Scheduled"
-msgstr "等待定时执行"
-
 msgid "Running"
 msgstr "运行中"
 
@@ -948,9 +918,6 @@ msgstr "失败"
 
 msgid "Cancelled"
 msgstr "已取消"
-
-msgid "Recovery limit reached"
-msgstr "已达恢复次数上限"
 
 msgid "Namespace"
 msgstr "命名空间"
@@ -979,20 +946,8 @@ msgstr "未激活"
 msgid "Result"
 msgstr "结果"
 
-msgid "Related job"
-msgstr "后续工作"
-
-msgid "Job"
-msgstr "工作"
-
-msgid "Retried from"
-msgstr "重试来源"
-
 msgid "Error"
 msgstr "错误"
-
-msgid "Failed step"
-msgstr "失败步骤"
 
 msgid "Retry"
 msgstr "重试"
@@ -1003,35 +958,8 @@ msgstr "继续"
 msgid "Wait"
 msgstr "等待"
 
-msgid "No jobs"
-msgstr "没有工作"
-
 msgid "Next page"
 msgstr "下一页"
-
-msgid "Retry job"
-msgstr "重试工作"
-
-msgid "A DBOS instance already belongs to this process"
-msgstr "当前进程已有其他宿主持有 DBOS"
-
-msgid "The DBOS worker is no longer owned"
-msgstr "当前运行时已不再持有该 DBOS 工作者"
-
-msgid "Retry identity belongs to another job"
-msgstr "重试工作标识属于其他工作"
-
-msgid "The retry received an unexpected identity"
-msgstr "重试工作获得了不符合预期的标识"
-
-msgid "Recall membership changed while maintenance was prepared"
-msgstr "准备维护期间，文稿的召回状态发生变化"
-
-msgid "Background annotation requires the current revision"
-msgstr "后台标注需要文稿的当前修订"
-
-msgid "Body changed before annotation was queued"
-msgstr "标注入队前，正文已经改变"
 
 msgid "Background annotation generates and adopts a current revision without manual options"
 msgstr "后台标注使用当前修订自动生成和采用提案；人工选项请使用前台标注"
@@ -1128,3 +1056,153 @@ msgstr "请提供文稿或使用 --resume PATH。"
 
 msgid "The edit recovery request has different maintenance options."
 msgstr "编辑恢复请求使用了不同的维护选项。"
+
+msgid "Operation definition is not registered"
+msgstr "操作定义尚未登记。"
+
+msgid "Unknown application operation"
+msgstr "未知的应用操作。"
+
+msgid "Timeout must be positive"
+msgstr "超时时间必须大于零。"
+
+msgid "Timeout must be positive."
+msgstr "超时时间必须大于零。"
+
+msgid "Input keys must be nonempty strings"
+msgstr "输入键不能为空。"
+
+msgid "Unsupported external input binding"
+msgstr "不支持这种外部输入绑定。"
+
+msgid "External input is not bound"
+msgstr "没有提供所需的外部输入。"
+
+msgid "External input stream was already consumed"
+msgstr "该外部输入流已经读取。"
+
+msgid "Input stream must yield bytes"
+msgstr "输入流必须提供字节。"
+
+msgid "This operation cannot accept an artifact"
+msgstr "此操作无法接纳该原件。"
+
+msgid "Stored results are unavailable"
+msgstr "已保存的结果不可用。"
+
+msgid "Stored content is unavailable"
+msgstr "已保存的内容不可用。"
+
+msgid "The selected content is not text"
+msgstr "选中的内容不是文本。"
+
+msgid "Selection does not contain complete UTF-8 text"
+msgstr "选区不是完整的 UTF-8 文本。"
+
+msgid "This runtime operation is no longer available."
+msgstr "该运行期操作已不可用。"
+
+msgid "Operation context is not active."
+msgstr "操作上下文已结束。"
+
+msgid "This runtime does not accept background work."
+msgstr "当前运行环境不接受后台工作。"
+
+msgid "The runtime background task limit is reached."
+msgstr "当前运行环境的后台任务已达到上限。"
+
+msgid "Description covers a different source, question or instruction"
+msgstr "该描述使用了不同的来源、问题或指令。"
+
+msgid "Description uses a different task"
+msgstr "该描述使用了不同的任务。"
+
+msgid "Description must have one primary output"
+msgstr "描述结果必须有一个主要输出。"
+
+msgid "Result is not a media description"
+msgstr "该结果不是媒体描述。"
+
+msgid "Task uses another output contract"
+msgstr "该任务使用了不同的输出格式。"
+
+msgid "Compute requires one semantic unit"
+msgstr "此计算需要一个语义单元。"
+
+msgid "Prompt does not match the selected task"
+msgstr "提示词与所选任务不匹配。"
+
+msgid "The model is not configured"
+msgstr "尚未配置该模型。"
+
+msgid "The stream returned no completed result"
+msgstr "流式响应没有返回完整结果。"
+
+msgid "A transcription task is required"
+msgstr "需要配置转写任务。"
+
+msgid "The configured transcription task is unavailable"
+msgstr "配置的转写任务不可用。"
+
+msgid "Transcription returned a non-text result"
+msgstr "转写结果不是文本。"
+
+msgid "Provide material for the writing request"
+msgstr "请提供写作材料。"
+
+msgid "A draft must contain Markdown"
+msgstr "草稿正文不能为空。"
+
+msgid "Result is not a writing product"
+msgstr "该结果不是写作成果。"
+
+msgid "Writing product has no output"
+msgstr "写作成果没有正文输出。"
+
+msgid "Reflection requires Journals and a topic"
+msgstr "反思需要指定日记和主题。"
+
+msgid "Rewrite requires a Journal"
+msgstr "全文重写需要指定一篇日记。"
+
+msgid "Provide a writing instruction or feedback"
+msgstr "请提供写作指令或反馈。"
+
+msgid "Provide at least one editable range"
+msgstr "请至少指定一个可编辑范围。"
+
+msgid "Refresh requires save adoption"
+msgstr "刷新检索前需要先采用并保存文稿。"
+
+msgid "Edit task returned no proposal"
+msgstr "编辑任务没有返回修改提案。"
+
+msgid "Reflection requires Journals"
+msgstr "反思需要指定日记。"
+
+msgid "proposed"
+msgstr "已生成提案"
+
+msgid "superseded"
+msgstr "已被新版本取代"
+
+msgid "published"
+msgstr "已发布"
+
+msgid "started"
+msgstr "已开始"
+
+msgid "not_started"
+msgstr "未启动"
+
+msgid "not_requested"
+msgstr "未请求"
+
+msgid "running"
+msgstr "运行中"
+
+msgid "succeeded"
+msgstr "已完成"
+
+msgid "completed"
+msgstr "已完成"

@@ -10,7 +10,7 @@ from nous.content.contracts import (
     ArtifactRef,
     ContentSelection,
     InputGroup,
-    ProcessingResult,
+    ResultRef,
     SourceRole,
     SourceSelection,
 )
@@ -81,7 +81,7 @@ class PreparedBatch:
     selection: SourceSelection
     coverage: dict[str, JsonValue]
     conversion: PlannedConversion | None = None
-    completed_result_refs: tuple[str, ...] = ()
+    completed_result_refs: tuple[ResultRef, ...] = ()
     source_prefix: str = "S1"
     source_slot_key: str = "S1"
     source_role: SourceRole = "source"
@@ -97,7 +97,7 @@ class MediaPlan:
     selection: SourceSelection
     batches: tuple[PreparedBatch, ...]
     coverage: dict[str, JsonValue]
-    completed_result_refs: tuple[str, ...] = ()
+    completed_result_refs: tuple[ResultRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,27 +112,5 @@ class TextRepresentation:
     view: TextView
     inputs: tuple[InputGroup, ...]
     coverage: dict[str, JsonValue]
-    completed_result_refs: tuple[str, ...] = ()
+    completed_result_refs: tuple[ResultRef, ...] = ()
     mappings: tuple[TextMapping, ...] = ()
-
-
-@dataclass(frozen=True)
-class AnalysisResult:
-    artifact: Artifact
-    selection: SourceSelection
-    batches: tuple[ProcessingResult, ...]
-    descriptions: tuple[ProcessingResult, ...]
-    coverage: dict[str, JsonValue]
-    outcome: str = "completed"
-    preparations: tuple[str, ...] = ()
-
-    @property
-    def completed_result_refs(self) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                (
-                    *self.preparations,
-                    *(result.ref.identifier for result in (*self.descriptions, *self.batches)),
-                )
-            )
-        )

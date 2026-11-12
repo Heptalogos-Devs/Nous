@@ -2,9 +2,11 @@
 
 ## 语义单位
 
-TaskDefinition 声明输入方式 `joint` 或 `independent_batches`。普通 summarize、extract-information、select-passages、custom-reading 缺省为 joint：输入数组共同回答同一个问题。两个小文件的比较必须让同一次请求看到两份文件。
+TaskDefinition 声明输入方式 `joint` 或 `independent`。普通 summarize、extract-information、select-passages、custom-reading 缺省为 joint：输入数组共同回答同一个问题。两个小文件的比较必须让同一次请求看到两份文件。
 
-`independent_batches` 仅用于调用者明确接受各批独立答案的操作，例如逐段转写、逐时段描述。MediaAnalysis 的返回同时带总覆盖和分批结果。CLI 可提供 `--per-batch` 显式选择；没有选择时不能把一项比较静默改成多次互不知情的回答。
+`independent` 用于调用者明确选择的语义单元，例如离散页或时段。一个语义单元可能需要多个物理表示批次，它们共同进入同一次请求。MediaAnalysis 返回总覆盖和各单元结果；没有选择独立模式时不会把一项比较拆成互不知情的回答。
+
+输入 owner 先从原始选择及任务声明的领域范围形成 SemanticUnit，再为每个单元选择路线和物理表示。默认每个所选范围保持完整，任务可声明领域分段，调用者显式范围优先。独立单元分别处理所选材料，`context` 槽随每个单元保留；媒体操作的独立范围也使用同一规则验证和分组。
 
 一次 joint 请求放不下已知硬限制时，在模型调用前返回具体输入范围、限制和可用做法。只有任务自己定义了有语义的分解/汇总策略时才能执行它；本轮不为任意问题自动建立 MapReduce、Agent 工作流或默默截断原文。
 
@@ -15,20 +17,21 @@ InputPlan:
   task_mode
   selected_inputs  # 原件、离散选区、逻辑槽、用途和已确认的 SourceFacts
   representation_plans
-  request_groups[]  # 每组引用实际共同参与的一组来源/范围
+  route_plans[]    # 每项持有原始 SemanticUnit 与该路线的物理表示
   requested_coverage
 
 plan_inputs(inputs, frozen_task, settings, options) -> InputPlan
-for_route(request_group, accepted_formats, settings) -> RequestGroup
-materialize(request_group, context) -> scoped ReadingInput
+semantic_units(selected_inputs, mode, ranges) -> SemanticUnit[]
+for_route(route_plan, accepted_formats, settings) -> RoutePlan
+materialize(route_plan, limit) -> scoped PreparedBatch
 compile(reading, frozen_resource, output_contract) -> CompiledPrompt
 ```
 
-InputPlan 由 `models/input.py` 的完整规划能力拥有，GenerationOperations 使用它；MediaAnalysis 显式组织语言阶段并复用它。文件接纳走 ArtifactStore.accept，媒体表示走 MediaPreparer，正文选区走 ArtifactStore 的共同范围能力，默认文字分片使用 TextView.chunks 保留完整原文字节；跨内容/媒体的检索批量准备由 application.preparation.TextPreparation 组织。CLI 不自己遍历全部批次拼 Prompt。
+InputPlan 由 `models/input.py` 的完整规划能力拥有，GenerationOperations 使用它；MediaAnalysis 显式组织语言阶段并复用它。外部输入由 InputReader 接纳，媒体表示走 MediaPreparer，正文选区走 ArtifactStore 的共同范围能力；跨内容/媒体的检索批量准备由 application.preparation.TextPreparation 组织。
 
 TaskDefinition.text_input_mode 区分 lossless 与 structured。全文 rewrite 和 edit_target 采用 lossless；定义行、CRLF、间隙与尾部随实际输入保留。structured 任务可以附带块键与标题路径，其 TextView 仍持有完整所选原文。
 
-SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelection、role 和显示名称，SourceFacts 分别保存声明 MIME 与探测到的类型和已知形状。显示名称不进入请求身份。每一物理批次保留原始选择与该批范围；切换路线从这些值重新规划。
+SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelection、role 和显示名称，SourceFacts 分别保存声明 MIME 与探测到的类型和已知形状。模型可见的名称进入请求身份；每一物理批次保留原始选择与该批范围，切换路线从这些值重新规划。
 
 逻辑输入组保持用户输入顺序。固定局部键在计划形成后唯一分配，预览和实际执行一致；物化不重新编号。group 保存片段关系，不把一份 PDF 页图和文字当成两份独立来源。
 
@@ -36,13 +39,13 @@ SelectedInputs 按逻辑槽保留原件、用户顺序中的离散 ContentSelect
 
 ## 表示选择与两阶段任务
 
-每条路线在实际选中时才取得自己的表示。`GenerationOperations.prepare_group` 使用 input owner 的 `for_route`，按同一语义组的原件与选区重新规划，物化当前批次后编译实际请求。原生 PDF、原生视频、页图、采样视频帧、音频与转写文字可以随路线改变；格式转换由 MediaPreparer 完成。
+首选路线直接物化已形成的计划；切换路线时 `GenerationPreparation.prepare_group` 使用 input owner 的 `for_route`，按同一语义组的原件与选区重新规划。原生 PDF、原生视频、页图、采样视频帧、音频与转写文字可以随路线改变；格式转换由 MediaPreparer 完成。
 
 输入含视频时，先按已声明的能力和 MIME 选择支持原生视频的路线，并保留这些路线之间的配置顺序；其余路线仍可在需要时使用。路线能否使用以实际准备和协议校验为准，不根据模型名称猜测能力。
 
 选定路线成功时不准备其他路线的媒体或转写。ModelExecutor 只有在需要切换时才回调同一个 prepare_group；已知格式、能力或额度不足会跳过该路线并保留原因。文本主模型无法消费图片或缺少可用转写时，仍能选择有相应原生能力的备用模型。未选择的路线保持 deferred 状态。
 
-描述与结构化分别调用共同 run_group，消费同一个语义组。第二阶段从原件规划本路线表示，并显式附加已采用的 DESCRIPTION Artifact。配置的转写是所选路线需要时执行的语言前置阶段，结果独立采用；备用路线尚未选择时不运行它。
+描述与结构化分别调用共同生成操作，消费保存的原始分批选区。第二阶段从原件规划本路线表示，并显式附加已采用的 DESCRIPTION Artifact。配置的转写是所选路线需要时执行的语言前置阶段，结果独立采用；备用路线尚未选择时不运行它。
 
 preview 不发语言请求。所选路线依赖转写时返回 requires_transcription、路线与任务配置；可确定执行时展示一个实际准备值，后继路线列为 deferred_routes。task preview、run、probe 和媒体阶段共用同一选择与准备操作。
 

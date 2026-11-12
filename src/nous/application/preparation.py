@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import sqlalchemy as sa
+from pydantic import JsonValue
 
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
@@ -17,13 +17,16 @@ from nous.content.contracts import (
     BlobRef,
     ContentSelection,
     OutputContent,
+    ProgramProducer,
+    ResultFacts,
+    SelectedInputs,
     SourceSelection,
+    is_text_media_type,
 )
 from nous.content.projections import TextProjection, semantic_text_many
-from nous.content.text import TextView
+from nous.content.text import PARSER_PROFILE, TextView
 from nous.media.contracts import TextMapping
 from nous.media.preparation import MediaPreparer
-from nous.storage import content_schema
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,27 @@ class TextPreparation:
             "represented_text_bytes": 0,
         }
 
+    async def preparation_identity(self, source: ContentSelection) -> dict[str, JsonValue]:
+        """Identify text preparation without creating a derived representation."""
+        artifact = self._artifacts.get(source.artifact.id)
+        if artifact is None:
+            artifact = await self.artifacts.get(source.artifact)
+            self._artifacts[artifact.ref.id] = artifact
+        elif artifact.ref != source.artifact:
+            raise NousError("content.instance_mismatch", "Artifact belongs to another instance")
+        identity: dict[str, JsonValue] = {"parser_profile": PARSER_PROFILE}
+        if not is_text_media_type(artifact.media_type):
+            info = await self.preparer.inspect(
+                artifact, self.preparer.execution.snapshot.values.media
+            )
+            if info["kind"] != "pdf":
+                raise NousError(
+                    "media.text_representation_missing",
+                    "This material requires explicit transcription or language interpretation to obtain text",
+                )
+            identity["extraction"] = self.preparer.text_view_parameters(info)
+        return identity
+
     async def prime(self) -> None:
         """Load body bindings for constructor-supplied known artifacts in one view.
 
@@ -124,27 +148,8 @@ class TextPreparation:
         """
         ids = list(self._artifacts)
         async with self.artifacts.database.read() as tx:
-            for start in range(0, len(ids), 400):
-                rows = (
-                    await tx.connection.execute(
-                        sa.select(
-                            content_schema.references.c.owner_ref,
-                            content_schema.blobs.c.digest,
-                            content_schema.blobs.c.byte_length,
-                        )
-                        .select_from(content_schema.blobs.join(content_schema.references))
-                        .where(
-                            content_schema.references.c.owner_ref.in_(ids[start : start + 400]),
-                            content_schema.references.c.slot == "body",
-                        )
-                    )
-                ).mappings()
-                for row in rows:
-                    self._blobs[str(row["owner_ref"])] = BlobRef(
-                        digest=str(row["digest"]), byte_length=int(row["byte_length"])
-                    )
-        if set(ids) - self._blobs.keys():
-            raise NousError("content.missing", "No content is attached to an artifact")
+            blobs = await self.artifacts.content.resolve_many_in(tx, ids)
+        self._blobs.update(zip(ids, blobs, strict=True))
 
     async def semantic_contents(
         self, values: Sequence[PreparedText]
@@ -177,12 +182,11 @@ class TextPreparation:
         for source in normalized:
             selection = source.selection
             artifact = self._artifacts[source.artifact.id]
-            is_text = artifact.media_type.startswith("text/") or artifact.media_type in {
-                "application/json",
-                "application/xml",
-                "application/xhtml+xml",
-            }
-            if is_text and selection.start_byte is not None and selection.end_byte is not None:
+            if (
+                is_text_media_type(artifact.media_type)
+                and selection.start_byte is not None
+                and selection.end_byte is not None
+            ):
                 grouped.setdefault(source.artifact, []).append(
                     (selection.start_byte, selection.end_byte)
                 )
@@ -230,11 +234,7 @@ class TextPreparation:
             raise NousError(
                 "content.instance_mismatch", "Artifact reference does not match this instance"
             )
-        if artifact.media_type.startswith("text/") or artifact.media_type in {
-            "application/json",
-            "application/xml",
-            "application/xhtml+xml",
-        }:
+        if is_text_media_type(artifact.media_type):
             view = self._views.get(artifact.ref.id)
             if view is None and not source.selection.is_whole:
                 normalized = (await self.artifacts.normalize_selections((source,)))[0]
@@ -312,9 +312,13 @@ class TextPreparation:
         result = await self.preparer.results.find_cached("content.literal_text", key)
         if result is None:
             result = await self.preparer.results.adopt(
-                operation="content.literal_text",
-                producer={"kind": "deterministic"},
-                inputs=(),
+                facts=ResultFacts(
+                    operation="content.literal_text",
+                    producer=ProgramProducer(operation="content.literal_text"),
+                    selected_inputs=SelectedInputs(sources=()),
+                    parameters={"cache_key": key},
+                    formed_at=self.artifacts.clock.utc_now(),
+                ),
                 outputs={
                     "text": OutputContent(
                         data=text.encode("utf-8"),
@@ -322,7 +326,6 @@ class TextPreparation:
                         display_name=display_name,
                     )
                 },
-                parameters={"cache_key": key},
             )
         return ContentSelection(
             artifact=next(item.artifact for item in result.outputs if item.name == "text")

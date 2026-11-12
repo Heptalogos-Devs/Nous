@@ -175,6 +175,7 @@ class NativeEngine:
         output_dir: str,
         *,
         options_json: str = "{}",
+        base: NativeSnapshot | None = None,
         cancel: CancellationToken | None = None,
     ) -> str: ...
     def open(

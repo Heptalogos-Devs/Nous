@@ -15,7 +15,7 @@
 | paths.data/content/index_dir | nullable path，按布局解析 | new_binding，需重定位 |
 | 其他 paths.*_dir | nullable path，按布局解析 | restart |
 | runtime.shutdown_grace_seconds | number=30，>=0 | next_operation |
-| execution.max_in_flight | int=16，>=1 | restart |
+| execution.max_background_tasks | int=16，>=1 | restart，当前 Runtime 同时持有的后台任务上限 |
 | execution.max_blocking_workers | int=4，>=1 | restart |
 | execution.default_timeout_seconds | nullable number=null，非空>0 | next_operation，根操作总期限 |
 | logging.level | DEBUG/INFO/WARNING/ERROR=INFO | live |

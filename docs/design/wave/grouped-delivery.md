@@ -10,9 +10,10 @@ ResultGrouping:
   top_k: positive integer
   passages_per_group: positive integer
 
-CandidateMetadata:
-  group_key / group_row
-  exact_document_revision
+GroupDescriptor:
+  key, document_key, title?, context
+GroupHit:
+  group, rank, basis: RankEvidence, passages: PassageDelivery[]
 ```
 
 group_key 在构建时固定；来源根、物理 Artifact 和展示标题都不能替代它。同一正式修订的 whole 和局部候选属于同组；不同 Journal 即使 bytes 相同也不合并。旧快照保持自己的分组信息。
@@ -37,16 +38,15 @@ group_key 在构建时固定；来源根、物理 Artifact 和展示标题都不
 
 候选的 B/P/G/A、quality_score、ranking_score、条件 Wormhole RRF、DTSC 各自公式不变。分组改变的是参与候选与交付粒度，不把多段分数相加成文稿的额外证据。最终文稿排名使用本次最终排序中最靠前的实际候选；每篇保留该候选及随后合格片段。片段重叠可用已有 exact range/近重复策略消除，但不得替换该组最佳排名。
 
-同一观测继续支持 Thinking；不为了按组交付重新执行 Sense 或把质量分当排序键。返回组内每个片段自身分数与全局候选排名，外层另给文稿排名。
+同一观测继续支持 Thinking；不为了按组交付重新执行 Sense 或把质量分当排序键。外层给出组排名和依据；片段已有自身排名证据时单独携带，不把组的分数套到不同候选上。
 
 ## 返回类型
 
 ```text
-SearchGroup:
-  group_key, revision_ref, title?
-  representative: exact candidate ref
-  passages[]: exact selection + scores + candidate rank
-  group_rank
+GroupHit:
+  group: GroupDescriptor
+  rank, basis: RankEvidence
+  passages[]: PassageDelivery(candidate, fragments, reason, evidence?)
 
 SearchCoverage:
   requested_groups, returned_groups
@@ -62,7 +62,9 @@ SearchCoverage:
 
 `WaveQuery(grouping="document", passages_per_group=2, top_k=10)` 请求最多十篇文稿，每篇最多两个片段；`grouping="candidate"` 保留实验逐候选查询。CLI 使用 `nous tools wave query "SNAPSHOT" "TEXT" --grouping document --passages-per-group 2 --top-k 10`。准备查询时先校验组目标能容纳在 max_union_candidates 内，然后取得查询向量。
 
-Wave 返回 `groups` 和用于逐候选解释的 `hits`。每个 passage 保留候选引用、排名分、实际交付的原文选区及文字；完整候选继续通过 read 读取。词项命中使用 Tantivy 的同一分词器和片段能力取得正文范围，再经内容 owner 的正式映射还原原文；相邻范围合并，离散范围分别保留。`matched_fields` 区分标题与正文，只有标题命中时交付正文预览并以 `title_preview` 标明。语义或关系模式选中整篇且没有正文词项范围时，在该文稿已有局部候选中以同一模式进行有界选择并标明 `local_candidate`；固定候选池维持其限定范围。没有可用局部候选时返回 `candidate_preview`。`context_summary.grouping` 和 `coverage.lanes` 保留实际粒度、通道工作量与截断原因。
+Wave 文稿粒度返回 `groups`，候选粒度返回 `hits`。每个 passage 保留实际交付候选和原文片段；排名依据由组的 basis 单独表达。Native 在同一 QueryPlan 中优先使用已排序的局部候选，必要时对该组局部候选有界评分。词项范围经内容 owner 的正式映射还原原文，离散范围分别保留。`matched_fields` 区分标题与正文；交付原因使用 `body_match`、`local_score`、`title_preview` 或 `preview`。固定候选池维持其限定范围；`coverage.lanes` 保留实际工作量与截断原因。
+
+Wave 按完成映射后的 Artifact 和规范字节选区消除同组完全重复的交付片段，保留最先交付的证据；离散范围及其顺序保留，不同 Artifact 和只部分重叠的范围各自保留。去重后为空的 passage 不交付。去重不改变组排名依据或分数，片段数量可以少于请求上限。
 
 Native 构建配置包含 `candidate_grouping=document`，正式当前投影会依现有 profile 失配机制重新构建。没有 group rows 的内部旧 Native 资产需重建；正文和业务修订继续由 cognition 保留。
 

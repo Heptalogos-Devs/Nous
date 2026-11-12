@@ -5,14 +5,27 @@ from typing import Annotated, Literal
 
 import typer
 
-from nous.cognition.feedback import Category, FeedbackView, Value
-from nous.cognition.retrieval.contracts import QueryResult
+from nous.cognition.feedback import (
+    LIST_FEEDBACK,
+    READ_FEEDBACK,
+    RECORD_FEEDBACK,
+    RECORD_QUERY_FEEDBACK,
+    RESOLVE_FEEDBACK,
+    Category,
+    FeedbackView,
+    ListFeedback,
+    QueryFeedbackRequest,
+    ReadFeedback,
+    RecordFeedbackRequest,
+    ResolveFeedback,
+    Value,
+)
 from nous.common.errors import NousError
-from nous.content.contracts import ContentSelection
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 
-from . import cli, emit, language_for, options, run_async
+from .context import application_call, emit, language_for, options
+from .groups import cli
+from .input_files import json_binding
 
 feedback_cli = typer.Typer(help="Feedback", no_args_is_help=True)
 cli.add_typer(feedback_cli, name="feedback")
@@ -70,61 +83,66 @@ def record(
     query_result: Annotated[
         Path | None, typer.Option("--query-result", exists=True, dir_okay=False)
     ] = None,
-    candidate: str | None = None,
+    passage: Annotated[
+        str | None, typer.Option("--passage", help="Group:passage, starting at 1")
+    ] = None,
 ) -> None:
     if (ref is None) == (query_result is None):
         raise NousError(
             "input.invalid_feedback", "Choose an exact record revision or a query result"
         )
-    if candidate is not None and query_result is None:
-        raise NousError("input.invalid_feedback", "A candidate requires a query result")
+    if passage is not None and query_result is None:
+        raise NousError("input.invalid_feedback", "A passage requires a query result")
     if selection is not None and query_result is not None:
         raise NousError(
             "input.invalid_feedback", "Choose the delivered candidate from the query result"
         )
 
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            if query_result is not None:
-                result = QueryResult.model_validate_json(query_result.read_bytes())
-                target = None
-                if candidate is not None:
-                    matches = [
-                        item for item in result.delivery if item.candidate_ref.key == candidate
-                    ]
-                    if len(matches) != 1:
-                        raise NousError(
-                            "input.invalid_feedback",
-                            "Candidate is not a unique delivered selection",
-                        )
-                    target = matches[0]
-                return await cognition.feedback.record_query(
-                    result, category, target=target, value=value, comment=comment, author=author
-                )
-            assert ref is not None
-            return await cognition.feedback.record(
-                ref,
-                category,
+    if query_result is not None:
+        source, inputs = json_binding(query_result, key="result")
+        target = None
+        if passage is not None:
+            parts = passage.split(":")
+            if len(parts) != 2 or not all(part.isdecimal() and int(part) > 0 for part in parts):
+                raise NousError("input.invalid_feedback", "Use a 1-based group:passage pair")
+            target = (int(parts[0]) - 1, int(parts[1]) - 1)
+        result = application_call(
+            ctx,
+            RECORD_QUERY_FEEDBACK,
+            QueryFeedbackRequest(
+                result=source,
+                category=category,
+                namespace=namespace,
+                target=target,
                 value=value,
                 comment=comment,
                 author=author,
-                selection=ContentSelection.model_validate_json(selection.read_bytes())
-                if selection
-                else None,
-            )
-
-    _show(ctx, run_async(run()))
+            ),
+            inputs=inputs,
+        )
+    else:
+        assert ref is not None
+        selected, inputs = json_binding(selection, key="selection") if selection else (None, {})
+        result = application_call(
+            ctx,
+            RECORD_FEEDBACK,
+            RecordFeedbackRequest(
+                target=ref,
+                category=category,
+                namespace=namespace,
+                value=value,
+                comment=comment,
+                author=author,
+                selection=selected,
+            ),
+            inputs=inputs,
+        )
+    _show(ctx, result)
 
 
 @feedback_cli.command("read")
 def read(ctx: typer.Context, ref: str, namespace: str | None = None) -> None:
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.read(ref)
-
-    _show(ctx, run_async(run()))
+    _show(ctx, application_call(ctx, READ_FEEDBACK, ReadFeedback(ref=ref, namespace=namespace)))
 
 
 @feedback_cli.command("list")
@@ -137,18 +155,18 @@ def list_feedback(
     offset: Annotated[int, typer.Option(min=0)] = 0,
     namespace: str | None = None,
 ) -> None:
-    async def run() -> tuple[FeedbackView, ...]:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.list(
-                target=target,
-                category=category,
-                unresolved_only=unresolved,
-                limit=limit,
-                offset=offset,
-            )
-
-    result = run_async(run())
+    result = application_call(
+        ctx,
+        LIST_FEEDBACK,
+        ListFeedback(
+            namespace=namespace,
+            target=target,
+            category=category,
+            unresolved_only=unresolved,
+            limit=limit,
+            offset=offset,
+        ),
+    )
     if options(ctx).json_mode:
         emit(ctx, {"items": [item.model_dump(mode="json") for item in result]})
     elif not result:
@@ -168,9 +186,9 @@ def resolve(
     actor: str | None = None,
     namespace: str | None = None,
 ) -> None:
-    async def run() -> FeedbackView:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.feedback.resolve(ref, action, note=note, actor=actor)
-
-    _show(ctx, run_async(run()))
+    result = application_call(
+        ctx,
+        RESOLVE_FEEDBACK,
+        ResolveFeedback(ref=ref, action=action, namespace=namespace, note=note, actor=actor),
+    )
+    _show(ctx, result)

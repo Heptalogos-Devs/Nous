@@ -21,7 +21,7 @@ inspect(snapshot) -> 能力、空间、来源规模、构建配置
 
 ## 概念层次
 
-Concept 是有名称、完整描述、别名和向量的检索线索。本轮清单定义的是冻结检索描述，未提前实现长期概念的合并/修订 owner。
+Concept 是有名称、完整描述、别名和向量的检索线索。认知领域拥有正式 Concept 身份和意义修订；Wave 清单也可以提供构建所需的精确概念描述。
 
 VCP Tag 对应 Concept 的计算节点；原来的短 Tag 名保留为 label/alias，向量可以来自完整描述。VCP file 是有序出现的事实单位，candidate/chunk 是召回单位；两者与 Nous Artifact/Journal 没有强制一一对应。
 
@@ -31,8 +31,8 @@ VCP QueryObservation 是一次数值计算的观测。它与 Nous 将来的 Obse
 
 实现描述型概念、按角色/顺序组织的上下文、多来源候选、typed relation 投影、反证关系读取、域内时间过滤和显式的研究模式。完整使用既有来源、向量与时间 owner；不引入新的通用 Cognition 表。
 
-认知吸积的自动创建/合并/拆分、长期 feedback 学习、全量 NousQL、Namespace 授权和持久后台任务不在本轮。相关输入合同为之后的领域接入保留真实语义空间，不放成功占位实现。
+认知吸积的自动合并与拆分、长期反馈学习、全量 NousQL 和多用户授权属于后续能力。当前后台维护由 Runtime 持有普通任务。
 
 ## 本轮结构收敛与后续认知
 
-当前整改范围见 [主计划](../../plans/architecture-repair.md)。真实核心位于 retrieval crate；PyO3 为薄边界。Journal 正文、多路径和支持组的接入见 [投影](journal-projection.md)，语义时间见 [时间视图](temporal-views.md)。Journal 对象设计已确定，但当前实际实现范围仅为共同正文结构、标注与检索实验。
+当前结构和工作范围见 [架构重构计划](../../plans/architecture-rework.md)。检索核心位于 retrieval crate；PyO3 为薄边界。Note/Journal 的正式修订和活动标注进入当前视图；正文、多路径和支持组见[投影](journal-projection.md)，语义时间见[时间视图](temporal-views.md)。

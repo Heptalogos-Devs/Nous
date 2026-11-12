@@ -1,5 +1,7 @@
 """Written Note/Journal owner: immutable bodies, exact sources and short transactions."""
 
+import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
@@ -17,6 +19,10 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     InputPart,
+    ResultFacts,
+    SelectedInputs,
+    SelectedSource,
+    UserProducer,
 )
 from nous.content.results import PreparedOutput, PreparedOutputs, ResultStore
 from nous.storage.content import PublishedContent
@@ -37,6 +43,17 @@ from .reading import RecordReader, RecordRow, RevisionRow, Target
 
 if TYPE_CHECKING:
     from ..sources import SourceResolver
+
+
+class AdoptionValues(TypedDict):
+    title: str | None
+    purpose: str | None
+    author: str | None
+    viewpoint: str | None
+    sources: Sequence[SourceBinding]
+    times: CognitiveTimes
+    origin_result_id: str
+    body_artifact: ArtifactRef | None
 
 
 class RevisionValues(TypedDict):
@@ -321,18 +338,36 @@ class WrittenRecords:
             if inputs:
                 result = await self.results.adopt_in(
                     tx,
-                    operation="cognition.manual_write",
-                    producer={"kind": "manual", "author": author},
-                    inputs=inputs,
+                    facts=ResultFacts(
+                        operation="cognition.manual_write",
+                        producer=UserProducer(author=author),
+                        selected_inputs=SelectedInputs(
+                            sources=tuple(
+                                SelectedSource(
+                                    slot_key=group.slot_key,
+                                    role=group.role,
+                                    display_name=group.name,
+                                    selections=tuple(part.content for part in group.parts),
+                                )
+                                for group in inputs
+                            )
+                        ),
+                        inputs=inputs,
+                        parameters={"change_kind": change_kind, "reason": reason},
+                        formed_at=self.time.clock.utc_now(),
+                    ),
                     prepared_outputs=PreparedOutputs(
                         (
                             PreparedOutput(
-                                "output", published, "text/markdown", (title or row["kind"]) + ".md"
+                                "output",
+                                published,
+                                "text/markdown",
+                                (title or row["kind"]) + ".md",
+                                "primary",
+                                None,
                             ),
                         ),
-                        self.time.clock.utc_now(),
                     ),
-                    parameters={"change_kind": change_kind, "reason": reason},
                 )
                 artifact = await self.artifacts.get_in(tx, result.outputs[0].artifact)
                 origin_result_id = result.ref.id
@@ -359,6 +394,14 @@ class WrittenRecords:
             "title": title,
             "title_source": title_source,
             "body_artifact_id": artifact.ref.id,
+            "source_signature": hashlib.sha256(
+                json.dumps(
+                    [source.model_dump(mode="json") for source in sources],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
             "purpose": purpose,
             "author": author,
             "viewpoint": viewpoint,
@@ -602,6 +645,9 @@ class WrittenRecords:
         row, old, ns = prepared.row, prepared.previous, prepared.namespace
         if not prepared.changed:
             return self.reader.committed(row, old, ns, False)
+        previous_blob = await self.artifacts.content.resolve_in(tx, old["body_artifact_id"])
+        if previous_blob == published.blob:
+            body_artifact = (await self.artifacts.get_in(tx, old["body_artifact_id"])).ref
         now = parse_explicit_time(self.time.clock.utc_now().isoformat())
         assert isinstance(now, Instant)
         effective_times = prepared.times.model_copy(update={"recorded": now.at})

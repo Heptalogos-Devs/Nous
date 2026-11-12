@@ -46,8 +46,11 @@ CLI 使用 feedback record/read/list/resolve 管理意见，journal patch/replac
 ```python
 mappings = {feedback.identifier: "日期意见仍适用于当前版本；新增的末段与该意见无关。"}
 proposal = await cognition.writing.propose_edit(
-    current.revision_ref, "只更正日期", feedback_refs=[feedback.identifier],
-    feedback_mappings=mappings, adoption="save",
+    current.revision_ref,
+    "只更正日期",
+    feedback_refs=[feedback.identifier],
+    feedback_mappings=mappings,
+    adoption="save",
 )
 ```
 

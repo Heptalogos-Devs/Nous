@@ -15,6 +15,7 @@ from .citations import citation_spans
 from .contracts import ArtifactRef, ContentSelection, ContentValue, SourceSelection
 
 PARSER_PROFILE = "commonmark-source-v1"
+COMPLETE_BLOCKS_LAYOUT = "bounded-paragraphs-packed-blocks"
 
 
 class BlockRef(ContentValue):
@@ -57,6 +58,14 @@ class BlockStructure(ContentValue):
     parent_key: str | None = None
 
 
+class _LayoutSpan(ContentValue):
+    """The part of a source block visible to this view's layout."""
+
+    kind: str
+    start: int
+    end: int
+
+
 class TextView(ContentValue):
     """A CommonMark view whose blocks refer to exact immutable source bytes.
 
@@ -73,6 +82,15 @@ class TextView(ContentValue):
     byte_offset: int = 0
     first_line: int = 1
     citation_spans: tuple[tuple[int, int, str], ...] = ()
+    layout_spans: tuple[_LayoutSpan, ...] = Field(default=(), exclude=True, repr=False)
+
+    def _layout(self) -> tuple[_LayoutSpan, ...]:
+        if self.layout_spans:
+            return self.layout_spans
+        return tuple(
+            _LayoutSpan(kind=block.kind, start=block.start, end=block.end)
+            for block in self.structure
+        )
 
     @classmethod
     def parse(
@@ -270,16 +288,39 @@ class TextView(ContentValue):
                 for left, right, label in self.citation_spans
                 if low <= left and right <= high
             ),
+            layout_spans=tuple(
+                _LayoutSpan(kind=span.kind, start=max(start, span.start), end=min(end, span.end))
+                for span in self._layout()
+                if span.end > start and span.start < end
+            ),
         )
 
     def complete_chunks(self, target_bytes: int) -> tuple[TextChunk, ...]:
-        """Partition the entire raw view, retaining complete root blocks and gaps."""
+        """Partition the view by root blocks, bounding oversized prose paragraphs."""
         if target_bytes < 1:
             raise ValueError("Text chunk target must be positive")
         raw = self.raw
         boundaries = [0]
-        for block in self.structure:
-            end = block.end - self.byte_offset
+        for span in self._layout():
+            start = span.start - self.byte_offset
+            end = span.end - self.byte_offset
+            if start > boundaries[-1] and end - boundaries[-1] > target_bytes:
+                boundaries.append(start)
+            if span.kind == "paragraph" and end - start > target_bytes:
+                if start > boundaries[-1]:
+                    boundaries.append(start)
+                paragraph = self.slice(SourceSelection(start_byte=span.start, end_byte=span.end))
+                for chunk in paragraph.chunks(max_bytes=max(target_bytes, 4)):
+                    cut = chunk.selection.selection.end_byte
+                    assert cut is not None
+                    cut -= self.byte_offset
+                    # Source-link labels are atomic in the semantic projection.
+                    for left, right, _ in self.citation_spans:
+                        if left < cut < right:
+                            cut = min(right, end)
+                    if cut > boundaries[-1]:
+                        boundaries.append(cut)
+                continue
             if end - boundaries[-1] >= target_bytes:
                 boundaries.append(end)
         if boundaries[-1] != len(raw):

@@ -14,7 +14,7 @@ from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
 from nous.configuration import ConfigSnapshot, Configuration
-from nous.configuration.service import Object, get_path, normalize_patch, set_path
+from nous.configuration.values import Object, get_path, normalize_patch, set_path
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import resolved_space
 from nous.observability.assembly import LoggingSession
@@ -58,6 +58,19 @@ class ConfigurationOperations:
     @property
     def snapshot(self) -> ConfigSnapshot:
         return self._configuration.snapshot
+
+    @property
+    def configuration(self) -> Configuration:
+        """The configuration owner used by the application composition root."""
+        return self._configuration
+
+    @property
+    def execution(self) -> ExecutionManager:
+        return self._execution
+
+    @property
+    def paths(self) -> ResolvedPaths:
+        return self._paths
 
     @property
     def version(self) -> int:

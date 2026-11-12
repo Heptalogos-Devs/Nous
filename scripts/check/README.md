@@ -5,7 +5,7 @@
 ```powershell
 pwsh -File ./scripts/check/run.ps1
 pwsh -File ./scripts/check/run.ps1 length src/nous/content/results.py
-pwsh -File ./scripts/check/run.ps1 tests -- tests/python/test_cli.py
+pwsh -File ./scripts/check/run.ps1 tests -- tests/cli/instance/test_initialization.py
 pwsh -File ./scripts/check/run.ps1 tests --rust nous-vcp
 pwsh -File ./scripts/check/run.ps1 all
 pwsh -File ./scripts/check/run.ps1 --profile ci
@@ -14,7 +14,7 @@ pwsh -File ./scripts/check/run.ps1 --profile ci
 ```sh
 sh scripts/check/run.sh
 sh scripts/check/run.sh length src/nous/content/results.py
-sh scripts/check/run.sh tests -- tests/python/test_cli.py
+sh scripts/check/run.sh tests -- tests/cli/instance/test_initialization.py
 sh scripts/check/run.sh tests --rust nous-vcp
 sh scripts/check/run.sh all
 sh scripts/check/run.sh --profile ci
@@ -32,11 +32,11 @@ length  警告  1
 通过，警告 1
 ```
 
-有效行数是只读格式化之后的代码行。Python 用 `ruff format --stdin-filename` 从 stdout 读取，Rust 用 `rustfmt --edition 2024 --emit stdout`。这两个命令都不改写文件。空行、注释，以及模块、类、函数的文档字符串不计入。赋值用的多行字符串计入。Python 大于 800 警告、大于 900 拒绝；Rust 大于 500 警告、大于 600 拒绝。等于阈值仍然通过。
+有效行数是只读格式化之后的代码行。Python 用 `ruff format --stdin-filename` 从 stdout 读取，Rust 用 `rustfmt --edition 2024 --emit stdout --config skip_children=true` 从 stdin 读取单个文件，避免输出文件名或递归展开子模块。这两个命令都不改写文件。空行、注释，以及模块、类、函数的文档字符串不计入。赋值用的多行字符串计入。Python 大于 800 警告、大于 900 拒绝；Rust 大于 500 警告、大于 600 拒绝。等于阈值仍然通过。
 
 指定文件时，格式检查只接收这些路径。只有 Python 文件时不调用 rustfmt，只有 Rust 文件时不调用 ruff。
 
-`--profile ci` 检查全树的 Python 长度、Python 格式、lint、类型和 `pytest tests/python`，不调用 rustfmt 或 cargo。`--profile hook` 只对传入文件做长度和格式。列表里的非 `.py`、`.rs` 文件跳过；没有任何源码文件时退出码为 0。不使用 hook profile 时，点名的文件都不是源码则退出码为 2。
+`--profile ci` 检查全树的 Python 长度、Python 格式、lint、类型和 `pytest tests`，不调用 rustfmt 或 cargo。`--profile hook` 只对传入文件做长度和格式。列表里的非 `.py`、`.rs` 文件跳过；没有任何源码文件时退出码为 0。不使用 hook profile 时，点名的文件都不是源码则退出码为 2。
 
 CI 在安装依赖后运行：
 

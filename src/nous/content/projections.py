@@ -17,6 +17,10 @@ from .contracts import (
     InputPart,
     OutputContent,
     OutputMapping,
+    ProgramProducer,
+    ResultFacts,
+    SelectedInputs,
+    SelectedSource,
     SourceSelection,
 )
 from .results import ResultStore
@@ -146,6 +150,7 @@ async def semantic_text_many(
                         data=changed[key].projected.encode("utf-8"),
                         media_type="text/plain",
                         display_name="semantic-text.txt",
+                        representation_kind="text",
                     )
                 }
             )
@@ -157,39 +162,44 @@ async def semantic_text_many(
                 tx, "content.semantic_text", keys, output="text"
             )
             adopted.update(existing)
-            for key, artifact, output, mapping in zip(
-                keys, artifacts, prepared, mappings, strict=True
+            for key, artifact, source, output, mapping in zip(
+                keys, artifacts, normalized, prepared, mappings, strict=True
             ):
                 if key in adopted:
                     continue
-                source = changed[key].source
                 result = await results.adopt_in(
                     tx,
-                    operation="content.semantic_text",
-                    producer={"kind": "deterministic"},
-                    inputs=(
-                        InputGroup(
-                            key="S1",
-                            slot_key="S1",
-                            name="Original text",
-                            parts=(
-                                InputPart(
-                                    content=source,
-                                    representation="original_text",
-                                    media_type=artifact.media_type,
+                    facts=ResultFacts(
+                        operation="content.semantic_text",
+                        producer=ProgramProducer(operation="content.semantic_text"),
+                        selected_inputs=SelectedInputs(
+                            sources=(SelectedSource(slot_key="S1", selections=(source,)),)
+                        ),
+                        inputs=(
+                            InputGroup(
+                                key="S1",
+                                slot_key="S1",
+                                name="Original text",
+                                parts=(
+                                    InputPart(
+                                        content=source,
+                                        representation="original_text",
+                                        media_type=artifact.media_type,
+                                    ),
                                 ),
                             ),
                         ),
+                        parameters={"cache_key": key},
+                        coverage={"source": source.selection.model_dump(mode="json")},
+                        mappings=tuple(mapping),
+                        formed_at=results.artifacts.clock.utc_now(),
                     ),
                     prepared_outputs=output,
-                    parameters={"cache_key": key, "representations": {"text": {"kind": "text"}}},
-                    coverage={"source": source.model_dump(mode="json")},
-                    mappings=mapping,
                 )
                 artifact_ref = next(item.artifact for item in result.outputs if item.name == "text")
                 adopted[key] = (result.ref, artifact_ref)
     for ref, _ in adopted.values():
-        record_completed(ref.identifier)
+        record_completed(ref)
     return tuple(
         SemanticText(
             ContentSelection(artifact=adopted[item.cache_key][1]),

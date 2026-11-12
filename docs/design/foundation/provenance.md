@@ -23,7 +23,7 @@ content_result_dependencies(result_id, ordinal, artifact_id?, dependency_result_
 
 selector 继续复用 ContentSelection 的共同值。inputs 不再同时保存一份可独立更新的完整 group JSON。get/read_view 由这些关系恢复公开 InputGroup；各表通过 result、artifact 和有意义的序位建立索引/外键。
 
-`adopt_in(tx)` 在同一个短事务写结果、parts、origins、outputs、生产者声明的坐标映射和执行依赖。坐标映射说明输出与原件范围的可证明对应，详见[选区与正文](../content/selection-and-text.md)；执行依赖保存解释或恢复所需的任务、写作请求和前置结果，不进入 support_roots。外部来源声明在其正式清单/领域中保存，不伪造成曾实际执行的模型处理。
+`adopt_in(tx)` 在同一个短事务写结果、parts、origins、outputs、生产者声明的坐标映射和成果依赖。坐标映射说明输出与原件范围的对应，详见[选区与正文](../content/selection-and-text.md)；成果依赖保存实际使用的前置 Artifact 或 Result，不进入 support_roots。外部来源声明在其正式清单或领域中保存。
 
 ## 公开读取
 
@@ -31,7 +31,7 @@ selector 继续复用 ContentSelection 的共同值。inputs 不再同时保存�
 provenance(refs) -> mapping[ArtifactRef, ProvenanceSummary]
 ProvenanceSummary:
   terminal_roots                 # 全部来源血缘
-  support_roots                  # source/reference/current_basis 路径的终端来源
+  support_roots                  # 独立来源角色及已生成内容所传递的支持根
   traversed_results/relations（按需，关系保留输入 role）
   complete
 ```
@@ -41,6 +41,8 @@ ProvenanceSummary:
 取根使用集合消重；解释路径只在调用者要求时返回可说明的实际路径，不能枚举 DAG 的所有组合路径造成指数膨胀。遍历以同一读事务的快照为准，迭代完成后释放，不跨模型调用持有数据库事务。
 
 局部转换 origin 保留精确页/时段。一次结果包含多个输出时，通用血缘可以指向实际输入集合；某条认识的证据选择由它自己的精确引用限定，不能从“共同使用过”推出“共同支持”。
+
+`source`、`reference` 和 `current_basis` 输入把自身来源纳入支持根。`context`、`revision_base` 和 `edit_target` 可传递所引用生成成果已有的支持根；直接给出的上下文或基准不因此成为独立见证。`inspiration` 只属于血缘，不计入事实支持。
 
 ## 基础能力迁移
 

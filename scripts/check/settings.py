@@ -137,7 +137,7 @@ def _length(language: str, table: object) -> LengthSpec:
     if not isinstance(suffix, str) or not suffix.startswith("."):
         raise CheckError(f"length.{language}.suffix 必须是扩展名")
     command = _strings(data.get("format"), f"length.{language}.format", allow_empty=False)
-    if not any("{path}" in arg for arg in command):
+    if mode == "path" and not any("{path}" in arg for arg in command):
         raise CheckError(f"length.{language}.format 必须包含 {{path}}")
     roots = _strings(data.get("roots"), f"length.{language}.roots", allow_empty=False)
     return LengthSpec(language, warn, reject, suffix, roots, mode, command)

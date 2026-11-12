@@ -50,7 +50,7 @@ def operation_logs(directory: Path, prefix: str) -> dict[str, object]:
         "events": events,
         "error": terminal if terminal and terminal.get("result") != "success" else None,
         "issues": terminal.get("issues", []) if terminal else [],
-        "completed_result_refs": terminal.get("completed_result_refs", []) if terminal else [],
+        "completed_refs": terminal.get("completed_refs", []) if terminal else [],
         "retention": "available_rotating_logs",
     }
 
@@ -92,7 +92,7 @@ def recent_problems(directory: Path, limit: int = 5) -> list[dict[str, JsonValue
                                 "error_type",
                                 "details",
                                 "issues",
-                                "completed_result_refs",
+                                "completed_refs",
                             )
                         }
     return sorted(

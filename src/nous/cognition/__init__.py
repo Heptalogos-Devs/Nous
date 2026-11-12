@@ -7,19 +7,17 @@ if TYPE_CHECKING:
     from .contracts import RevisionSelection as RevisionSelection
     from .retrieval.contracts import CognitiveQuery as CognitiveQuery
     from .writing.contracts import AfterWrite as AfterWrite
-    from .writing.contracts import DraftOverride as DraftOverride
     from .writing.contracts import RecordOutcome as RecordOutcome
     from .writing.contracts import SourceChanges as SourceChanges
-    from .writing.contracts import SourceRequest as SourceRequest
+    from .writing.contracts import SourceChoice as SourceChoice
 __all__ = [
     "AfterWrite",
     "CognitiveQuery",
-    "DraftOverride",
     "NamespaceRef",
     "RecordOutcome",
     "RevisionSelection",
     "SourceChanges",
-    "SourceRequest",
+    "SourceChoice",
 ]
 
 
@@ -32,7 +30,7 @@ def __getattr__(name: str) -> object:
         from .retrieval.contracts import CognitiveQuery
 
         return CognitiveQuery
-    if name in {"AfterWrite", "DraftOverride", "RecordOutcome", "SourceChanges", "SourceRequest"}:
+    if name in {"AfterWrite", "RecordOutcome", "SourceChanges", "SourceChoice"}:
         from .writing import contracts
 
         return getattr(contracts, name)

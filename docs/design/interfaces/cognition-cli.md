@@ -32,11 +32,11 @@ nous journal archive "jrn(...)@3"
 
 ## 草稿与标注
 
-`journalize` 缺省返回新篇草稿，`--save` 明确采用；不再接受 --target 或已知 Journal 的重复压缩输入。`journal draft read/adopt` 复用统一草稿能力，`journal draft recover <请求引用>` 继续已保存的写作请求；edit/rewrite 固定生成时的精确基准，不在采用时换 target。修改草稿正文和来源使用明确操作并保留原产物。重复 adopt 返回原采用结果；明确 fork 只将完整正文另建一篇。
+`journalize` 缺省返回新篇草稿，`--save` 明确采用；edit/rewrite 固定生成时的精确基准。`journal draft read` 读取草稿，`journal draft revise --file` 创建修改后的新草稿，`journal draft adopt` 采用完整草稿。已保存成果可用 `journal draft from-result` 发起本地组装；重复采用返回原结果。
 
 `journal annotate --draft-only` 只产生提案；普通 annotate 按明确候选/新建策略采用。普通 annotate 直接调用 `AnnotationOperations.annotate`，提案、采用和读取已有 proposal-result 在同一根 operation 内完成；`--historical` 由同一方法控制历史版本的激活。无需人工逐个批准概念。高级使用可 `--bindings bindings.json` 指定确切复用映射；普通用户只看到复用/新建的可读概念摘要。
 
-`note annotate "note(...)@N" --background` 和 `journal annotate "jrn(...)@N" --background` 为当前修订发起新的后台标注，返回 Job ID；`--task` 可选择任务，`--refresh` 在标注改变当前召回视图时登记刷新。不参与召回的 Note 也可明确标注。人工提案、指定候选或绑定、`--draft-only` 和 `--historical` 使用前台入口，这些选项不能与 `--background` 合用。
+`note annotate "note(...)@N" --background` 和 `journal annotate "jrn(...)@N" --background` 为当前修订发起本运行期后台标注，返回 operation ID；`--task` 可选择任务，`--refresh` 请求随后刷新。不参与召回的 Note 也可明确标注。人工提案、指定候选或绑定、`--draft-only` 和 `--historical` 使用前台入口。
 
 `concept add/read/find/revise` 使用 name/description 与短引用。meaning 改变需要新 revision，更新旧 Journal 绑定须重新标注。普通 query 不要求用户提供概念 ID。
 
@@ -46,9 +46,9 @@ nous journal archive "jrn(...)@3"
 
 `nous read "jrn(...)"` 表示当前；`nous read "jrn(...)@N"` 和命中精确引用保持固定。`--blocks B2,B3` 使用对应版本 TextView；不同版本的块键不得串用。旧版本读取显示“当前另有 @M”，不替换正文。
 
-`nous feedback record "<精确引用>"` 可评价当时的正文；`--selection` 接收命中返回的 ContentSelection JSON，`--snapshot` 与 `--candidate` 标识并核对某次命中，`--query-result` 则记录整次公开查询结果。明确更正通过 journal patch/replace/revise 并关联 --feedback；意见列表与处理结果由 feedback read/list/resolve 提供。
+`nous feedback record "<精确引用>"` 可评价当时的正文；`--selection` 接收精确选区 JSON。`--query-result` 接收查询结果文件，`--passage` 选择实际交付的组与片段。明确更正通过 journal patch/replace/revise 并关联 --feedback；意见列表与处理结果由 feedback read/list/resolve 提供。
 
-`journal refresh` 刷新当前域配置 profile；`--mode lexical` 显式刷新词项。保存时 `--refresh` 接续当前 profile 刷新，`--refresh-mode lexical` 明确只构建词项视图；`--annotate` 请求标注。`--background` 将请求的维护工作与正文一起登记并显示 Job ID，`--inline` 等待维护结果，二者省略时使用 `cognition.maintenance.execution`。后台工作和长期宿主的操作见 [Job 与宿主](jobs-and-host.md)。前台维护失败时保留已保存正文并返回 partial。手工记录和修订、草稿采用、journalize --save 及 correction 共用这些选择。
+`journal refresh` 刷新当前域配置 profile；`--mode lexical` 显式刷新词项。保存时 `--refresh` 接续当前 profile 刷新，`--refresh-mode lexical` 明确只构建词项视图；`--annotate` 请求标注。`--background` 在正文提交后启动本进程工作并显示 operation ID，默认等待维护结果。后台工作和宿主操作见[宿主与运行期操作](jobs-and-host.md)。维护失败时保留已保存正文。
 
 ## 失败、流与 JSON
 

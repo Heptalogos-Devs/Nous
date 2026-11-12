@@ -7,17 +7,56 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert
 
+from nous.application.contracts import BasicEvents, CallContext, define_operation
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
-from nous.configuration.service import get_path
+from nous.configuration.values import get_path
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 
-from .contracts import Namespace, NamespaceRef
+from .contracts import (
+    CreateNamespace,
+    ListNamespaces,
+    Namespace,
+    NamespaceRef,
+    NamespaceSelector,
+    RenameNamespace,
+    SelectNamespace,
+)
 from .schema import namespaces
 
 if TYPE_CHECKING:
     from nous.application.configuration import ConfigurationOperations
+
+
+CREATE_NAMESPACE = define_operation(
+    "namespaces.create",
+    request=CreateNamespace,
+    result=Namespace,
+    events=BasicEvents,
+    description="Create a cognitive namespace.",
+)
+LIST_NAMESPACES = define_operation(
+    "namespaces.list",
+    request=ListNamespaces,
+    result=tuple[Namespace, ...],
+    events=BasicEvents,
+    description="List cognitive namespaces.",
+)
+SELECT_NAMESPACE = define_operation(
+    "namespaces.select",
+    request=SelectNamespace,
+    result=Namespace,
+    events=BasicEvents,
+    description="Select the default cognitive namespace.",
+)
+RENAME_NAMESPACE = define_operation(
+    "namespaces.rename",
+    request=RenameNamespace,
+    result=Namespace,
+    events=BasicEvents,
+    description="Rename a cognitive namespace.",
+)
 
 
 async def initialize_in(tx: WriteTx, instance_id: str) -> NamespaceRef:
@@ -98,6 +137,25 @@ class NamespaceOperations:
         async with self.database.read() as view:
             return (await self.get_in(view, selector)).ref
 
+    async def resolve_for(
+        self, selector: NamespaceSelector, target: NamespaceRef | None = None
+    ) -> NamespaceRef:
+        """Resolve the requested scope, honoring an exact target's stable identity."""
+        if target is not None and target.instance_id != self.instance_id:
+            raise NousError("cognition.instance_mismatch", "Target belongs to another instance")
+        selected = (
+            selector
+            if selector is not None
+            else target
+            if target is not None
+            else self.execution.snapshot.values.cognition.default_namespace
+        )
+        async with self.database.read() as tx:
+            namespace = await self.get_in(tx, selected)
+        if target is not None and namespace.ref != target:
+            raise NousError("cognition.namespace_mismatch", "Target belongs to another namespace")
+        return namespace.ref
+
     async def read(self, ref: NamespaceRef) -> Namespace:
         async with self.database.read() as tx:
             return await self.get_in(tx, ref)
@@ -123,12 +181,13 @@ class NamespaceOperations:
         )
         return await self.get_in(tx, namespace_id)
 
-    async def create(self, name: str) -> Namespace:
+    async def create(self, request: CreateNamespace, call: CallContext) -> Namespace:
         """Create a namespace with generation zero and return it after commit.
 
         Raises:
             NousError: The name is blank or already exists.
         """
+        name = request.name
         async with self.execution.operation("namespace.create"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")
@@ -146,27 +205,32 @@ class NamespaceOperations:
                 )
                 if not result.rowcount:
                     raise NousError("cognition.namespace_exists", "Namespace name already exists")
-                return await self.get_in(tx, name)
+                created = await self.get_in(tx, name)
+            await call.saved(created.ref)
+            return created
 
-    async def list(self) -> tuple[Namespace, ...]:
+    async def list(self, request: ListNamespaces, call: CallContext) -> tuple[Namespace, ...]:
         """Return namespaces ordered by name."""
         async with self.execution.operation("namespace.list"):
             async with self.database.read() as tx:
-                rows = (
-                    (await tx.connection.execute(sa.select(namespaces).order_by(namespaces.c.name)))
-                    .mappings()
-                    .all()
-                )
-                return tuple(
-                    Namespace(
-                        ref=NamespaceRef(instance_id=self.instance_id, id=row["id"]),
-                        name=row["name"],
-                        content_generation=row["content_generation"],
-                    )
-                    for row in rows
-                )
+                return await self.list_in(tx)
 
-    async def select(self, namespace: str) -> Namespace:
+    async def list_in(self, tx: ReadTx) -> tuple[Namespace, ...]:
+        rows = (
+            (await tx.connection.execute(sa.select(namespaces).order_by(namespaces.c.name)))
+            .mappings()
+            .all()
+        )
+        return tuple(
+            Namespace(
+                ref=NamespaceRef(instance_id=self.instance_id, id=row["id"]),
+                name=row["name"],
+                content_generation=row["content_generation"],
+            )
+            for row in rows
+        )
+
+    async def select(self, request: SelectNamespace, call: CallContext) -> Namespace:
         """Save the selected namespace ID as the default configuration.
 
         If a higher-priority setting shadows the saved value, raises
@@ -175,7 +239,7 @@ class NamespaceOperations:
         """
         async with self.execution.operation("namespace.select"):
             async with self.database.read() as tx:
-                selected = await self.get_in(tx, namespace)
+                selected = await self.get_in(tx, request.namespace)
             await self.configuration.update({"cognition.default_namespace": selected.id})
             effective = self.configuration.snapshot.values.cognition.default_namespace
             if effective != selected.id:
@@ -197,7 +261,7 @@ class NamespaceOperations:
                     )
             return selected
 
-    async def rename(self, namespace: str, name: str) -> Namespace:
+    async def rename(self, request: RenameNamespace, call: CallContext) -> Namespace:
         """Rename a namespace while preserving its stable ID.
 
         The saved default may first be changed from the old name to the ID. If an
@@ -208,6 +272,7 @@ class NamespaceOperations:
             NousError: The name is blank or taken, an override blocks the rename,
                 or the namespace changed since it was read.
         """
+        namespace, name = request.namespace, request.name
         async with self.execution.operation("namespace.rename"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")
@@ -269,7 +334,7 @@ class NamespaceOperations:
                     await tx.connection.execute(
                         sa.update(namespaces).where(namespaces.c.id == current.id).values(name=name)
                     )
-                    return await self.get_in(tx, current.id)
+                    renamed = await self.get_in(tx, current.id)
             except BaseException as error:
                 add_error_context(
                     error,
@@ -284,3 +349,5 @@ class NamespaceOperations:
                     },
                 )
                 raise
+            await call.saved(renamed.ref)
+            return renamed

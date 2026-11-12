@@ -22,6 +22,6 @@ feedback.read/list/resolve(...) -> 已有意见及处理结果
 
 ## 查看与诊断
 
-反馈列表可以按目标/类别读取。对整次查询，调用者提交正式 QueryResult；反馈 owner 保存 QueryFeedback 中的实际问题、参与上下文、精确快照、交付顺序及操作关联。一次描述和一次批量候选读取完成核验。CLI 可用 `--query-result result.json`，Agent 直接传类型化值。快照 owner 使用正式字段验证；见[查询情境](query-use-context.md)。
+反馈列表可以按目标/类别读取。对查询反馈，调用者提交正式 QueryResult；反馈 owner 保存实际问题、参与上下文、精确快照及操作关联。指定组和片段索引或已交付选区时，额外保存该组排名依据和所评价的实际片段。CLI 可用 `--query-result result.json`，程序可直接传类型化值。快照 owner 使用正式字段验证；见[查询情境](query-use-context.md)。
 
 完成输出表达“已记录反馈”或“已更正为 revision N”，附可读短引用和检索是否待更新。来源、操作关联与失败原因经共同错误与日志能力返回。

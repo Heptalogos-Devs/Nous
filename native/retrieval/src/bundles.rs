@@ -1,6 +1,6 @@
 use anyhow::{Result, ensure};
 use std::sync::Arc;
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Matrix {
     pub values: Arc<Vec<f32>>,
     pub rows: usize,
@@ -20,12 +20,12 @@ pub struct Candidates {
     pub root_indptr: Arc<Vec<u64>>,
     pub root_indices: Arc<Vec<u64>>,
 }
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Concepts {
     pub metadata_json: String,
     pub vectors: Option<Matrix>,
 }
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SourceFacts {
     pub metadata_json: String,
     pub sequence_roots: Arc<Vec<u64>>,
@@ -34,7 +34,7 @@ pub struct SourceFacts {
     pub positions: Arc<Vec<i64>>,
     pub ordered: Arc<Vec<bool>>,
 }
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Associations {
     pub metadata_json: String,
     pub sources: Arc<Vec<u64>>,

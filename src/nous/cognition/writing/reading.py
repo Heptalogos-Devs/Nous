@@ -10,7 +10,6 @@ from nous.common.errors import NousError
 from nous.common.identifier import split_revision
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
-    ContentReadView,
     ContentSelection,
     SourceSelection,
 )
@@ -24,6 +23,7 @@ from ..contracts import (
     NamespaceRef,
     RecordRef,
     RecordRevisionRef,
+    RecordSourceView,
     RecordView,
     RevisionSelection,
     RevisionSummary,
@@ -53,6 +53,7 @@ class RevisionRow(TypedDict):
     title: str | None
     title_source: TitleSource
     body_artifact_id: str
+    source_signature: str
     purpose: str | None
     author: str | None
     viewpoint: str | None
@@ -175,6 +176,49 @@ class RecordReader:
     async def sources_in(self, tx: ReadTx, revision_id: str) -> tuple[SourceBinding, ...]:
         return (await self.sources_many_in(tx, (revision_id,)))[revision_id]
 
+    async def _source_details(
+        self, bindings: Sequence[SourceBinding]
+    ) -> tuple[RecordSourceView, ...]:
+        owner_ids = {
+            binding.owner_revision.revision_id for binding in bindings if binding.owner_revision
+        }
+        titles: dict[str, str | None] = {}
+        if owner_ids:
+            async with self.database.read() as tx:
+                rows = (
+                    await tx.connection.execute(
+                        sa.select(schema.revisions.c.id, schema.revisions.c.title).where(
+                            schema.revisions.c.id.in_(owner_ids)
+                        )
+                    )
+                ).all()
+                titles = {str(row.id): row.title for row in rows}
+        selected = await self.artifacts.read_view_many(
+            [selection for binding in bindings for selection in binding.selections]
+        )
+        output: list[RecordSourceView] = []
+        offset = 0
+        for binding in bindings:
+            count = len(binding.selections)
+            output.append(
+                RecordSourceView(
+                    binding=binding,
+                    views=selected[offset : offset + count],
+                    title=titles.get(binding.owner_revision.revision_id)
+                    if binding.owner_revision
+                    else None,
+                )
+            )
+            offset += count
+        return tuple(output)
+
+    async def read_sources(self, revision: RecordRevisionRef) -> tuple[RecordSourceView, ...]:
+        """Read the precise source selections and titles attached to one revision."""
+        async with self.database.read() as tx:
+            _, row, _ = await self.resolve_in(tx, revision, revision.record_ref.namespace_id)
+            bindings = await self.sources_in(tx, row["id"])
+        return await self._source_details(bindings)
+
     async def sources_many_in(
         self, tx: ReadTx, revision_ids: Sequence[str]
     ) -> dict[str, tuple[SourceBinding, ...]]:
@@ -296,15 +340,7 @@ class RecordReader:
             else:
                 body = await self.artifacts.read_text(artifact.ref)
                 selections = (ContentSelection(artifact=artifact.ref),)
-            views: dict[str, tuple[ContentReadView, ...]] = {}
-            if sources:
-                selected_views = await self.artifacts.read_view_many(
-                    [selection for binding in bindings for selection in binding.selections]
-                )
-                offset = 0
-                for binding in bindings:
-                    views[binding.key] = selected_views[offset : offset + len(binding.selections)]
-                    offset += len(binding.selections)
+            details = await self._source_details(bindings) if sources else ()
             return RecordView(
                 ref=self._ref(row),
                 revision_ref=self.revision_ref(row, rev),
@@ -323,7 +359,7 @@ class RecordReader:
                 viewpoint=rev["viewpoint"],
                 times=CognitiveTimes.model_validate(rev["cognitive_times"]),
                 sources=bindings,
-                source_views=views,
+                source_details=details,
                 archived=row["archived"],
                 recall=row["recall"],
                 change_kind=rev["change_kind"],

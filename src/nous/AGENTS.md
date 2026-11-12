@@ -1,70 +1,70 @@
-# src/nous 开发指引
+# src/nous development guide
 
-按任务使用 [INDEX.md](INDEX.md)、CodeGraph 和实际调用链定位负责者，再阅读相关设计与实现。功能缺失或错误直接修到负责者，补强共同基础设施，不在使用处局部绕过、添加平行实现，或用包装层维持已经不合适的结构。
+Locate the owner for the task with [INDEX.md](INDEX.md), CodeGraph, and the actual call chain, then read the related design and implementation. Fix a missing or wrong capability at its owner, and strengthen the shared infrastructure. Do not bypass it locally at the use site, add a parallel implementation, or use a wrapper to keep a structure that is already unsuitable.
 
-下列规则提炼现行设计中的接入方式与关键约束，详细合同以对应设计专题为准。需要改变职责或公共契约时，同步修改负责模块、所有实际调用方和对应设计。
+The rules below distill the integration approach and the key constraints of the current design. The corresponding design topic is the authority for the detailed contract. When a responsibility or public contract changes, update the owning module, every actual caller, and the corresponding design together.
 
-## 实例与装配
+## Instance and assembly
 
-- 通过 `initialize_instance` 和 `open_instance` 管理实例。路径与身份使用 `InstanceLocator`、`ResolvedPaths` 和实例绑定；普通打开不得创建替代数据库或绕过资源锁。
-- 组合根显式构造依赖，构造完成的服务即可使用，不在发布后回填依赖。新增表由具体 owner 提供，在显式初始化时统一收集。
-- 资源纳入运行时生命周期。关闭时先停止接纳并结束操作、阻塞工作和媒体子进程，再关闭模型连接、存储、观测及实例锁；不留下运行时无法等待的后台工作。
+- Manage instances through `initialize_instance` and `open_instance`. Paths and identity use `InstanceLocator`, `ResolvedPaths`, and the instance bindings. An ordinary open must not create a replacement database or bypass the resource lock.
+- The composition root constructs dependencies explicitly. A service can be used once constructed; do not backfill dependencies after it is published. The owner of a new table supplies it, and explicit initialization collects those tables together.
+- Resources belong to the runtime lifetime. On shutdown, stop accepting work and finish operations, blocking work, and media subprocesses before closing model connections, storage, observability, and the instance lock. Leave no background work the runtime cannot wait for.
 
-## 配置
+## Configuration
 
-- 配置字段在负责模块定义并接入 `NousConfig`。来源合并、有效快照和文件保存由 `Configuration` 处理；在线与离线修改都使用 `ConfigurationOperations`。
-- 业务代码不另读环境变量、不维护默认值副本、不另写实例、时间或向量空间的绑定规则。应用操作调用实际 owner 完成绑定检查和采用。
-- 一次操作使用确定的配置快照。配置变更的即时生效或待重启行为遵循现有合同，不能由某个入口自行决定。
+- Define configuration fields in the module that owns them and connect them to `NousConfig`. `Configuration` handles source merging, the effective snapshot, and saving the file. Online and offline changes both use `ConfigurationOperations`.
+- Business code does not read environment variables on its own, keep a copy of the defaults, or write its own binding rules for the instance, time, or a vector space. An application operation calls the actual owner to check a binding and adopt it.
+- One operation uses a fixed configuration snapshot. Whether a configuration change applies immediately or waits for restart follows the existing contract. An entry point does not decide that on its own.
 
-## 执行与事务
+## Execution and transactions
 
-- 业务操作进入 `ExecutionManager.operation`。内部阶段继承当前快照和期限；阻塞工作使用 `ExecutionManager.blocking`，可中止的 Native 工作传入 `on_cancel` 并等待实际退出；后台任务使用 `spawn`。嵌套操作不得重复获取全局并发名额。
-- SQLite 使用 `Database.read` / `write` 及调用方的事务。耗时解析、网络请求和字节发布放在写事务之外；已有事务内不再调用另开事务的操作。
-- 一次正式采用在同一短事务中提交相关结果和引用。跨 owner 协作使用接收现有 `WriteTx` 的 `*_in` 方法，不通过逐个提交再补偿来拼接原子性。
+- Before binding input, application dispatch fixes the request context with `ExecutionManager.request`. A business stage uses `operation` / `stage` and inherits the configuration snapshot and the deadline. Blocking work uses `ExecutionManager.blocking`. Cancellable Native work passes `on_cancel` and waits until that work has actually exited. The current Runtime holds background maintenance with `spawn`. The actual owner manages resource capacity.
+- SQLite uses `Database.read` / `write` and the caller's transaction. Keep slow parsing, network requests, and byte publication outside the write transaction. Code that already holds a transaction does not call an operation that opens another one.
+- One formal adoption commits the related results and references in the same short transaction. Cross-owner work uses the `*_in` methods that receive the existing `WriteTx`. Do not build atomicity by committing each piece and then compensating.
 
-## 内容与来源
+## Content and sources
 
-- 字节存储使用 `ContentStore`，原件身份使用 `ArtifactStore`，处理结果使用 `ResultStore`。CAS 摘要表示字节，不能代替来源身份；同样字节的两次接纳可以有不同 Artifact。
-- 跨 owner 采用时先发布字节，再在同一 `WriteTx` 中提交各自记录。Embedding 首次空间绑定、结果和向量关系一起提交。
-- 内容接纳、媒体准备、模型请求与结果采用使用共同的引用和值类型，不另造平行的文件、来源或结果结构。选区、实际覆盖和派生关系按负责专题保持一致。
-- 原件操作位于 `content.artifacts`，结果采用位于 `content.results`；通过 `ResultStore.provenance` 读取相关祖先与终端根。血缘根集合与关系的独立支持组分别表达，不从共同使用过的材料推断独立支持。
-- Markdown 结构使用 `ArtifactStore.text_view/read_blocks` 与共同 `TextView`。块键固定正文及解析 profile，模型选段与概念标注使用这些精确引用。
-- 对于自然语言处理：禁止依据某语言关键词、词表、语言类别或内容枚举，或使用正则表达式等类似方式处理。Lexical 全文检索和用户明确要求的翻译、摘要等领域处理，继续按各自合同执行。
-- Note/Journal 的正文版本和引用由 cognition 文稿 owner 采用；模型写作先保存 ProcessingResult 与草稿，再在独立事务采用正式文稿。Concept 意义版本和正文标注也由 cognition 采用，固定各自的版本。
+- Store bytes in `ContentStore`, artifact identity in `ArtifactStore`, and processing results in `ResultStore`. A CAS digest represents bytes. It does not replace source identity. Two acceptances of the same bytes may be different Artifacts.
+- When owners adopt together, publish the bytes first, then commit each owner's records in the same `WriteTx`. The first embedding-space binding, the result, and the vector relation commit together.
+- Content acceptance, media preparation, model requests, and result adoption use the shared reference and value types. Do not invent a parallel file, source, or result structure. Selections, actual coverage, and derivation relations stay consistent with the topic that owns them.
+- Artifact operations live in `content.artifacts`, and result adoption lives in `content.results`. Read the related ancestors and the terminal root through `ResultStore.provenance`. Express the set of provenance roots and the independent-support groups of relations separately. Do not infer independent support from material that was only used together.
+- Markdown structure uses `ArtifactStore.text_view` / `read_blocks` and the shared `TextView`. A block key fixes the text and its parse profile. Model-selected segments and concept annotations use these exact references.
+- For natural-language handling, do not base that handling on a particular language's keywords, word lists, language categories, or content enumerations, and do not use regular expressions or a similar device for it. Lexical full-text search, and domain work the user has explicitly requested such as translation or summary, continues under its own contract.
+- The cognition manuscript owner adopts Note and Journal body versions and their citations. Model writing first saves the `ProcessingResult` and the draft, then adopts the formal manuscript in a separate transaction. Cognition also adopts a Concept's sense version and the body annotations, and fixes the version of each.
 
-## Prompt、模型与媒体
+## Prompts, models, and media
 
-- Prompt 选择与编译使用 `PromptCatalog` / `PromptCompiler`；静态 `TaskDefinition` 负责任务输出与来源语义；生成、转写、预览和探测经 `GenerationOperations`，协议执行经 `ModelExecutor`。媒体准备与解释使用 `MediaPreparer` / `MediaAnalysis`。
-- 网关连接和凭据由 `ModelConnections`、`Credentials` 管理。协议编码、媒体解析和转换采用现有依赖，不重复实现客户端、重试或解析器。
-- 根据明确协议、能力和任务配置选择行为，模型名原样传递，不按模型名或厂商添加业务分支。New API 的部署和管理属于开发接入，不进入产品逻辑。
-- 媒体准备负责确定性解码、选择、转换及无字节引用计划，消费前只物化一个有界批次；媒体解释负责转写、描述与结构化的策略和阶段衔接，复用共同生成操作。不要让 CLI、模型客户端或后续认知领域各写一套准备逻辑。
-- 语义材料集合由 `models.input` 规划，普通任务使用 joint；独立逐批执行由明确请求或任务定义选择。实际表示 MIME 与源 MIME 随计划保存。
-- 模型执行不访问业务数据库；结果采用由应用操作完成。模型已返回成功而保存失败时，处理采用失败，不重新请求模型。
-- 文本向量通过 `EmbeddingOperations.ensure/read` 批量获取和复用；依空间、用途和精确输入读取正式向量行，不绕过 owner 自建模型客户端或向量缓存。
-- run、ensure、probe 和临时查询共用 `EmbeddingExecutor.encode_batches`；临时查询使用 `encode_query`，已存向量使用 `VectorRef/read_vector`。表的唯一键选择规范已采用行，网络请求不持有实例级复用锁。
-- LLM 任务分工、实际输入、结果处理和提示词编写遵循 [LLM 使用与提示词设计](../../docs/agents/llm-use.md)。按模型实际收到的信息判断输出，确定性业务规则由系统负责。
+- Select and compile prompts with `PromptCatalog` / `PromptCompiler`. A static `TaskDefinition` owns the task output and the meaning of its sources. Generation, transcription, preview, and probe go through `GenerationOperations`. Protocol execution goes through `ModelExecutor`. Media preparation and interpretation use `MediaPreparer` / `MediaAnalysis`.
+- `ModelConnections` and `Credentials` manage the gateway connection and credentials. Use the existing dependencies for protocol encoding, media parsing, and conversion. Do not reimplement a client, a retry policy, or a parser.
+- Select behavior from the explicit protocol, capability, and task configuration. Pass the model name through unchanged. Do not add a business branch for a model name or a vendor. Deploying and administering New API belongs to development integration, and does not enter product logic.
+- Media preparation owns deterministic decoding, selection, conversion, and a plan that refers to bytes without carrying them. Materialize one bounded batch before consumption. Media interpretation owns the policy and the stage handoff for transcription, description, and structuring, and reuses the shared generation operations. The CLI, a model client, and a later cognition area do not each write their own preparation.
+- `models.input` plans the set of semantic material. An ordinary task uses joint. An explicit request or the task definition selects an independent semantic unit. A batch of physical representations does not change the semantic boundary. The plan stores the MIME of the actual representation and the MIME of the source.
+- Model execution does not access the business database. Application operations adopt the result. When the model has already succeeded and saving fails, handle the adoption failure. Do not request the model again.
+- Fetch and reuse text vectors in batches through `EmbeddingOperations.ensure` / `read`. Read a formal vector row by space, purpose, and exact input. Do not go around the owner with a private model client or a private vector cache.
+- `run`, `ensure`, `probe`, and a temporary query share `EmbeddingExecutor.encode_batches`. A temporary query uses `encode_query`. A stored vector uses `VectorRef` / `read_vector`. The table's unique key selects the canonical adopted row. A network request does not hold the instance-level reuse lock.
+- Divide an LLM task, choose its actual input, handle its result, and write its prompt according to [LLM use and prompt design](../../docs/agents/llm-use.md). Judge the output by the information the model actually received. The system owns deterministic business rules.
 
-## Wave 与 Native
+## Wave and Native
 
-- 认知域在一致读事务中提供正式文稿、概念、标注和来源视图；`WaveOperations` 接收类型化 `CorpusView`，与清单导入共用资产构建和快照发布。PDF 检索复用 `MediaPreparer`。交给 Native 的只有冻结数组和可重建资产。
-- 构建发布不可变快照；查询、Thinking 和原文读取消费该快照。原始来源序列、候选曲线文稿和独立证据根是不同身份，派生材料不能重复贡献独立事实。
-- Wave 参数由 Rust 导出并在 `WaveConfig` 接入共同配置；Python 不实现备用检索算法。Native 计算池、取消令牌和数据边界见 [native/AGENTS.md](../../native/AGENTS.md)。
+- In one consistent read transaction, the cognition domain supplies the formal manuscripts, concepts, annotations, and source views. `WaveOperations` receives a typed `CorpusView` and shares asset construction and snapshot publication with manifest import. PDF retrieval reuses `MediaPreparer`. Native receives only frozen arrays and rebuildable assets.
+- A build publishes an immutable snapshot. Query, Thinking, and reading the original text consume that snapshot. An original source sequence, a candidate-curve manuscript, and an independent evidence root are different identities. Derived material does not contribute the same independent fact again.
+- Rust exports the Wave parameters, and `WaveConfig` connects them to the shared configuration. Python does not implement a fallback retrieval algorithm. See [native/AGENTS.md](../../native/AGENTS.md) for the Native pool, the cancellation token, and the data boundary.
 
-## 时间、错误与观测
+## Time, errors, and observation
 
-- 时间使用 `temporal` 的域、时钟和值类型，坐标域通过 `TimeService.validate` 校验注册，保留未知值、精度和坐标域。媒体页码、帧号和相对时段不能当成现实时间。
-- 错误使用 `NousError`，由入口负责呈现。不要用空结果、默认数据或成功状态掩盖实际失败。
-- 根操作关联、尝试与已完成引用由共同操作上下文携带；请求使用 `models.policy.attempt_scope`。取消保持原异常类型到入口，诊断通过 `runtime logs --operation` 读取现有 JSONL。
-- 基础埋点使用标准 logging 和 `observability.instrumentation`；SDK 装配留在 `observability.assembly`。基础模块不因埋点反向依赖完整 SDK、exporter 或业务装配。
-- 日志、错误和正式结果不得包含凭据。
+- Represent time with the domains, clocks, and value types in `temporal`. `TimeService.validate` checks that a coordinate domain is registered. Preserve unknown values, precision, and the coordinate domain. A media page number, a frame number, or a relative interval must not be treated as real-world time.
+- Use `NousError`. The entry point presents it. Do not hide an actual failure behind an empty result, default data, or a success status.
+- The shared operation context carries the root-operation correlation, the attempts, and the completed references. A request uses `models.policy.attempt_scope`. Cancellation keeps its original exception type until the entry point. Read diagnostics from the existing JSONL with `runtime logs --operation`.
+- Basic instrumentation uses the standard logging library and `observability.instrumentation`. SDK assembly stays in `observability.assembly`. A basic module does not take a reverse dependency on the full SDK, an exporter, or business assembly for the sake of instrumentation.
+- Logs, errors, and formal results contain no credentials.
 
-## 入口与职责
+## Entries and responsibilities
 
-- CLI 负责参数转换、调用完整操作和呈现，业务规则留在共同操作中。语言选择与文案使用 `presentation`。
-- 用户调用应完成有意义的操作，不要求用户逐个执行内部 prepare、publish、attach 或编译步骤。
-- 后续入口复用同一应用操作，不把所有内部方法逐一暴露为工具，也不为尚未开展的 HTTP、MCP、SDK 或持久任务建立占位实现。
-- 新能力先检查现有 owner 和已选依赖，按真实高内聚职责组织代码，不为每个术语创建一层类、文件或包。
+- The CLI converts arguments, calls a complete operation, and presents the result. Business rules stay in the shared operations. Language selection and copy use `presentation`.
+- A user invocation should complete a meaningful operation. It does not require the user to run the internal prepare, publish, attach, or compile steps one by one.
+- The CLI, an SDK, and the host reuse the same application operations. Register the typed request, result, and events with `define_operation`. Bind external input through `CallContext.inputs`. After the formal commit, publish the product reference with `call.saved`. A later entry keeps that contract. Do not expose every internal method as its own tool.
+- For a new capability, check the existing owner and the dependencies already chosen, and organize the code by the real high-cohesion responsibility. Do not create a layer of class, file, or package for every term.
 
-## 维护源码知识
+## Maintaining source knowledge
 
-职责、公共契约、配置归属或实际调用方式改变时，更新 [INDEX.md](INDEX.md)、本文件中对应的接入约束和受影响的设计专题，移除失效指引。INDEX.md 用于找到负责位置，本文件说明如何接入，两者都不复制完整设计或累积实现历史。
+When a responsibility, a public contract, configuration ownership, or an actual calling pattern changes, update [INDEX.md](INDEX.md), the corresponding connection constraint in this file, and the affected design topic, and remove guidance that no longer holds. INDEX.md locates the responsible place. This file says how to connect to it. Neither one copies the full design or accumulates implementation history.

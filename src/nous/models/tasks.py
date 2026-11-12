@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, dataclass, fields
 from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.common.errors import NousError
-from nous.content.contracts import Artifact, InputGroup, OutputContent, SourceSelection
+from nous.content.contracts import (
+    Artifact,
+    ContentSelection,
+    InputGroup,
+    OutputContent,
+    OutputRole,
+    SourceFacts,
+    SourceSelection,
+    is_text_media_type,
+)
 from nous.media.contracts import MediaPlan, PreparedSource
 
 from .contracts import ReadingInput
@@ -73,28 +82,33 @@ def schema_semantics(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 
 @dataclass(frozen=True)
+class NamedOutput:
+    """A named task output and its user-facing role and representation."""
+
+    name: str
+    description: str
+    role: OutputRole = "primary"
+    representation_kind: str | None = None
+
+
+@dataclass(frozen=True)
 class TaskDefinition:
     """Define a language task's input, validation and named output semantics.
 
     Subclasses can prepare task-specific source plans, validate the model's
     value against the actual reading, and interpret it into outputs. Source keys
-    refer to prepared sources in that reading. ``program_outputs`` identifies
-    named outputs computed by task code for result provenance; it is not a request
-    for the model to generate those outputs.
+    refer to prepared sources in that reading. Output roles and representations
+    are declared once alongside their names.
     """
 
     id: str
     output_type: type[BaseModel] | None = None
-    source_field: str | None = None
-    selected_passages: bool = False
     input_mode: str = "joint"
     preserve_source_keys: bool = False
     required_capabilities: tuple[str, ...] = ("text",)
-    named_outputs: tuple[tuple[str, str], ...] = (
-        ("output", "Task response: text or the declared structured output."),
+    named_outputs: tuple[NamedOutput, ...] = (
+        NamedOutput("output", "Task response: text or the declared structured output."),
     )
-    source_representation: str | None = None
-    program_outputs: tuple[str, ...] = ()
     required_roles: tuple[str, ...] = ()
     text_input_mode: Literal["lossless", "structured"] = "lossless"
 
@@ -107,11 +121,14 @@ class TaskDefinition:
             )
             if self.output_type
             else None,
-            "source_field": self.source_field,
-            "selected_passages": self.selected_passages,
-            "named_outputs": [name for name, _ in self.named_outputs],
-            "source_representation": self.source_representation,
-            "program_outputs": list(self.program_outputs),
+            "named_outputs": [
+                {
+                    "name": item.name,
+                    "role": item.role,
+                    "representation_kind": item.representation_kind,
+                }
+                for item in self.named_outputs
+            ],
         }
 
     def supports_schema(self, schema: JsonValue) -> bool:
@@ -158,11 +175,14 @@ class TaskDefinition:
         capabilities: list[JsonValue] = list(self.required_capabilities)
         if self.output_type is not None or self.id == "custom-reading":
             capabilities.append("structured_output")
-        outputs = dict(self.named_outputs)
-        if self.selected_passages:
-            outputs["passages"] = (
-                "Exact selected source passages with immutable content references."
-            )
+        outputs: dict[str, JsonValue] = {
+            item.name: {
+                "description": item.description,
+                "role": item.role,
+                "representation_kind": item.representation_kind,
+            }
+            for item in self.named_outputs
+        }
         return {
             "id": self.id,
             "input": {
@@ -179,15 +199,11 @@ class TaskDefinition:
             },
             "variables": variables,
             "output": output,
-            "source_field": self.source_field,
-            "selected_passages": self.selected_passages,
             "input_mode": self.input_mode,
             "text_input_mode": self.text_input_mode,
             "preserve_source_keys": self.preserve_source_keys,
             "required_capabilities": capabilities,
-            "named_outputs": cast(dict[str, JsonValue], outputs),
-            "source_representation": self.source_representation,
-            "program_outputs": list[JsonValue](self.program_outputs),
+            "named_outputs": outputs,
             "required_roles": list[JsonValue](self.required_roles),
             "media_capabilities": "Determined from the actual InputPlan representations; no request input supplied.",
         }
@@ -208,6 +224,12 @@ class TaskDefinition:
         """
         return None
 
+    def independent_ranges(
+        self, source: ContentSelection, facts: SourceFacts | None
+    ) -> tuple[SourceSelection, ...]:
+        """Keep each selected range intact unless this task declares domain segmentation."""
+        return (source.selection,)
+
     def validate_input(self, reading: ReadingInput) -> None:
         """Require declared source roles in the actual prepared reading.
 
@@ -224,33 +246,9 @@ class TaskDefinition:
             )
 
     def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
-        """Validate structured output and its keys against actual prepared sources.
-
-        Returns:
-            The validated JSON value; selected-passage keys are deduplicated in
-            first-occurrence order.
-
-        Raises:
-            ValueError: A referenced source key is absent from the reading, or
-                output validation fails. Execution may use validation feedback
-                within its configured repair and attempt budget.
-        """
+        """Validate the task's declared output type."""
         if self.output_type is not None:
             value = self.output_type.model_validate(value).model_dump(mode="json")
-        known = {source.key for source in reading.sources}
-        if self.source_field is not None:
-            structured = cast(dict[str, JsonValue], value)
-            if self.selected_passages:
-                keys = cast(list[str], structured[self.source_field])
-                structured[self.source_field] = list(dict.fromkeys(keys))
-            else:
-                keys = [
-                    str(key)
-                    for item in cast(list[dict[str, JsonValue]], structured["items"])
-                    for key in cast(list[str], item[self.source_field])
-                ]
-            if set(keys) - known:
-                raise ValueError(f"Unknown source keys: {sorted(set(keys) - known)}")
         return value
 
     async def outputs(
@@ -272,12 +270,7 @@ class TaskDefinition:
             producer: Optional producer metadata available to task extensions.
 
         Returns:
-            Named outputs, including ``output`` and, for passage selection,
-            exact selected text and content references in ``passages``.
-
-        Raises:
-            NousError: ``model.invalid_output`` for non-text unstructured output
-                or ``model.invalid_source`` for a passage without an exact group.
+            Named response bytes for this task's output declaration.
         """
         if structured:
             output = OutputContent(
@@ -289,34 +282,98 @@ class TaskDefinition:
             output = OutputContent(data=value.encode())
         else:
             raise NousError("model.invalid_output", "Text task returned non-text output")
-        outputs = {"output": output}
-        if self.selected_passages:
-            source_map = {source.key: source for source in reading.sources}
-            excerpts: list[dict[str, JsonValue]] = []
-            for key in cast(list[str], cast(dict[str, JsonValue], value)["keys"]):
-                source = source_map[key]
-                if source.group is None:
-                    raise NousError(
-                        "model.invalid_source", "Selected source has no exact content reference"
-                    )
-                for part in source.group.parts:
-                    artifact = await artifacts.get(part.content.artifact)
-                    if (
-                        artifact.media_type.startswith("text/")
-                        or artifact.media_type == "application/json"
-                    ):
-                        excerpts.append(
-                            {
-                                "key": key,
-                                "text": await artifacts.read_selection(part.content),
-                                "content": part.content.model_dump(mode="json"),
-                            }
-                        )
-            outputs["passages"] = OutputContent(
-                data=json.dumps(excerpts, ensure_ascii=False, indent=2).encode(),
-                media_type="application/json",
-                display_name="passages.json",
+        return {"output": output}
+
+    def describe_outputs(self, outputs: Mapping[str, OutputContent]) -> dict[str, OutputContent]:
+        """Apply this task's output declarations to the completed bytes."""
+        declarations = {item.name: item for item in self.named_outputs}
+        if len(declarations) != len(self.named_outputs) or set(outputs) - declarations.keys():
+            raise NousError(
+                "model.invalid_output", "Task returned an undeclared or duplicate output"
             )
+        return {
+            name: value.model_copy(
+                update={
+                    "role": declarations[name].role,
+                    "representation_kind": declarations[name].representation_kind,
+                }
+            )
+            for name, value in outputs.items()
+        }
+
+
+def _validate_source_keys(keys: Sequence[str], reading: ReadingInput) -> None:
+    known = {source.key for source in reading.sources}
+    if set(keys) - known:
+        raise ValueError(
+            f"Unknown source keys: {sorted(set(keys) - known)}; "
+            f"use the complete keys {sorted(known)}"
+        )
+
+
+class InformationExtractionTask(TaskDefinition):
+    def __init__(self) -> None:
+        super().__init__("information-extraction", output_type=ExtractedInformation)
+
+    def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
+        result = ExtractedInformation.model_validate(value)
+        _validate_source_keys([key for item in result.items for key in item.source_keys], reading)
+        return result.model_dump(mode="json")
+
+
+class PassageSelectionTask(TaskDefinition):
+    def __init__(self) -> None:
+        super().__init__(
+            "passage-selection",
+            output_type=PassageSelection,
+            named_outputs=(
+                NamedOutput("output", "Selected source keys."),
+                NamedOutput("passages", "Exact selected source passages.", role="auxiliary"),
+            ),
+        )
+
+    def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
+        result = PassageSelection.model_validate(value)
+        _validate_source_keys(result.keys, reading)
+        return result.model_copy(update={"keys": list(dict.fromkeys(result.keys))}).model_dump(
+            mode="json"
+        )
+
+    async def outputs(
+        self,
+        value: JsonValue,
+        reading: ReadingInput,
+        artifacts: ArtifactStore,
+        *,
+        structured: bool,
+        producer: dict[str, JsonValue] | None = None,
+    ) -> dict[str, OutputContent]:
+        outputs = await super().outputs(
+            value, reading, artifacts, structured=structured, producer=producer
+        )
+        source_map = {source.key: source for source in reading.sources}
+        excerpts: list[dict[str, JsonValue]] = []
+        for key in PassageSelection.model_validate(value).keys:
+            source = source_map[key]
+            if source.group is None:
+                raise NousError(
+                    "model.invalid_source", "Selected source has no exact content reference"
+                )
+            for part in source.group.parts:
+                artifact = await artifacts.get(part.content.artifact)
+                if is_text_media_type(part.media_type or artifact.media_type):
+                    excerpts.append(
+                        {
+                            "key": key,
+                            "text": await artifacts.read_selection(part.content),
+                            "content": part.content.model_dump(mode="json"),
+                        }
+                    )
+        outputs["passages"] = OutputContent(
+            data=json.dumps(excerpts, ensure_ascii=False, indent=2).encode(),
+            media_type="application/json",
+            display_name="passages.json",
+        )
         return outputs
 
 
@@ -339,14 +396,21 @@ def builtin_tasks() -> TaskCatalog:
     return TaskCatalog(
         (
             TaskDefinition("reading-summary"),
-            TaskDefinition("media-description", source_representation="description"),
-            TaskDefinition("information-extraction", ExtractedInformation, "source_keys"),
-            TaskDefinition("passage-selection", PassageSelection, "keys", True),
+            TaskDefinition(
+                "media-description",
+                named_outputs=(
+                    NamedOutput("output", "Media description.", representation_kind="description"),
+                ),
+            ),
+            InformationExtractionTask(),
+            PassageSelectionTask(),
             TaskDefinition("custom-reading"),
             TaskDefinition(
                 "transcription",
                 required_capabilities=("audio",),
-                source_representation="transcript",
+                named_outputs=(
+                    NamedOutput("output", "Transcript.", representation_kind="transcript"),
+                ),
             ),
         )
     )

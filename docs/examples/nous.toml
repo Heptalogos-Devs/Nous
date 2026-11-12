@@ -21,7 +21,7 @@ null_fields = []
 shutdown_grace_seconds = 30
 
 [execution]
-max_in_flight = 16
+max_background_tasks = 16
 max_blocking_workers = 4
 # default_timeout_seconds 缺失表示采用默认 null。
 

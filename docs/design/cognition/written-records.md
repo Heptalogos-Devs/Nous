@@ -31,7 +31,7 @@ set_recall(target, enabled, *, expected=None) -> RecordOutcome
 
 body 是 UTF-8 Markdown 或已存在的 text Artifact；接受文本输入、文件或引用由共同内容操作转换。手工创建正文为空时返回有用错误。title 缺省从首个 H1 提取，无 H1 时 title 为 None，由 presentation 按界面语言展示未命名标题；正文和作者标题不翻译。标题不充当唯一身份。
 
-apply/replace 的正文与 metadata 形成新 revision；不把旧时刻伪写成新记录时刻。未提供 sources 表示保留旧绑定，显式空数组表示移除；被正文实际引用的 key 必须仍可解析。更改作者/目的/视角也保留修订历史。
+apply/replace 的正文与 metadata 形成新 revision；不把旧时刻伪写成新记录时刻。未提供 SourceChanges 时保留旧绑定；明确清空或移除使用 SourceChanges。被正文实际引用的 key 必须仍可解析。更改作者/目的/视角也保留修订历史。
 
 archive/restore、recall 修改只改变成员状态，不重写正文；实际可召回视图发生变化时在同一事务推进 Namespace generation。`expected` 固定操作所依据的修订；目标和前置条件的解析、身份与并发规则见[稳定身份](../foundation/stable-identities.md)。旧内容精确读取继续可用。公开永久删除不在本轮范围。
 
@@ -41,7 +41,7 @@ archive/restore、recall 修改只改变成员状态，不重写正文；实际�
 
 先核对 `expected`；只有基准有效且同一正文与所有 metadata 均未变化时返回 unchanged，不制造新 revision/generation。比较由当前正式值完成。
 
-WrittenRecords 返回已提交的 CommittedRecord；RecordOperations 使用 AfterWrite 组织标注与刷新，返回 RecordOutcome（record、各阶段结果、operation context 和 jobs）。后台任务与正文在同一事务登记；前台阶段在提交后执行。程序内句柄绑定 NamespaceRef；CLI 的维护参数转换为同一 AfterWrite。具体合同见[持久维护](durable-maintenance.md)与[精确编辑](exact-editing.md)。
+WrittenRecords 返回已提交的 CommittedRecord；RecordOperations 使用 AfterWrite 在提交后组织标注与刷新，返回 RecordOutcome（commit、maintenance、issues）。后台任务由当前 Runtime 持有；CLI 的维护参数转换为同一 AfterWrite。具体合同见[提交后维护](durable-maintenance.md)与[精确编辑](exact-editing.md)。
 
 ## 视角和时间
 
@@ -49,4 +49,4 @@ author/viewpoint 描述实际作者或主体，模型执行者从 ProcessingResu
 
 recorded 为事务的真实 UTC，revision 顺序消除同刻歧义。formed 可由调用者给认知时间域；未给则记录系统生成时刻及其域，不猜虚拟时间。occurred/observed/valid 只保存有实际声明的值；媒体页/秒不能映射为这些时间。
 
-RecordOutcome 的 annotation 和 retrieval 阶段使用 `not_requested|pending|ready|failed`，后台登记时附对应 JobRef。主保存失败是 error，已保存而明确前台阶段失败是 partial，并附已保存引用。
+维护结果区分 completed、started 和 not_started；完成后的标注和刷新分别给出实际状态。主保存失败返回错误；已保存后维护失败时保留正式引用与问题。

@@ -32,6 +32,6 @@ HTTP/MCP 将来映射相同错误数据，不让领域依赖 HTTP 状态码。`r
 
 ## 错误的操作上下文
 
-根操作边界为 NousError 补齐 operation_id、存在时的 trace_id、stage、attempts 和 completed_result_refs。已经具有更准确 code/cause 的错误直接传播，不换成另一层同义包装。取消/超时保持原异常类型到入口，通过共同错误上下文值传递阶段和已完成结果，不依赖 CLI 扫描任意 JSON notes。
+根操作边界为 NousError 补齐 operation_id、存在时的 trace_id、stage、attempts 和已提交成果的类型化 completed_refs。已经具有更准确 code/cause 的错误直接传播，不换成另一层同义包装。取消/超时保持原异常类型到入口，通过共同错误上下文值传递阶段和已完成结果，不依赖 CLI 扫描任意 JSON notes。
 
 参数解析阶段尚无操作关联时保持缺省。用户能用错误关联查询同一次请求的实际尝试，终端不因关联字段挤掉原因和可恢复结果。

@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
-from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, cast
 
 import jsonschema
 from openai import APIConnectionError, APIStatusError
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from pydantic_ai.direct import model_request, model_request_stream
+from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
     UnexpectedModelBehavior,
@@ -22,12 +20,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
-    TextPart,
-    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -41,10 +35,7 @@ from pydantic_ai.usage import RequestUsage
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
-from nous.content.contracts import ArtifactRef
-from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
-    ModelExecutionConfig,
     ModelRegistry,
     ModelRoute,
     TaskAssignment,
@@ -61,125 +52,14 @@ from .policy import (
     route_unavailable,
     stage_deadline,
 )
-from .prompts import CompiledPrompt, PromptCompiler, PromptResource
+from .prompts import CompiledPrompt, PromptCompiler
 from .protocol import CompatibleChatModel
+from .requests import FrozenTask, PreparedAttempt, PreparedGeneration, estimate_text
+from .streaming import GenerationStream
 
 if TYPE_CHECKING:
     from nous.network import ModelConnections
     from nous.runtime.execution import OperationContext
-
-
-@dataclass(frozen=True)
-class UnavailableTask:
-    """A frozen prerequisite failure, reported only if its route is selected."""
-
-    task: str
-    code: str
-    message: str
-    details: dict[str, JsonValue]
-    retryable: bool
-
-
-@dataclass(frozen=True)
-class FrozenTask:
-    task: str
-    assignment: TaskAssignment
-    routes: tuple[ModelRoute, ...]
-    resource: PromptResource | None
-    ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
-    execution_limits: ModelExecutionConfig | None = None
-    media_settings: MediaConfig | None = None
-    transcription: ArtifactRef | UnavailableTask | None = None
-
-
-@dataclass(frozen=True)
-class PreparedAttempt:
-    """The immutable representation, protocol parameters and allowance sent on one route."""
-
-    route: ModelRoute
-    compiled: CompiledPrompt
-    parameters: dict[str, JsonValue]
-    max_output_tokens: int
-    estimated_text_tokens: int
-    attempt_number: int
-    sdk_messages: tuple[ModelMessage, ...]
-
-    def to_dict(self) -> dict[str, JsonValue]:
-        return {
-            **self.compiled.to_dict(),
-            "model_id": self.route.model_id,
-            "requested_model_name": self.route.model.model_name,
-            "parameters": self.parameters,
-            "max_output_tokens": self.max_output_tokens,
-            "estimated_text_tokens": self.estimated_text_tokens,
-            "media_tokens": None,
-            "input_token_count_kind": "utf8-bytes/3 estimate; media unknown",
-            "attempt_number": self.attempt_number,
-        }
-
-
-@dataclass(frozen=True)
-class PreparedGeneration:
-    """Keep the selected input compiled and later routes deferred across this stage."""
-
-    task: str
-    assignment: TaskAssignment
-    compiled: CompiledPrompt
-    routes: tuple[ModelRoute, ...]
-    snapshot: ConfigSnapshot
-    max_attempts: int
-    timeout_seconds: float
-    max_output_tokens: int
-    structured_retries: int
-    estimated_input_tokens: int
-    stage_refs: tuple[str, ...] = ()
-    ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
-    attempt_plans: tuple[PreparedAttempt, ...] = ()
-    coverage: dict[str, JsonValue] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, JsonValue]:
-        return {
-            **self.compiled.to_dict(),
-            "task": self.task,
-            "model_id": self.routes[0].model_id,
-            "requested_model_name": self.routes[0].model.model_name,
-            "output_mode": self.assignment.output_mode,
-            "parameters": self.attempt_plans[0].parameters
-            if self.attempt_plans
-            else self.routes[0].preset.model_dump(mode="json"),
-            "max_output_tokens": self.max_output_tokens,
-            "estimated_input_tokens": self.estimated_input_tokens,
-            "input_token_count_kind": "estimated",
-            "config_version": self.snapshot.version,
-            "ineligible_routes": self.ineligible_routes,
-            "deferred_routes": [route.model_id for route in self.routes[1:]],
-            "media_tokens": None,
-            "prepared_attempts": [attempt.to_dict() for attempt in self.attempt_plans],
-            "stage_result_refs": list(self.stage_refs),
-        }
-
-
-def _estimate_text(compiled: CompiledPrompt) -> int:
-    length = sum(
-        len(str(part.get("text", "")).encode())
-        for message in compiled.preview
-        for part in cast(list[dict[str, JsonValue]], message["content"])
-        if part.get("type") == "text"
-    )
-    return math.ceil(
-        (length + (len(json.dumps(compiled.schema).encode()) if compiled.schema else 0)) / 3
-    )
-
-
-@dataclass
-class GenerationStream:
-    """Expose deltas immediately and fill result after complete response validation."""
-
-    deltas: AsyncGenerator[str] = field(init=False)
-    result: GenerationResult | None = None
-
-    def __aiter__(self) -> AsyncGenerator[str]:
-        return self.deltas
 
 
 class ModelExecutor:
@@ -250,7 +130,7 @@ class ModelExecutor:
             if v is not None
         )
         # Explicitly estimated; provider usage is retained separately.
-        estimate = _estimate_text(compiled)
+        estimate = estimate_text(compiled)
         input_limit = min(
             current_limits.max_input_tokens,
             limits.max_input_tokens,
@@ -441,7 +321,7 @@ class ModelExecutor:
                 "model.profile_invalid", "Streaming completion requires an explicit finish reason"
             )
 
-    def _model(self, route: ModelRoute) -> OpenAIChatModel:
+    def model_for_route(self, route: ModelRoute) -> OpenAIChatModel:
         profile = OpenAIModelProfile(
             supports_json_schema_output="native" in route.model.output_modes,
             supports_tools="tool" in route.model.output_modes,
@@ -460,7 +340,9 @@ class ModelExecutor:
             profile=profile,
         )
 
-    def _settings(self, prepared: PreparedGeneration, route: ModelRoute) -> OpenAIChatModelSettings:
+    def model_settings(
+        self, prepared: PreparedGeneration, route: ModelRoute
+    ) -> OpenAIChatModelSettings:
         self._check_route(route, prepared.assignment, prepared.compiled, prepared.snapshot)
         output_limit = min(
             value
@@ -498,7 +380,7 @@ class ModelExecutor:
         )
 
     @staticmethod
-    def _parameters(prepared: PreparedGeneration) -> ModelRequestParameters:
+    def request_parameters(prepared: PreparedGeneration) -> ModelRequestParameters:
         schema = prepared.compiled.schema
         if schema is None:
             return ModelRequestParameters()
@@ -526,7 +408,7 @@ class ModelExecutor:
         self, prepared: PreparedGeneration, route: ModelRoute
     ) -> dict[str, JsonValue]:
         """Persist the effective SDK parameters without serializing connection resources."""
-        settings = dict(self._settings(prepared, route))
+        settings = dict(self.model_settings(prepared, route))
         settings.pop("timeout", None)
         timeout = self.connections.timeout(route.model.provider, prepared.snapshot)
         return {
@@ -540,7 +422,7 @@ class ModelExecutor:
             },
         }
 
-    def _result(
+    def response_result(
         self,
         prepared: PreparedGeneration,
         route: ModelRoute,
@@ -627,7 +509,7 @@ class ModelExecutor:
         )
 
     @staticmethod
-    async def _prepare_route(
+    async def prepare_route(
         initial: PreparedGeneration,
         index: int,
         prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None,
@@ -680,7 +562,7 @@ class ModelExecutor:
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
                 if route != active.routes[0]:
-                    active, route_index = await self._prepare_route(
+                    active, route_index = await self.prepare_route(
                         prepared, route_index, prepare_route, unavailable
                     )
                     route = active.routes[0]
@@ -704,13 +586,13 @@ class ModelExecutor:
                     try:
                         async with asyncio.timeout(route.preset.timeout_seconds):
                             response = await model_request(
-                                self._model(route),
+                                self.model_for_route(route),
                                 list(submission.sdk_messages),
-                                model_settings=self._settings(active, route),
-                                model_request_parameters=self._parameters(active),
+                                model_settings=self.model_settings(active, route),
+                                model_request_parameters=self.request_parameters(active),
                             )
                         total_usage.incr(response.usage)
-                        result = self._result(active, route, response, attempt)
+                        result = self.response_result(active, route, response, attempt)
                         scope.complete(
                             outcome="success",
                             provider_request_id=response.provider_response_id,
@@ -820,136 +702,15 @@ class ModelExecutor:
                 )
         raise AssertionError("attempt limit must be positive")
 
-    @asynccontextmanager
-    async def stream(
+    def stream(
         self,
         prepared: PreparedGeneration,
         context: OperationContext | None = None,
         *,
         prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
-    ) -> AsyncGenerator[GenerationStream]:
-        """Close the active SDK response when iteration finishes, fails or is abandoned."""
-        if prepared.compiled.schema is not None:
-            raise NousError(
-                "model.stream_structured", "Structured output is returned after complete validation"
-            )
-        stream = GenerationStream()
-        # The generator owns and closes every response, including early exit by the consumer.
-        stream.deltas = self._deltas(prepared, context, stream, prepare_route)
-        try:
-            yield stream
-        finally:
-            await stream.deltas.aclose()
-
-    async def _deltas(
-        self,
-        prepared: PreparedGeneration,
-        context: OperationContext | None,
-        target: GenerationStream | None = None,
-        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
-    ) -> AsyncGenerator[str]:
-        visible = False
-        report_start = len(attempt_reports())
-        active = prepared
-        route_index = 0
-        unavailable = dict(prepared.ineligible_routes)
-        async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
-            for attempt in range(1, prepared.max_attempts + 1):
-                route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
-                if route != active.routes[0]:
-                    active, route_index = await self._prepare_route(
-                        prepared, route_index, prepare_route, unavailable
-                    )
-                    route = active.routes[0]
-                if "stream" not in route.model.capabilities:
-                    raise NousError(
-                        "model.capability_missing",
-                        f"Model {route.model_id} does not declare streaming",
-                    )
-                submission = self.prepare_attempt(active, route, attempt)
-                retry_error: BaseException | None = None
-                result: GenerationResult | None = None
-                with attempt_scope(
-                    attempt,
-                    {"model_id": route.model_id, "provider": route.model.provider},
-                    prepared.task,
-                ) as scope:
-                    try:
-                        async with (
-                            asyncio.timeout(route.preset.timeout_seconds),
-                            model_request_stream(
-                                self._model(route),
-                                list(submission.sdk_messages),
-                                model_settings=self._settings(active, route),
-                                model_request_parameters=self._parameters(active),
-                            ) as response,
-                        ):
-                            async for event in response:
-                                delta = (
-                                    event.part.content
-                                    if isinstance(event, PartStartEvent)
-                                    and isinstance(event.part, TextPart)
-                                    else event.delta.content_delta
-                                    if isinstance(event, PartDeltaEvent)
-                                    and isinstance(event.delta, TextPartDelta)
-                                    else ""
-                                )
-                                if delta:
-                                    visible = True
-                                    yield delta
-                            result = self._result(active, route, response.get(), attempt)
-                            scope.complete(
-                                outcome="success",
-                                provider_request_id=cast(
-                                    str | None, result.producer.get("request_id")
-                                ),
-                                reported_usage=result.usage,
-                            )
-                    except asyncio.CancelledError, GeneratorExit:
-                        scope.complete(outcome="cancelled", next_action="close_stream")
-                        raise
-                    except (
-                        APIConnectionError,
-                        APIStatusError,
-                        TimeoutError,
-                        ModelAPIError,
-                        UnexpectedModelBehavior,
-                        NousError,
-                    ) as error:
-                        retry = not visible and attempt < prepared.max_attempts and retryable(error)
-                        scope.complete(
-                            **error_report(
-                                error,
-                                next_action=(
-                                    "next_route"
-                                    if route_index + 1 < len(prepared.routes)
-                                    else "retry_same_route"
-                                )
-                                if retry
-                                else "raise",
-                            )
-                        )
-                        if not retry:
-                            failure = model_error(error, attempt)
-                            failure.details["partial_output_delivered"] = visible
-                            raise failure from error
-                        route_index += 1
-                        retry_error = error
-                if retry_error is not None:
-                    await retry_delay(retry_error)
-                    continue
-                assert result is not None
-                if target is not None:
-                    target.result = replace(
-                        result,
-                        request={
-                            **result.request,
-                            "prepared_attempt": submission.to_dict(),
-                            "attempt_reports": attempt_reports(report_start),
-                            "ineligible_routes": unavailable,
-                        },
-                    )
-                return
+    ) -> GenerationStream:
+        """Own a streaming response until its context exits."""
+        return GenerationStream(self, prepared, context, prepare_route)
 
     async def discover(self, provider: str, snapshot: ConfigSnapshot) -> list[str]:
         try:

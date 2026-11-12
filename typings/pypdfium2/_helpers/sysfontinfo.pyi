@@ -7,46 +7,37 @@ from pypdfium2_cfg.stl import cached_property
 
 __all__ = ("PdfSysfontBase", "PdfDefaultTTFMap")
 logger = ...
-class _DefaultSysfontInfoClass(pdfium_i.AutoCastable):
-    def __init__(self) -> None:
-        ...
-    
-    @cached_property
-    def raw(self) -> Any:
-        ...
-    
-    def close(self) -> None:
-        ...
-    
 
+class _DefaultSysfontInfoClass(pdfium_i.AutoCastable):
+    def __init__(self) -> None: ...
+    @cached_property
+    def raw(self) -> Any: ...
+    def close(self) -> None: ...
 
 _DefaultSysfontInfo = ...
+
 class _DefaultTTFMapClass:
     @cached_property
-    def value(self) -> dict[Any, Any]:
-        ...
-    
-    def get(self, key, default=...):
-        ...
-    
-
+    def value(self) -> dict[Any, Any]: ...
+    def get(self, key, default=...): ...
 
 PdfDefaultTTFMap = ...
 _CallbackNames = ...
+
 class PdfSysfontBase(pdfium_i.AutoCastable):
     """
     Base helper class to create a ``FPDF_SYSFONTINFO`` callback system.
     Callbacks can be implemented by subclassing (see `fpdf_sysfontinfo.h` for available callouts and documentation).
-    
+
     This constructor merely creates the underlying ``FPDF_SYSFONTINFO`` instance.
     Call :meth:`.setup` to actually register it with pdfium.
-    
+
     System font handlers may wrap another implementation, by default the root implementation provided by pdfium.
     When a callback is not implemented, it will be automatically delegated to the default handler.
     See the example below for how to invoke the default handler in a callback:
-    
+
     .. code-block:: python
-        
+
         class MySysfontImpl (PdfSysfontBase):
             # substitute CallbackName accordingly
             def CallbackName(self, _, arg1, arg2, ...)
@@ -56,22 +47,22 @@ class PdfSysfontBase(pdfium_i.AutoCastable):
                 out = self.default.CallbackName(self.default, arg1, arg2, ...)
                 print("Wrap after")
                 return out
-    
+
     Alternatively, if using subclassing, you may want\n
     .. code-block:: python\n
         out = super().CallbackName(_, arg1, arg2, ...)\n
     when the next class in the MRO has an implementation that you want to call.
-    
+
     Parameters:
         default (None | FPDF_SYSFONTINFO | PdfSysfontBase):
             The sysfont handler to be wrapped. If None (the default), pdfium's root implementation will be used.
             Otherwise, this can be either a raw ``FPDF_SYSFONTINFO`` or another :class:`.PdfSysfontBase` instance.
-    
+
     Note:
         When another :class:`.PdfSysfontBase` is being wrapped, some tricks are applied to avoid overhead:\n
         - Where wrapper and child share the same callback, the child method will be forwarded to the wrapper (so, as a side effect, even stacking instances of the same class would result in only one call).
         - Also, only in the actual ``FPDF_SYSFONTINFO`` object are callbacks ever enclosed in their :func:`~ctypes.CFUNCTYPE`, whereas wrappers call the original function directly.
-    
+
     Attributes:
         raw (FPDF_SYSFONTINFO):
             The underlying ``FPDF_SYSFONTINFO`` interface struct implemented by this class. May wrap :attr:`.default`.
@@ -81,14 +72,13 @@ class PdfSysfontBase(pdfium_i.AutoCastable):
             The ``FPDF_SYSFONTINFO`` struct version used. Matches :attr:`.default.version` and :attr:`.raw.version`.
             This is provided for interface compatibility with ``FPDF_SYSFONTINFO``, so that :attr:`.default` can be either a raw struct or :class:`.PdfSysfontBase`.
     """
+
     SINGLETON = ...
-    def __init__(self, default=...) -> None:
-        ...
-    
+    def __init__(self, default=...) -> None: ...
     def setup(self, reusable=...) -> None:
         """
         Install (activate) the sysfont handler.
-        
+
         Note:\n
             Once this method has been called, the instance is (by default) kept alive until the end of session, through an exit handler.
             To stop the sysfont handler earlier, call :meth:`.close`.\n
@@ -96,14 +86,14 @@ class PdfSysfontBase(pdfium_i.AutoCastable):
             When a new handler is installed, the previous handler (if any) is implicitly closed.
         """
         ...
-    
+
     def close(self, reusable=...) -> None:
         """
         Manually close the sysfont handler.
         This unregisters the exit handler and releases the sysfont handler immediately.
-        
+
         See the note above for how sysfont handler lifetime is managed by default.
-        
+
         Parameters:
             reusable (bool):
                 If False (the default), closing will destroy pdfium's default handler, rendering any direct or indirect wrappers thereof unusable.
@@ -111,30 +101,12 @@ class PdfSysfontBase(pdfium_i.AutoCastable):
                 This is automatically set to True on singleton replacement, when the previous handler is implicitly closed (i.e. ownership of the default instance is transferred to the new handler).
         """
         ...
-    
-    def Release(self, _) -> None:
-        ...
-    
-    def EnumFonts(self, _, pMapper):
-        ...
-    
-    def MapFont(self, _, weight, bItalic, charset, pitch_family, face, _ignored):
-        ...
-    
-    def GetFont(self, _, face):
-        ...
-    
-    def GetFontData(self, _, hFont, table, buffer, buf_size):
-        ...
-    
-    def GetFaceName(self, _, hFont, buffer, buf_size):
-        ...
-    
-    def GetFontCharset(self, _, hFont):
-        ...
-    
-    def DeleteFont(self, _, hFont):
-        ...
-    
 
-
+    def Release(self, _) -> None: ...
+    def EnumFonts(self, _, pMapper): ...
+    def MapFont(self, _, weight, bItalic, charset, pitch_family, face, _ignored): ...
+    def GetFont(self, _, face): ...
+    def GetFontData(self, _, hFont, table, buffer, buf_size): ...
+    def GetFaceName(self, _, hFont, buffer, buf_size): ...
+    def GetFontCharset(self, _, hFont): ...
+    def DeleteFont(self, _, hFont): ...

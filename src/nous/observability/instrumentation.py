@@ -168,13 +168,12 @@ def operation(
                     "root_operation": is_root,
                     "result": result,
                     "duration_seconds": elapsed,
-                    "completed_count": len(root.completed_result_refs),
-                    "result_refs": list(root.completed_result_refs) if is_root else [],
+                    "completed_count": len(root.completed_refs),
                     **(
                         {
                             "issues": [issue.to_dict() for issue in root.issues],
                             "attempts": list(root.attempts),
-                            "completed_result_refs": list(root.completed_result_refs),
+                            "completed_refs": list(root.completed_refs),
                             **(failure or {}),
                         }
                         if is_root

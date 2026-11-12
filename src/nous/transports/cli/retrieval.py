@@ -1,19 +1,22 @@
-"""Query exact grouped cognitive results through the shared application owner."""
+"""Query and refresh the current cognitive view through typed operations."""
 
 import json
 from pathlib import Path
 from typing import Annotated
 
 import typer
-from pydantic import TypeAdapter
 
-from nous.cognition.retrieval.contracts import CognitiveQuery, Mode, QueryResult
+from nous.application.inputs import InputProvider
+from nous.cognition.retrieval.contracts import CognitiveQuery, Mode, RefreshRetrieval
+from nous.cognition.retrieval.operations import QUERY, REFRESH
+from nous.content.contracts import ExternalInput
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
 from nous.wave.contracts import CandidateFilter, ContextFragment, QueryCue
 
-from . import cli, emit, language_for, options, run_async
 from .cognition import journal_cli
+from .context import application_call, emit, language_for, options
+from .groups import cli
+from .input_files import json_binding
 
 
 @cli.command("query")
@@ -35,33 +38,35 @@ def query(
     purpose: str | None = None,
     explain: bool = False,
 ) -> None:
-    async def run() -> QueryResult:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.retrieval.query(
-                CognitiveQuery(
-                    text=text,
-                    mode=mode,
-                    snapshot=snapshot,
-                    top_k=top_k,
-                    include_review=True if include_review else None,
-                    include_exploration=include_exploration,
-                    context=TypeAdapter(tuple[ContextFragment, ...]).validate_json(
-                        context.read_bytes()
-                    )
-                    if context
-                    else (),
-                    core_concepts=tuple(core or ()),
-                    cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
-                    filters=CandidateFilter.model_validate_json(filters.read_bytes())
-                    if filters
-                    else None,
-                    purpose=purpose,
-                    explain=explain,
-                )
-            )
-
-    result = run_async(run())
+    inputs: dict[str, InputProvider] = {}
+    context_value: tuple[ContextFragment, ...] | ExternalInput = ()
+    filter_value: CandidateFilter | ExternalInput | None = None
+    if context:
+        context_value, extra = json_binding(context, key="context")
+        inputs.update(extra)
+    if filters:
+        filter_value, extra = json_binding(filters, key="filters")
+        inputs.update(extra)
+    result = application_call(
+        ctx,
+        QUERY,
+        CognitiveQuery(
+            text=text,
+            namespace=namespace,
+            mode=mode,
+            snapshot=snapshot,
+            top_k=top_k,
+            include_review=True if include_review else None,
+            include_exploration=include_exploration,
+            context=context_value,
+            core_concepts=tuple(core or ()),
+            cues=tuple(QueryCue(label=value, description=value) for value in cue or ()),
+            filters=filter_value,
+            purpose=purpose,
+            explain=explain,
+        ),
+        inputs=inputs,
+    )
     if options(ctx).json_mode:
         emit(ctx, result.model_dump(mode="json"))
         return
@@ -69,22 +74,23 @@ def query(
     if not result.groups:
         typer.echo(translate("No matching knowledge", language))
     for group in result.groups:
+        revision = group.context.revision_ref
         title = group.title or translate(
-            "Untitled journal"
-            if group.revision_ref.record_ref.kind == "journal"
-            else "Untitled note",
+            "Untitled journal" if revision.record_ref.kind == "journal" else "Untitled note",
             language,
         )
-        typer.echo(f"{group.group_rank}. {title} — {group.revision_ref.identifier}")
+        typer.echo(f"{group.rank}. {title} — {revision.identifier}")
         for passage in group.passages:
-            typer.echo(passage.snippet)
-        if group.sources:
+            if passage.delivery.reason == "title_preview":
+                typer.echo("标题命中 / Title match")
+            typer.echo(passage.delivery.text)
+        if group.context.sources:
             sources = [
                 f"{source.key} {source.name or ''} ({source.owner_revision.identifier if source.owner_revision else ', '.join(part.artifact.identifier for part in source.selections)})"
-                for source in group.sources
+                for source in group.context.sources
             ]
             typer.echo(translate("Sources", language) + ": " + ", ".join(sources))
-        if group.needs_review:
+        if group.context.needs_review:
             typer.echo(translate("Needs review", language))
         if explain:
             typer.echo(json.dumps(group.model_dump(mode="json"), ensure_ascii=False, indent=2))
@@ -100,15 +106,18 @@ def refresh(
     mode: Annotated[Mode | None, typer.Option("--mode")] = None,
     include_review: bool = False,
 ) -> None:
-    async def run() -> dict[str, object]:
-        async with open_instance(options(ctx).locator) as runtime:
-            cognition = await runtime.cognition(namespace)
-            return await cognition.retrieval.refresh(
-                mode=mode, include_review=True if include_review else None
-            )
-
-    result = run_async(run())
+    result = application_call(
+        ctx,
+        REFRESH,
+        RefreshRetrieval(
+            namespace=namespace,
+            mode=mode,
+            include_review=True if include_review else None,
+        ),
+    )
     if options(ctx).json_mode:
-        emit(ctx, result)
+        emit(ctx, result.model_dump(mode="json"))
     else:
-        typer.echo(translate("Retrieval updated", language_for(options(ctx))))
+        typer.echo(
+            f"{translate('Retrieval updated', language_for(options(ctx)))}: {result.snapshot.identifier}"
+        )

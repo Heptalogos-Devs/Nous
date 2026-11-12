@@ -11,21 +11,24 @@ from typing import cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from nous.application.contracts import CallContext, define_operation
 from nous.common.errors import NousError
-from nous.common.identifier import identifier_type
 from nous.common.operations import record_completed
-from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     ArtifactRef,
     ContentSelection,
     InputGroup,
     InputPart,
-    InputSpec,
+    ModelProducer,
     OutputContent,
+    ResultFacts,
     ResultRef,
+    SelectedInputs,
+    SelectedSource,
+    SourceTarget,
 )
 from nous.content.results import ResultStore
 from nous.models.contracts import EmbeddingResult
@@ -53,6 +56,42 @@ class EmbeddingOutcome(BaseModel):
     coverage: dict[str, JsonValue]
 
 
+class ProbeEmbedding(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    model: str
+    sources: tuple[SourceTarget, ...] = Field(min_length=1)
+
+
+class RunEmbedding(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    space: str
+    purpose: Purpose = "document"
+    sources: tuple[SourceTarget, ...] = Field(min_length=1)
+
+
+class EmbeddingProbeOutcome(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    model: str
+    dimensions: int
+    inputs: int
+    producer: dict[str, JsonValue]
+    usage: dict[str, JsonValue]
+
+
+PROBE_EMBEDDING = define_operation(
+    "embedding.probe",
+    request=ProbeEmbedding,
+    result=EmbeddingProbeOutcome,
+    description="Check an embedding model with selected inputs.",
+)
+RUN_EMBEDDING = define_operation(
+    "embedding.run",
+    request=RunEmbedding,
+    result=EmbeddingOutcome,
+    description="Create or reuse vectors in an embedding space.",
+)
+
+
 class EmbeddingOperations:
     """Produce and reuse exact-input vectors in a configured embedding space.
 
@@ -74,41 +113,16 @@ class EmbeddingOperations:
         self.results, self.registry, self.executor = results, registry, executor
 
     async def _inputs(
-        self, inputs: Sequence[str], texts: Sequence[str], snapshot: ConfigSnapshot, *, adopt: bool
+        self, inputs: Sequence[SourceTarget], call: CallContext, *, adopt: bool
     ) -> tuple[tuple[str, ...], tuple[ContentSelection, ...]]:
         values: list[str] = []
         selections: list[ContentSelection] = []
-        limit = snapshot.values.content.text_read_max_bytes
         for item in inputs:
             if adopt:
-                artifact = await self.artifacts.accept(
-                    InputSpec(kind="artifact", artifact=item)
-                    if identifier_type(item) == "art"
-                    else InputSpec(kind="file", path=item)
-                )
-                selections.append(ContentSelection(artifact=artifact.ref))
+                artifact, selection = await call.inputs.accept_target(item)
+                selections.append(ContentSelection(artifact=artifact.ref, selection=selection))
                 continue
-            if identifier_type(item) == "art":
-                artifact = await self.artifacts.get(item)
-                value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
-            else:
-                path = Path(item)
-                if (await self.execution.blocking(path.stat)).st_size > limit:
-                    raise NousError(
-                        "content.too_large", "Input exceeds the configured text read limit"
-                    )
-                value = await self.execution.blocking(path.read_text, encoding="utf-8")
-                artifact = None
-            values.append(value)
-            if artifact is not None:
-                selections.append(ContentSelection(artifact=artifact.ref))
-        for value in texts:
-            if len(value.encode("utf-8")) > limit:
-                raise NousError("content.too_large", "Input exceeds the configured text read limit")
-            values.append(value)
-            if adopt:
-                artifact = await self.artifacts.ingest(value)
-                selections.append(ContentSelection(artifact=artifact.ref))
+            values.append(await call.inputs.body(item))
         return tuple(values), tuple(selections)
 
     @staticmethod
@@ -152,16 +166,27 @@ class EmbeddingOperations:
             await self.registry.bind_in(tx, definition)
             result = await self.results.adopt_in(
                 tx,
-                operation="embedding",
-                producer=generated.producer,
-                inputs=groups,
+                facts=ResultFacts(
+                    operation="embedding",
+                    producer=ModelProducer.model_validate(generated.producer),
+                    selected_inputs=SelectedInputs(
+                        sources=tuple(
+                            SelectedSource(
+                                slot_key=group.slot_key,
+                                role=group.role,
+                                selections=(source,),
+                                display_name=group.name,
+                            )
+                            for group, source in zip(groups, inputs, strict=True)
+                        )
+                    ),
+                    inputs=groups,
+                    request=generated.request,
+                    parameters={"usage": generated.usage, "attempts": generated.attempts},
+                    coverage={"inputs": len(inputs), "purpose": purpose},
+                    formed_at=self.artifacts.clock.utc_now(),
+                ),
                 prepared_outputs=prepared,
-                request=generated.request,
-                parameters={
-                    "usage": generated.usage,
-                    "attempts": generated.attempts,
-                },
-                coverage={"inputs": len(inputs), "purpose": purpose},
             )
             output = next(item for item in result.outputs if item.name == "vectors")
             canonical = await self.registry.attach_in(
@@ -172,22 +197,27 @@ class EmbeddingOperations:
                 purpose=purpose,
                 input_digests=digests,
             )
-        record_completed(result.ref.identifier)
+        record_completed(result.ref)
         return canonical
 
-    async def probe(
-        self, model_id: str, inputs: Sequence[str], texts: Sequence[str]
-    ) -> EmbeddingResult:
+    async def probe(self, request: ProbeEmbedding, call: CallContext) -> EmbeddingProbeOutcome:
         async with self.execution.operation("embedding.probe") as context:
-            values, _ = await self._inputs(inputs, texts, context.settings, adopt=False)
-            return await self.executor.probe(model_id, values, context.settings, context=context)
+            values, _ = await self._inputs(request.sources, call, adopt=False)
+            result = await self.executor.probe(
+                request.model, values, context.settings, context=context
+            )
+            return EmbeddingProbeOutcome(
+                model=request.model,
+                dimensions=result.dimensions,
+                inputs=len(result.vectors),
+                producer=result.producer,
+                usage=result.usage,
+            )
 
-    async def run(
-        self, space_id: str, purpose: Purpose, inputs: Sequence[str], texts: Sequence[str]
-    ) -> EmbeddingOutcome:
-        async with self.execution.operation("embedding.run") as context:
-            _, sources = await self._inputs(inputs, texts, context.settings, adopt=True)
-            batch = await self.ensure(sources, space_id, purpose)
+    async def run(self, request: RunEmbedding, call: CallContext) -> EmbeddingOutcome:
+        async with self.execution.operation("embedding.run"):
+            _, sources = await self._inputs(request.sources, call, adopt=True)
+            batch = await self.ensure(sources, request.space, request.purpose)
             results: dict[str, ResultRef] = {}
             artifacts: dict[str, ArtifactRef] = {}
             for row in batch.rows:
@@ -197,11 +227,11 @@ class EmbeddingOperations:
                     artifacts.update({item.artifact.id: item.artifact for item in result.outputs})
             return EmbeddingOutcome(
                 space=batch.space,
-                purpose=purpose,
+                purpose=request.purpose,
                 rows=tuple(
                     VectorRef(
                         space=batch.space,
-                        purpose=purpose,
+                        purpose=request.purpose,
                         artifact=artifacts[row.artifact_id],
                         row_index=row.row_index,
                     )

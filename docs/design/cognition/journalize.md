@@ -6,7 +6,7 @@ journalize 消费明确选定的 Notes、原材料及其表示和明确的工作
 
 已形成 Journal 不再作为待压缩正文进入 journalize，也没有 target_revision 更新路径。已知 Journal 正文引用返回明确意图错误；改动使用精确编辑或 rewrite，跨篇新理解使用 reflect，见 [写作意图](writing-intents.md)。
 
-普通问候或无新增认识可以不成篇。Agent 主动调用与 Host 后台调用使用同一个操作，触发时机归调用者。初期不依赖定时服务或 DBOS。
+普通问候或无新增认识可以不成篇。Agent 主动调用与宿主调用使用同一个操作，触发时机由调用者明确选择。
 
 ## 操作
 
@@ -25,7 +25,7 @@ journalize(source_refs, purpose, optional_topic, adoption_policy)
 
 缺省可以返回草稿，自动采用由配置/本次调用显式决定。Note 直接长期保存仍是独立能力，不必经过 journalize。journalize 总是创建新 Journal；已有文稿更新固定基准并进入独立编辑/重写操作。
 
-采用前通过 [Journal owner](journal.md) 核对来源、所属域和时间。模型生成成功但数据库采用失败时保留可读取的 Draft Artifact，不重发模型。
+采用前通过 [Journal owner](journal.md) 核对来源、所属域和时间。模型成果保存后，草稿组装或正式采用失败时，已保存的成果和草稿仍可读取。
 
 ## 人格与探索
 
@@ -35,4 +35,4 @@ Dream 可以用相同的文稿存储与采用能力保存 exploration 类型，�
 
 ## 本轮正式操作
 
-复用普通 journal-draft 与 ResultStore，按 [草稿采用](draft-adoption.md)保存精确来源；正文正式采用、重试、冲突和可选标注进入 [维护计划](../../plans/journal-maintenance.md)。Note 继续保留供读取与再次整理，不维护独占消费状态。
+复用普通 journal-draft 与 ResultStore，按[草稿采用](draft-adoption.md)保存精确来源；正文正式采用、冲突和可选标注见[维护架构](maintenance-architecture.md)。Note 继续保留供读取与再次整理，不维护独占消费状态。

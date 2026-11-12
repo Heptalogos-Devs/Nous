@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import codecs
 import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -12,6 +11,7 @@ from typing import Literal, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
+from PIL import Image, UnidentifiedImageError
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
@@ -31,11 +31,13 @@ from .contracts import (
     ContentReadView,
     ContentRepresentation,
     ContentSelection,
-    InputSpec,
     OriginSlice,
     ResultRef,
     SelectedText,
+    SourceFacts,
     SourceSelection,
+    is_text_media_type,
+    is_utf8_text_prefix,
 )
 from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
 
@@ -104,7 +106,7 @@ class ArtifactStore:
                 received_at=now,
                 formed_at=None,
             )
-        record_completed(artifact.ref.identifier)
+        record_completed(artifact.ref)
         return artifact
 
     async def register_in(
@@ -225,7 +227,15 @@ class ArtifactStore:
             raise NousError(
                 "content.not_found", "Artifact does not exist", details={"ref": missing}
             )
-        return tuple(found[target] for target in targets)
+        resolved = tuple(found[target] for target in targets)
+        if any(
+            isinstance(ref, ArtifactRef) and ref != artifact.ref
+            for ref, artifact in zip(refs, resolved, strict=True)
+        ):
+            raise NousError(
+                "content.reference_mismatch", "Artifact reference identity does not match"
+            )
+        return resolved
 
     async def blob(self, ref: str | ArtifactRef) -> BlobRef:
         if isinstance(ref, ArtifactRef):
@@ -235,16 +245,24 @@ class ArtifactStore:
         else:
             target = ref
         async with self.database.read() as tx:
-            object_id = await tx.connection.scalar(
-                sa.select(schema.artifacts.c.id).where(
-                    sa.or_(schema.artifacts.c.id == target, schema.artifacts.c.identifier == target)
+            row = (
+                await tx.connection.execute(
+                    sa.select(schema.artifacts.c.id, schema.artifacts.c.identifier).where(
+                        sa.or_(
+                            schema.artifacts.c.id == target, schema.artifacts.c.identifier == target
+                        )
+                    )
                 )
-            )
-            if object_id is None:
+            ).one_or_none()
+            if row is None:
                 raise NousError(
                     "content.not_found", "Artifact does not exist", details={"ref": target}
                 )
-            return await self.content.resolve_in(tx, str(object_id))
+            if isinstance(ref, ArtifactRef) and ref.identifier != row.identifier:
+                raise NousError(
+                    "content.reference_mismatch", "Artifact reference identity does not match"
+                )
+            return await self.content.resolve_in(tx, str(row.id))
 
     async def read_view_many(
         self,
@@ -265,22 +283,38 @@ class ArtifactStore:
                 represented: dict[
                     str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
                 ] = {}
+                detected_types: dict[str, str] = {}
+                direct = sa.select(schema.parts.c.result_id).where(
+                    schema.parts.c.artifact_id.in_(object_ids)
+                )
+                origins = sa.select(schema.origins.c.result_id).where(
+                    schema.origins.c.artifact_id.in_(object_ids)
+                )
+                selected_results = sa.select(schema.selected_targets.c.result_id).where(
+                    schema.selected_targets.c.artifact_id.in_(object_ids)
+                )
+                result_ids = list(
+                    (await tx.connection.execute(direct.union(origins, selected_results))).scalars()
+                )
+                if result_ids:
+                    fact_rows = await tx.connection.execute(
+                        sa.select(schema.results.c.selected_facts).where(
+                            schema.results.c.id.in_(result_ids)
+                        )
+                    )
+                    for row in fact_rows.scalars():
+                        for value in row or ():
+                            fact = SourceFacts.model_validate(value)
+                            detected_types[fact.artifact.id] = fact.detected_mime
                 if representations == "existing":
-                    direct = sa.select(schema.parts.c.result_id).where(
-                        schema.parts.c.artifact_id.in_(object_ids)
-                    )
-                    origins = sa.select(schema.origins.c.result_id).where(
-                        schema.origins.c.artifact_id.in_(object_ids)
-                    )
-                    result_ids = list(
-                        (await tx.connection.execute(direct.union(origins))).scalars()
-                    )
                     if result_ids:
                         used = (
                             (
                                 await tx.connection.execute(
                                     sa.select(
                                         schema.parts.c.result_id,
+                                        schema.parts.c.group_ordinal,
+                                        schema.parts.c.part_ordinal,
                                         schema.parts.c.artifact_id,
                                         schema.parts.c.selector,
                                     ).where(schema.parts.c.result_id.in_(result_ids))
@@ -294,6 +328,8 @@ class ArtifactStore:
                                 await tx.connection.execute(
                                     sa.select(
                                         schema.origins.c.result_id,
+                                        schema.origins.c.group_ordinal,
+                                        schema.origins.c.part_ordinal,
                                         schema.origins.c.artifact_id,
                                         schema.origins.c.selector,
                                     ).where(schema.origins.c.result_id.in_(result_ids))
@@ -302,17 +338,69 @@ class ArtifactStore:
                             .mappings()
                             .all()
                         )
+                        chosen = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(
+                                        schema.selected_targets.c.result_id,
+                                        schema.selected_targets.c.slot_key,
+                                        schema.selected_targets.c.artifact_id,
+                                        schema.selected_targets.c.selector,
+                                    ).where(schema.selected_targets.c.result_id.in_(result_ids))
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
                         source_artifacts = await self.get_many_in(
-                            tx, [str(row["artifact_id"]) for row in (*used, *roots)]
+                            tx, [str(row["artifact_id"]) for row in (*chosen, *used, *roots)]
                         )
                         relations: dict[str, list[ContentSelection]] = {}
-                        for row, artifact in zip((*used, *roots), source_artifacts, strict=True):
-                            selected = ContentSelection(
-                                artifact=artifact.ref,
-                                selection=SourceSelection.model_validate(row["selector"]),
+                        parts_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
+                        origins_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
+                        targets_by_slot: dict[tuple[str, str], list[ContentSelection]] = {}
+                        offset = 0
+                        for kind, rows in (("selected", chosen), ("part", used), ("origin", roots)):
+                            for row, artifact in zip(
+                                rows, source_artifacts[offset : offset + len(rows)], strict=True
+                            ):
+                                selected = ContentSelection(
+                                    artifact=artifact.ref,
+                                    selection=SourceSelection.model_validate(row["selector"]),
+                                )
+                                result_id = str(row["result_id"])
+                                if selected not in relations.setdefault(result_id, []):
+                                    relations[result_id].append(selected)
+                                if kind == "selected":
+                                    targets_by_slot.setdefault(
+                                        (result_id, str(row["slot_key"])), []
+                                    ).append(selected)
+                                elif kind == "part":
+                                    parts_by_group.setdefault(
+                                        (result_id, int(row["group_ordinal"])), []
+                                    ).append(selected)
+                                else:
+                                    origins_by_group.setdefault(
+                                        (result_id, int(row["group_ordinal"])), []
+                                    ).append(selected)
+                            offset += len(rows)
+                        group_rows = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(
+                                        schema.inputs.c.result_id,
+                                        schema.inputs.c.group_ordinal,
+                                        schema.inputs.c.slot_key,
+                                    ).where(schema.inputs.c.result_id.in_(result_ids))
+                                )
                             )
-                            if selected not in relations.setdefault(str(row["result_id"]), []):
-                                relations[str(row["result_id"])].append(selected)
+                            .mappings()
+                            .all()
+                        )
+                        group_slots = {
+                            (str(row["result_id"]), int(row["group_ordinal"])): str(row["slot_key"])
+                            for row in group_rows
+                        }
                         outputs = (
                             (
                                 await tx.connection.execute(
@@ -321,14 +409,15 @@ class ArtifactStore:
                                         schema.results.c.identifier,
                                         schema.results.c.operation,
                                         schema.results.c.coverage,
-                                        schema.results.c.parameters,
                                         schema.outputs.c.name,
                                         schema.outputs.c.artifact_id,
+                                        schema.outputs.c.representation_kind,
                                     )
                                     .join(schema.outputs)
                                     .where(
                                         schema.results.c.id.in_(result_ids),
-                                        schema.outputs.c.name != "response",
+                                        schema.outputs.c.role != "diagnostic",
+                                        schema.outputs.c.representation_kind.is_not(None),
                                     )
                                     .order_by(
                                         schema.results.c.recorded_at, schema.outputs.c.ordinal
@@ -338,25 +427,46 @@ class ArtifactStore:
                             .mappings()
                             .all()
                         )
-                        for row in outputs:
-                            declared = cast(dict[str, JsonValue], row["parameters"]).get(
-                                "representations", {}
-                            )
-                            info = (
-                                declared.get(str(row["name"]))
-                                if isinstance(declared, dict)
-                                else None
-                            )
-                            if not isinstance(info, dict) or not isinstance(info.get("kind"), str):
-                                continue
-                            exact = (
-                                tuple(
-                                    ContentSelection.model_validate(item)
-                                    for item in cast(list[JsonValue], info["sources"])
+                        mappings = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(schema.output_mappings)
+                                    .where(schema.output_mappings.c.result_id.in_(result_ids))
+                                    .order_by(schema.output_mappings.c.ordinal)
                                 )
-                                if "sources" in info
-                                else tuple(relations[str(row["id"])])
                             )
+                            .mappings()
+                            .all()
+                        )
+                        mapped_sources: dict[tuple[str, str], list[ContentSelection]] = {}
+                        for mapping in mappings:
+                            key = (str(mapping["result_id"]), str(mapping["output_name"]))
+                            for item in mapping["origins"]:
+                                origin = ContentSelection.model_validate(item)
+                                if origin not in mapped_sources.setdefault(key, []):
+                                    mapped_sources[key].append(origin)
+                        for row in outputs:
+                            key = (str(row["id"]), str(row["name"]))
+                            mapped = mapped_sources.get(key, [])
+                            exact_sources = list(mapped)
+                            if mapped:
+                                for group, parts in parts_by_group.items():
+                                    if group[0] != key[0] or not any(
+                                        left.artifact == right.artifact
+                                        and self._overlaps(left.selection, right.selection)
+                                        for left in mapped
+                                        for right in (*parts, *origins_by_group.get(group, ()))
+                                    ):
+                                        continue
+                                    for source in (
+                                        *origins_by_group.get(group, ()),
+                                        *targets_by_slot.get((group[0], group_slots[group]), ()),
+                                    ):
+                                        if source not in exact_sources:
+                                            exact_sources.append(source)
+                            else:
+                                exact_sources.extend(relations.get(key[0], ()))
+                            exact = tuple(exact_sources)
                             if any(item.artifact.instance_id != self.instance_id for item in exact):
                                 raise NousError(
                                     "content.instance_mismatch",
@@ -364,7 +474,6 @@ class ArtifactStore:
                                 )
                             details: dict[str, object] = {
                                 **dict(row),
-                                "representation_kind": info["kind"],
                             }
                             for object_id in {item.artifact.id for item in exact} & object_ids:
                                 represented.setdefault(object_id, []).append((details, exact))
@@ -380,13 +489,22 @@ class ArtifactStore:
                 )
             derived_map = {artifact.ref.id: artifact for artifact in derived}
             texts: dict[str, str] = {}
+            cached_views: dict[str, ContentReadView] = {}
+            normalized_relations: dict[tuple[str, ...], tuple[ContentSelection, ...]] = {}
             views: list[ContentReadView] = []
             for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
-                is_text = (
-                    artifact.media_type.startswith("text/")
-                    or artifact.media_type == "application/json"
-                )
+                selection_key = selected.model_dump_json()
+                if selection_key in cached_views:
+                    views.append(cached_views[selection_key])
+                    continue
+                detected_type = detected_types.get(artifact.ref.id)
                 async with self.content.borrow_local(blob) as path:
+                    if detected_type is None:
+                        is_text = await self.content.execution.blocking(self._looks_like_text, path)
+                        if is_text and not is_text_media_type(artifact.media_type):
+                            detected_type = "text/plain"
+                    else:
+                        is_text = is_text_media_type(detected_type)
                     if is_text:
                         data, _, _ = await self.content.execution.blocking(
                             self._selected_bytes,
@@ -405,10 +523,22 @@ class ArtifactStore:
                         body = None
                 available: list[ContentRepresentation] = []
                 normalized_selected = (
-                    (await self.normalize_selections((selected,)))[0] if is_text else selected
+                    (
+                        await self.normalize_selections(
+                            (selected,),
+                            media_types={artifact.ref.id: detected_type or artifact.media_type},
+                        )
+                    )[0]
+                    if is_text
+                    else selected
                 )
                 for row, exact in represented.get(artifact.ref.id, []):
-                    normalized_exact = await self.normalize_selections(exact)
+                    relation_key = tuple(item.model_dump_json() for item in exact)
+                    if relation_key not in normalized_relations:
+                        normalized_relations[relation_key] = await self.normalize_selections(
+                            exact, media_types=detected_types
+                        )
+                    normalized_exact = normalized_relations[relation_key]
                     if not any(
                         item.artifact.id == artifact.ref.id
                         and self._overlaps(normalized_selected.selection, item.selection)
@@ -418,10 +548,7 @@ class ArtifactStore:
                     output = derived_map[str(row["artifact_id"])]
                     if output.ref.id == artifact.ref.id:
                         continue
-                    if (
-                        output.media_type.startswith("text/")
-                        or output.media_type == "application/json"
-                    ):
+                    if is_text_media_type(output.media_type):
                         if output.ref.id not in texts:
                             texts[output.ref.id] = await self.read_text(output.ref)
                         text = texts[output.ref.id]
@@ -445,19 +572,32 @@ class ArtifactStore:
                             body_text=text,
                         )
                     )
-                views.append(
-                    ContentReadView(
-                        source=selected,
-                        name=artifact.display_name,
-                        media_type=artifact.media_type,
-                        byte_length=blob.byte_length,
-                        body_text=body,
-                        export_ref=artifact.ref,
-                        available_representations=tuple(available),
-                        coverage={"selection": selected.selection.model_dump(mode="json")},
-                    )
+                view = ContentReadView(
+                    source=selected,
+                    name=artifact.display_name,
+                    media_type=artifact.media_type,
+                    detected_media_type=detected_type,
+                    byte_length=blob.byte_length,
+                    body_text=body,
+                    export_ref=artifact.ref,
+                    available_representations=tuple(available),
+                    coverage={"selection": selected.selection.model_dump(mode="json")},
                 )
+                cached_views[selection_key] = view
+                views.append(view)
             return tuple(views)
+
+    @staticmethod
+    def _looks_like_text(path: Path) -> bool:
+        with path.open("rb") as stream:
+            header = stream.read(4096)
+        if not is_utf8_text_prefix(header):
+            return False
+        try:
+            with Image.open(path):
+                return False
+        except UnidentifiedImageError, OSError:
+            return True
 
     @staticmethod
     def _overlaps(left: SourceSelection, right: SourceSelection) -> bool:
@@ -504,105 +644,14 @@ class ArtifactStore:
             await self.blob(ref), self.text_read_max_bytes() if max_bytes is None else max_bytes
         )
 
-    async def accept(self, spec: InputSpec) -> Artifact:
-        """Accept a declared user input through the same immutable-content path."""
-        if spec.kind == "artifact":
-            assert spec.artifact is not None
-            return await self.get(spec.artifact)
-        if spec.kind == "file":
-            assert spec.path is not None
-            return await self.ingest(Path(spec.path), display_name=spec.display_name)
-        assert spec.text is not None
-        return await self.ingest(spec.text, display_name=spec.display_name)
-
     @staticmethod
     def _selected_bytes(
         path: Path, selection: SourceSelection, limit: int, byte_length: int
     ) -> tuple[bytes, int, int]:
-        if selection.pages or any(
-            value is not None
-            for value in (selection.start_ms, selection.end_ms, selection.frame, selection.crop)
-        ):
-            raise NousError(
-                "content.selection_requires_preparation",
-                "Media coordinates require media preparation",
-            )
-        if selection.start_byte is not None or selection.end_byte is not None:
-            start, end = (
-                selection.start_byte or 0,
-                selection.end_byte if selection.end_byte is not None else byte_length,
-            )
-            if not 0 <= start <= end <= byte_length:
-                raise NousError("content.invalid_selection", "Byte selection exceeds the artifact")
-            if end - start > limit:
-                raise NousError(
-                    "content.too_large", "Text selection exceeds the configured read limit"
-                )
-            first_line = 1
-            previous_cr = False
-            decoder = codecs.getincrementaldecoder("utf-8")()
-            with path.open("rb") as stream:
-                remaining = start
-                try:
-                    while remaining:
-                        prefix = stream.read(min(65536, remaining))
-                        if not prefix:
-                            raise NousError("content.corrupt", "Stored content is incomplete")
-                        remaining -= len(prefix)
-                        decoded = decoder.decode(prefix, final=remaining == 0)
-                        for character in decoded:
-                            if character == "\r":
-                                first_line += 1
-                            elif character == "\n" and not previous_cr:
-                                first_line += 1
-                            previous_cr = character == "\r"
-                except UnicodeDecodeError as error:
-                    raise NousError(
-                        "content.invalid_selection", "Selection splits a UTF-8 character"
-                    ) from error
-                data = stream.read(end - start)
-                try:
-                    data.decode("utf-8")
-                except UnicodeDecodeError as error:
-                    raise NousError(
-                        "content.invalid_selection", "Selection splits a UTF-8 character"
-                    ) from error
-            if len(data) != end - start:
-                raise NousError("content.corrupt", "Stored content is incomplete")
-            return data, start, first_line
-        if selection.start_line is None and selection.end_line is None:
-            if byte_length > limit:
-                raise NousError(
-                    "content.too_large", "Text exceeds the configured read limit; select a range"
-                )
-            return path.read_bytes(), 0, 1
-        first, last = selection.start_line or 1, selection.end_line
-        parts: list[bytes] = []
-        offset = start = size = count = 0
-        try:
-            with path.open("r", encoding="utf-8", newline="") as stream:
-                for number, line in enumerate(stream, 1):
-                    count = number
-                    data = line.encode("utf-8")
-                    if number < first:
-                        offset += len(data)
-                        continue
-                    if number == first:
-                        start = offset
-                    size += len(data)
-                    if size > limit:
-                        raise NousError(
-                            "content.too_large", "Text selection exceeds the configured read limit"
-                        )
-                    parts.append(data)
-                    offset += len(data)
-                    if last is not None and number == last:
-                        break
-        except UnicodeDecodeError as error:
-            raise NousError("content.not_text", "Stored content is not UTF-8 text") from error
-        if first > count or last is not None and last > count:
-            raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
-        return b"".join(parts), start, first
+        from .text_selection import read_seekable
+
+        with path.open("rb", buffering=0) as stream:
+            return read_seekable(stream.fileno(), selection, limit)
 
     async def read_selections(self, values: Sequence[ContentSelection]) -> tuple[SelectedText, ...]:
         """Read exact bounded text ranges in order using one metadata snapshot."""
@@ -647,44 +696,10 @@ class ArtifactStore:
     def _normalize_text(
         path: Path, selection: SourceSelection, byte_length: int
     ) -> SourceSelection:
-        """Resolve coordinates without retaining or limiting unrequested source bytes."""
-        if selection.pages or any(
-            value is not None
-            for value in (selection.start_ms, selection.end_ms, selection.frame, selection.crop)
-        ):
-            raise NousError("content.invalid_selection", "Text requires byte or line coordinates")
-        if selection.start_line is None and selection.end_line is None:
-            start = selection.start_byte or 0
-            end = selection.end_byte if selection.end_byte is not None else byte_length
-            if not 0 <= start <= end <= byte_length:
-                raise NousError("content.invalid_selection", "Byte selection exceeds the artifact")
-            with path.open("rb") as stream:
-                for position in (start, end):
-                    if position < byte_length:
-                        stream.seek(position)
-                        character = stream.read(1)
-                        if not character:
-                            raise NousError("content.corrupt", "Stored content is incomplete")
-                        if character[0] & 0xC0 == 0x80:
-                            raise NousError(
-                                "content.invalid_selection", "Selection splits a UTF-8 character"
-                            )
-            return SourceSelection(start_byte=start, end_byte=end)
-        first, last = selection.start_line or 1, selection.end_line
-        count = offset = start = 0
-        try:
-            with path.open("r", encoding="utf-8", newline="") as stream:
-                for count, line in enumerate(stream, 1):
-                    if count == first:
-                        start = offset
-                    offset += len(line.encode("utf-8"))
-                    if last is not None and count == last:
-                        break
-        except UnicodeDecodeError as error:
-            raise NousError("content.not_text", "Stored content is not UTF-8 text") from error
-        if first > count or last is not None and last > count:
-            raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
-        return SourceSelection(start_byte=start, end_byte=offset)
+        from .text_selection import normalize_seekable
+
+        with path.open("rb", buffering=0) as stream:
+            return normalize_seekable(stream.fileno(), selection, byte_length)
 
     async def normalize_selections(
         self, values: Sequence[ContentSelection], *, media_types: Mapping[str, str] | None = None
@@ -706,15 +721,7 @@ class ArtifactStore:
                         value.selection.crop,
                     )
                 )
-                if not media_coordinates and (
-                    media_type.startswith("text/")
-                    or media_type
-                    in {
-                        "application/json",
-                        "application/xml",
-                        "application/xhtml+xml",
-                    }
-                ):
+                if not media_coordinates and is_text_media_type(media_type):
                     async with self.content.borrow_local(blob) as path:
                         selected = await self.content.execution.blocking(
                             self._normalize_text, path, value.selection, blob.byte_length

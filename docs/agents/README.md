@@ -6,5 +6,7 @@
 | temp 目录、材料组织与管理命令 | [temp 管理工具](../../scripts/temp/README.md) |
 | 开发检查、格式、长度与测试 | [开发检查工具](../../scripts/check/README.md) |
 | 代码、文档与参考项目检索 | [retrieval.md](retrieval.md) |
+| 模型任务、输入与提示词 | [llm-use.md](llm-use.md) |
+| Python 接口文档 | [docstring-std.md](docstring-std.md) |
 
 项目开发入口仍是根目录的 [AGENTS.md](../../AGENTS.md)，源码职责定位见 [src/nous/INDEX.md](../../src/nous/INDEX.md)。

@@ -65,12 +65,6 @@ class ListConfig(ConfigModel):
     page_size: int = setting(20, ge=1, le=200, description="Default number of records per page.")
 
 
-class MaintenanceConfig(ConfigModel):
-    execution: Literal["inline", "background"] = setting(
-        "inline", description="Default execution of requested maintenance."
-    )
-
-
 class CognitionConfig(ConfigModel):
     default_namespace: str = setting(
         "default",
@@ -83,6 +77,5 @@ class CognitionConfig(ConfigModel):
     rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
     reflection: ReflectionConfig = Field(default_factory=ReflectionConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
-    maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     list: ListConfig = Field(default_factory=ListConfig)

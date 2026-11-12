@@ -126,10 +126,8 @@ def _setup_file(path: Path, *, create: bool) -> None:
         raise NousError(code, "Cannot open instance database", details={"path": str(path)}) from exc
 
 
-def _connection_factory(
-    settings: DatabaseSettings, *, explicit_begin: bool = False
-) -> type[sqlite3.Connection]:
-    """Apply the same connection policy to business and DBOS connections."""
+def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
+    """Apply the instance SQLite connection policy."""
     busy_timeout_ms = int(settings.busy_timeout_ms)
     synchronous = str(settings.synchronous).upper()
     if busy_timeout_ms < 0 or synchronous not in {"FULL", "NORMAL"}:
@@ -152,7 +150,7 @@ def _connection_factory(
                 database,
                 timeout=timeout,
                 detect_types=detect_types,
-                isolation_level=None if explicit_begin else "DEFERRED",
+                isolation_level=None,
                 check_same_thread=check_same_thread,
                 factory=factory,
                 cached_statements=cached_statements,
@@ -195,24 +193,6 @@ class Database:
         self._database_id = database_id
         self._writer_lock = asyncio.Lock()
 
-    def sync_engine(self, *, pool_size: int = 4) -> sa.Engine:
-        """Create an independently owned synchronous engine on this same bound file."""
-        factory = _connection_factory(self.settings)
-        return sa.create_engine(
-            URL.create("sqlite", database=str(self.path)),
-            creator=lambda: sqlite3.connect(
-                self.path.as_uri() + "?mode=rw", uri=True, factory=factory, check_same_thread=False
-            ),
-            pool_size=pool_size,
-            max_overflow=0,
-        )
-
-    def migration_url(self) -> str:
-        """Build a read-write-only SQLite URI without losing path characters."""
-        return URL.create(
-            "sqlite", database=self.path.as_uri(), query={"mode": "rw", "uri": "true"}
-        ).render_as_string(hide_password=False)
-
     @classmethod
     @asynccontextmanager
     async def open(
@@ -252,7 +232,7 @@ class Database:
         )
         engine = create_async_engine(
             url,
-            connect_args={"factory": _connection_factory(settings, explicit_begin=True)},
+            connect_args={"factory": _connection_factory(settings)},
         )
 
         def begin(connection: sa.Connection) -> None:

@@ -31,8 +31,6 @@ snapshots = sa.Table(
     sa.Column("layout", sa.JSON, nullable=False),
     sa.Column("owner", sa.JSON, nullable=False),
     sa.Column("metadata", sa.JSON, nullable=False),
-    sa.Column("build_key", sa.String, nullable=True, unique=True),
-    sa.Column("build_signature", sa.String, nullable=True),
     sa.Column("component_signature", sa.String, nullable=False, index=True),
     sa.Column(
         "graph_signature",
@@ -49,7 +47,10 @@ projection_units = sa.Table(
     metadata,
     sa.Column("signature", sa.String, primary_key=True),
     sa.Column("input_signature", sa.String, nullable=False, index=True),
-    sa.Column("document_key", sa.String, nullable=False),
+    sa.Column("layout_signature", sa.String, nullable=True, index=True),
+    sa.Column("capture_stamp", sa.String, nullable=True, index=True),
+    sa.Column("projection", sa.JSON, nullable=True),
+    sa.Column("document_key", sa.String, nullable=False, index=True),
     sa.Column("document", sa.JSON, nullable=False),
     sa.Column("roots", sa.JSON, nullable=False),
     sa.Column("candidates", sa.JSON, nullable=False),
@@ -131,12 +132,29 @@ snapshot_members = sa.Table(
         nullable=False,
     ),
 )
+sa.Index("ix_wave_snapshot_members_unit_signature", snapshot_members.c.unit_signature)
+
+snapshot_groups = sa.Table(
+    "wave_snapshot_groups",
+    metadata,
+    sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("document_key", sa.String, nullable=False),
+    sa.Column("title", sa.String),
+    sa.Column("context", sa.JSON, nullable=False),
+)
 
 snapshot_candidates = sa.Table(
     "wave_snapshot_candidates",
     metadata,
     sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
     sa.Column("key", sa.String, primary_key=True),
+    sa.Column("group_key", sa.String, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["snapshot_id", "group_key"],
+        ["wave_snapshot_groups.snapshot_id", "wave_snapshot_groups.key"],
+    ),
     sa.Column(
         "unit_signature",
         sa.String,

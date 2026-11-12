@@ -24,7 +24,7 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 
 1. 根操作固定配置和 Namespace。读取该 profile 已发布快照及 namespace generation，完全匹配时可直接持有 immutable snapshot，热查询不先捕获整库正文/标注。
 2. 需要更新时，取得同 Namespace/profile 的构建协调锁，再检查一次。锁只协调该项构建，不阻塞文稿写入，不是实例级请求锁。
-3. 在一个短 ReadTx 中取得 generation G、所有当前可召回精确 revisions、active annotations、已绑定 Concept 意义版本、支持组与需要的时间/状态。通过各 owner 的批量读取取得引用与值，复制成类型化 CorpusView 后结束事务。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
+3. 在一个短 ReadTx 中取得 generation G 和当前可召回记录的轻量目录，并按纳入政策判断组资格。以精确修订、正文、来源、活动标注和候选布局匹配可复用投影单元；共同组不因纳入政策或无关构建参数改变而展开。仅变化记录展开完整标注及必要来源，未变组按文档键共享祖先节点。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
 4. 网络向量、CAS 读取、Native 构建全在事务外。同一正文和表示在一次构建中只准备一次，复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
 5. 在稳定组件目录完成构建并校验完成清单。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
 6. 本次查询使用捕获的 G；后来写入由下一次 current 查询或显式 refresh 处理。返回 captured_generation，必要时提示已有更晚版本。不要让持续写入造成无限追赶或持有数据库事务等待模型。
@@ -37,15 +37,15 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 CorpusView(namespace_id, generation, profile,
            documents[exact refs], annotations, concept_revisions,
            source_sequences, support_groups, candidate_specs)
-Wave.prepare_build(view, resolved_profile) -> PreparedSnapshot
-Wave.accept_in(tx, prepared) -> SnapshotDescriptor
-Wave.promote_in(tx, snapshot_ref) -> None
-WaveOperations.query(WaveQuery) -> ordered groups + exact hits
+async with Wave.build_product(view, resolved_profile) as product:
+    Wave.publish_in(tx, product) -> SnapshotDescriptor
+    Wave.promote_in(tx, snapshot_ref) -> None
+WaveOperations.query(WaveQuery) -> WaveSearchResult
 ```
 
 清单路径入口转换为同样的 view，再进入共同 build。认知代码不导出临时 JSON，也不访问 Wave SQL/Native 内部行号。Wave 只认识可检索正文及计算引用，不理解 Journal 的采用规则。
 
-`CorpusCapture.capture_in(ReadTx)` 负责正式视图；`ProjectionBuilder` 声明 DocumentCandidates、标题、独立 occurrence 及路径。Wave 负责准备单元与数值组件；认知用例在自己的 WriteTx 检查 generation、接纳结果并在条件成立时提升当前指针。
+`CorpusCapture.directory_in` 读取轻量目录，`expand_in` 在同一读事务中展开变化材料；`ProjectionBuilder` 声明 DocumentCandidates、标题、独立 occurrence 及路径。Wave 负责准备单元与数值组件；认知用例在自己的 WriteTx 检查 generation、发布结果并在条件成立时提升当前指针。
 
 ## 候选和证据
 
@@ -59,7 +59,7 @@ Journal 及 remember=true 的 Note 提供当前版本。归档文稿不再贡献
 
 ## 失败与使用状态
 
-保存和刷新分开：`saved=true, retrieval=pending` 是可用结果；用户要求 refresh 而失败时返回原 revision、operation 关联、失败原因和 retry 操作。不得撤销已保存正文或假称索引最新。
+保存和刷新分开：未请求刷新时返回 not_requested；用户要求刷新而失败时返回原 revision 与失败原因。正文保持可读，索引新鲜度由捕获代次和当前代次表达。
 
 `query` 在无法建立所请求当前视图时返回 projection failure；显式 snapshot 查询仍可读旧快照。错误可建议 `--mode lexical`，但程序不自行执行另一条检索来掩盖失败。
 
