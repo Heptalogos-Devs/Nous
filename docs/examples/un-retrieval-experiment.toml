@@ -43,243 +43,243 @@ path = "temp/test-materials/PDF/un-ares-70-1.pdf"
 pages = [1, 2, 3]
 [[query]]
 question = "联合国宪章第一条列出哪些组织宗旨？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "安全理事会在维护国际和平与安全方面负有什么首要责任？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "成员国对安全理事会决定承担什么义务？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "联合国宪章第三十三条列出哪些和平解决争端的方法？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "宪章第九章的国际经济和社会合作涉及哪些领域？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "宪章第五十一条怎样界定自卫权及其向安理会报告的要求？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "2024年可持续发展目标报告说，全球进展目前处于什么状态？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "报告用哪些数据或机构输入来评估可持续发展目标进展？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "联合国气候科学素养海报系列由哪些机构共同制作，目标是什么？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "气候科学素养系列制作了多少张海报并提供哪些语言？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "联合国教科文组织的签署照片里可直接看到什么，图片记录补充了哪些事实？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "UN Charter membership, organs and purposes are described where?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "Which peaceful approaches may parties use to resolve disputes under Article 33?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "What obligations do UN members accept concerning Security Council decisions?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "What evidence in the UNESCO video indicates its audience or intended action?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "What does the UNESCO video actually communicate about climate science literacy?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "How might education help communities prepare for climate change impacts?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "Across the Charter, SDG report, Aldabra description and climate video, what shared themes recur?"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "Which source is most useful to explain the difference between a binding decision and a recommendation?"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "What parts of the material are factual observations, and what parts are recommendations or interpretation?"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "Does the video give enough evidence to identify a specific climate adaptation policy?"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "What unanswered questions remain after reading these sources?"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "阿尔达布拉浅泻湖由几座大型珊瑚岛围成？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "阿尔达布拉约有多少巨龟，页面如何解释它未受人类影响？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "联合国教科文组织照片说明记录了谁在何时签署《世界遗产公约》？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "这张历史照片里，哪些可见细节能直接看出来，哪些信息只能由说明文字确认？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "A/RES/70/1 设定了多少个可持续发展目标和具体目标？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "2030 议程的五个核心承诺通常被概括成哪些主题？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 
 [[query]]
 question = "珊瑚礁生态与可持续发展目标中的海洋、生计和气候行动之间有哪些可研究联系？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 
 [[query]]
 question = "视频中的讲者如何解释气候科学素养，提到了哪些受众或行动？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "联合国教科文组织说明说阿尔达布拉环礁约有多少只巨龟？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "阿尔达布拉的隔离如何帮助保护其生态？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "这张照片记录了什么签署活动，签署人是谁？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "照片记录给出的签署日期是什么？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "A/RES/70/1 提出了多少项可持续发展目标和具体目标？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "2030 议程用哪五个主题组织其承诺？"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 
 [[query]]
 question = "决议中关于不让任何人掉队的内容与人民、地球和繁荣如何关联？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 [[query]]
 question = "这张签署照片中，哪些信息可直接观察，哪些需要目录说明佐证？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 [[query]]
 question = "当前阿尔达布拉描述说明了哪些事实，又没有提供哪些保护风险证据？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 [[query]]
 question = "视频里演讲者给出的气候教育建议是否足以指导具体政策？还缺少什么？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 [[query]]
 question = "这些联合国材料谈和平、合作或共同责任时，哪些结论有直接文本支持？"
-modes = ["hybrid"]
+programs = ["hybrid"]
 top_k = 8
 
 [[query]]
 question = "What was Aldabra's conservation budget in 2025 according to these sources?"
-modes = ["hybrid", "dense", "lexical"]
+programs = ["hybrid", "dense", "lexical"]
 top_k = 8
 [[query]]
 question = "Aldabra Atoll consists of how many large coral islands enclosing a shallow lagoon?"
-modes = ["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
+programs = ["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
 top_k = 8

@@ -2,14 +2,7 @@
 
 在仓库根目录运行。先做工作区设定，再 `uv sync --locked`。阈值、外部命令和扫描路径在 [config/check.toml](config/check.toml)。
 
-```powershell
-pwsh -File ./scripts/check/run.ps1
-pwsh -File ./scripts/check/run.ps1 length src/nous/content/results.py
-pwsh -File ./scripts/check/run.ps1 tests -- tests/cli/instance/test_initialization.py
-pwsh -File ./scripts/check/run.ps1 tests --rust nous-vcp
-pwsh -File ./scripts/check/run.ps1 all
-pwsh -File ./scripts/check/run.ps1 --profile ci
-```
+> Windows 用 PowerShell 运行 `ps1` 文件。
 
 ```sh
 sh scripts/check/run.sh

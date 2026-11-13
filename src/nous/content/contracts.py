@@ -361,6 +361,13 @@ class OutputMapping(ContentValue):
     origins: tuple[ContentSelection, ...] = Field(min_length=1)
 
 
+class NamedSelection(ContentValue):
+    """Exact sources selected by a completed task under a task-local key."""
+
+    key: str = Field(min_length=1)
+    sources: tuple[ContentSelection, ...] = Field(min_length=1)
+
+
 class ModelProducer(ContentValue):
     """The model route and provider response that produced the result."""
 
@@ -407,6 +414,7 @@ class ResultFacts(ContentValue):
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     coverage: dict[str, JsonValue] = Field(default_factory=dict)
     mappings: tuple[OutputMapping, ...] = ()
+    selections: tuple[NamedSelection, ...] = ()
     dependencies: tuple[ContentDependency, ...] = ()
     formed_at: datetime
 

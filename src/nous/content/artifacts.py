@@ -307,101 +307,17 @@ class ArtifactStore:
                             fact = SourceFacts.model_validate(value)
                             detected_types[fact.artifact.id] = fact.detected_mime
                 if representations == "existing":
-                    if result_ids:
-                        used = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.parts.c.result_id,
-                                        schema.parts.c.group_ordinal,
-                                        schema.parts.c.part_ordinal,
-                                        schema.parts.c.artifact_id,
-                                        schema.parts.c.selector,
-                                    ).where(schema.parts.c.result_id.in_(result_ids))
-                                )
+                    representation_ids = list(
+                        (
+                            await tx.connection.execute(
+                                sa.select(schema.representation_origins.c.result_id)
+                                .where(schema.representation_origins.c.artifact_id.in_(object_ids))
+                                .distinct()
                             )
-                            .mappings()
-                            .all()
-                        )
-                        roots = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.origins.c.result_id,
-                                        schema.origins.c.group_ordinal,
-                                        schema.origins.c.part_ordinal,
-                                        schema.origins.c.artifact_id,
-                                        schema.origins.c.selector,
-                                    ).where(schema.origins.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        chosen = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.selected_targets.c.result_id,
-                                        schema.selected_targets.c.slot_key,
-                                        schema.selected_targets.c.artifact_id,
-                                        schema.selected_targets.c.selector,
-                                    ).where(schema.selected_targets.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        source_artifacts = await self.get_many_in(
-                            tx, [str(row["artifact_id"]) for row in (*chosen, *used, *roots)]
-                        )
-                        relations: dict[str, list[ContentSelection]] = {}
-                        parts_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
-                        origins_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
-                        targets_by_slot: dict[tuple[str, str], list[ContentSelection]] = {}
-                        offset = 0
-                        for kind, rows in (("selected", chosen), ("part", used), ("origin", roots)):
-                            for row, artifact in zip(
-                                rows, source_artifacts[offset : offset + len(rows)], strict=True
-                            ):
-                                selected = ContentSelection(
-                                    artifact=artifact.ref,
-                                    selection=SourceSelection.model_validate(row["selector"]),
-                                )
-                                result_id = str(row["result_id"])
-                                if selected not in relations.setdefault(result_id, []):
-                                    relations[result_id].append(selected)
-                                if kind == "selected":
-                                    targets_by_slot.setdefault(
-                                        (result_id, str(row["slot_key"])), []
-                                    ).append(selected)
-                                elif kind == "part":
-                                    parts_by_group.setdefault(
-                                        (result_id, int(row["group_ordinal"])), []
-                                    ).append(selected)
-                                else:
-                                    origins_by_group.setdefault(
-                                        (result_id, int(row["group_ordinal"])), []
-                                    ).append(selected)
-                            offset += len(rows)
-                        group_rows = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.inputs.c.result_id,
-                                        schema.inputs.c.group_ordinal,
-                                        schema.inputs.c.slot_key,
-                                    ).where(schema.inputs.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        group_slots = {
-                            (str(row["result_id"]), int(row["group_ordinal"])): str(row["slot_key"])
-                            for row in group_rows
-                        }
-                        outputs = (
+                        ).scalars()
+                    )
+                    if representation_ids:
+                        rows = (
                             (
                                 await tx.connection.execute(
                                     sa.select(
@@ -412,70 +328,51 @@ class ArtifactStore:
                                         schema.outputs.c.name,
                                         schema.outputs.c.artifact_id,
                                         schema.outputs.c.representation_kind,
+                                        schema.representation_origins.c.artifact_id.label(
+                                            "source_id"
+                                        ),
+                                        schema.representation_origins.c.selector,
                                     )
-                                    .join(schema.outputs)
-                                    .where(
-                                        schema.results.c.id.in_(result_ids),
-                                        schema.outputs.c.role != "diagnostic",
-                                        schema.outputs.c.representation_kind.is_not(None),
+                                    .select_from(
+                                        schema.results.join(schema.outputs).join(
+                                            schema.representation_origins,
+                                            sa.and_(
+                                                schema.representation_origins.c.result_id
+                                                == schema.outputs.c.result_id,
+                                                schema.representation_origins.c.output_name
+                                                == schema.outputs.c.name,
+                                            ),
+                                        )
                                     )
+                                    .where(schema.results.c.id.in_(representation_ids))
                                     .order_by(
-                                        schema.results.c.recorded_at, schema.outputs.c.ordinal
+                                        schema.results.c.recorded_at,
+                                        schema.outputs.c.ordinal,
+                                        schema.representation_origins.c.ordinal,
                                     )
                                 )
                             )
                             .mappings()
                             .all()
                         )
-                        mappings = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(schema.output_mappings)
-                                    .where(schema.output_mappings.c.result_id.in_(result_ids))
-                                    .order_by(schema.output_mappings.c.ordinal)
+                        source_artifacts = await self.get_many_in(
+                            tx, [str(row["source_id"]) for row in rows]
+                        )
+                        relations: dict[
+                            tuple[str, str], tuple[dict[str, object], list[ContentSelection]]
+                        ] = {}
+                        for row, source in zip(rows, source_artifacts, strict=True):
+                            key = (str(row["id"]), str(row["name"]))
+                            details, selected_sources = relations.setdefault(key, (dict(row), []))
+                            selected_sources.append(
+                                ContentSelection(
+                                    artifact=source.ref,
+                                    selection=SourceSelection.model_validate(row["selector"]),
                                 )
                             )
-                            .mappings()
-                            .all()
-                        )
-                        mapped_sources: dict[tuple[str, str], list[ContentSelection]] = {}
-                        for mapping in mappings:
-                            key = (str(mapping["result_id"]), str(mapping["output_name"]))
-                            for item in mapping["origins"]:
-                                origin = ContentSelection.model_validate(item)
-                                if origin not in mapped_sources.setdefault(key, []):
-                                    mapped_sources[key].append(origin)
-                        for row in outputs:
-                            key = (str(row["id"]), str(row["name"]))
-                            mapped = mapped_sources.get(key, [])
-                            exact_sources = list(mapped)
-                            if mapped:
-                                for group, parts in parts_by_group.items():
-                                    if group[0] != key[0] or not any(
-                                        left.artifact == right.artifact
-                                        and self._overlaps(left.selection, right.selection)
-                                        for left in mapped
-                                        for right in (*parts, *origins_by_group.get(group, ()))
-                                    ):
-                                        continue
-                                    for source in (
-                                        *origins_by_group.get(group, ()),
-                                        *targets_by_slot.get((group[0], group_slots[group]), ()),
-                                    ):
-                                        if source not in exact_sources:
-                                            exact_sources.append(source)
-                            else:
-                                exact_sources.extend(relations.get(key[0], ()))
-                            exact = tuple(exact_sources)
-                            if any(item.artifact.instance_id != self.instance_id for item in exact):
-                                raise NousError(
-                                    "content.instance_mismatch",
-                                    "A representation belongs to another instance",
-                                )
-                            details: dict[str, object] = {
-                                **dict(row),
-                            }
-                            for object_id in {item.artifact.id for item in exact} & object_ids:
+                        for details, sources in relations.values():
+                            exact = tuple(sources)
+                            for object_id in {source.artifact.id for source in exact} & object_ids:
                                 represented.setdefault(object_id, []).append((details, exact))
                 derived = await self.get_many_in(
                     tx,

@@ -1,0 +1,19 @@
+contract_id = "arrange-reading"
+
+[documentation]
+title = "有来源的阅读整理"
+purpose = "按阅读目的组织已交付原文并保留证据引用。"
+consumers = ["StewardOperations"]
+input_notes = "question 为原始问题；instructions 包含用途、粒度、语言和证据目录。附加来源的 E 键对应实际选区。"
+output_notes = "按 Schema 返回阅读条目；有依据的条目使用本次 E 键。"
+
+[[messages]]
+description = "阅读整理任务与来源要求。"
+role = "system"
+template = "system.md.j2"
+
+[[messages]]
+description = "问题、阅读目的和已交付原文。"
+role = "user"
+template = "user.md.j2"
+append_sources = true

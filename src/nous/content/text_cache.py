@@ -15,6 +15,7 @@ from nous.runtime.execution import ExecutionManager
 
 from .configuration import TextCacheConfig
 from .contracts import ArtifactRef, BlobRef, ContentSelection
+from .structure_context import StructuralContextSpan
 from .text import PARSER_PROFILE, BlockStructure, TextView
 
 
@@ -24,6 +25,8 @@ class CachedStructure(BaseModel):
     profile: str
     blocks: tuple[BlockStructure, ...]
     citations: tuple[tuple[int, int, str], ...]
+    paragraphs: tuple[tuple[int, int], ...]
+    contexts: tuple[StructuralContextSpan, ...]
 
 
 class CachedText(BaseModel):
@@ -68,6 +71,18 @@ class TextStructureCache:
             if not 0 <= start <= end <= len(raw):
                 raise ValueError("Citation span exceeds source")
             raw[start:end].decode("utf-8")
+        for start, end in payload.paragraphs:
+            if not 0 <= start <= end <= len(raw):
+                raise ValueError("Paragraph span exceeds source")
+            raw[start:end].decode("utf-8")
+        for item in payload.contexts:
+            if not (
+                0 <= item.scope_start <= item.scope_end <= len(raw)
+                and 0 <= item.context_start <= item.context_end <= len(raw)
+            ):
+                raise ValueError("Structural context exceeds source")
+            raw[item.scope_start : item.scope_end].decode("utf-8")
+            raw[item.context_start : item.context_end].decode("utf-8")
         return payload
 
     def _remember(self, key: str, payload: CachedStructure, size: int, limit: int) -> None:
@@ -106,7 +121,11 @@ class TextStructureCache:
         if payload is None:
             view = TextView.parse(ContentSelection(artifact=artifact), text)
             payload = CachedStructure(
-                profile=view.parser_profile, blocks=view.structure, citations=view.citation_spans
+                profile=view.parser_profile,
+                blocks=view.structure,
+                citations=view.citation_spans,
+                paragraphs=view.paragraph_spans,
+                contexts=view.context_spans,
             )
             serialized = self._serialize(payload)
             size = len(serialized.encode("utf-8"))
@@ -121,6 +140,8 @@ class TextStructureCache:
             structure=payload.blocks,
             text=text,
             citation_spans=payload.citations,
+            paragraph_spans=payload.paragraphs,
+            context_spans=payload.contexts,
         ), hit
 
     async def view(

@@ -14,17 +14,17 @@ Wave 已发布快照保存 covered_generation、profile_signature、space_signat
 
 不把 dirty 布尔值、事件表、任务队列和 generation 同时维护成四份状态。持久未完成状态由“内容代次大于相应 profile 的已发布代次”直接表达。
 
-## 两种构建 profile
+## 投影视图与查询程序
 
-无空间或显式 lexical 使用 lexical profile，无模型请求。配置了 cognition.search.space 的 auto 使用 semantic profile，包括正文向量、具备标注的概念/关系及完整 Wave 能力。显式 dense/VCP 但缺所需能力时返回具体缺项。
+视图按所选程序需要的资产与实例空间配置构建。词项程序不要求向量空间；需要向量的程序使用 `cognition.search.space`。默认程序及能力不足时使用的程序由 Wave 配置确定，执行结果记录实际程序。
 
-lexical 与 semantic 的快照分属明确 profile key，避免一次词项查询把已发布语义快照降级。profile key 包含空间语义、include_review/include_exploration 等实际证据视图策略和 build 配置签名；改变 build 参数要求新投影，query 参数不要求重建。语义模型配置存在但请求失败时不静默降级，用户可以显式选择 lexical。
+不同空间或证据策略使用不同 profile key。key 包含空间语义、`include_review`、`include_exploration`、`include_work`、材料与组合同、候选布局及构建配置；改变实际资产要求新投影，单次查询参数不要求重建。模型请求失败时返回实际错误。
 
 ## 捕获与构建算法
 
 1. 根操作固定配置和 Namespace。读取该 profile 已发布快照及 namespace generation，完全匹配时可直接持有 immutable snapshot，热查询不先捕获整库正文/标注。
 2. 需要更新时，取得同 Namespace/profile 的构建协调锁，再检查一次。锁只协调该项构建，不阻塞文稿写入，不是实例级请求锁。
-3. 在一个短 ReadTx 中取得 generation G 和当前可召回记录的轻量目录，并按纳入政策判断组资格。以精确修订、正文、来源、活动标注和候选布局匹配可复用投影单元；共同组不因纳入政策或无关构建参数改变而展开。仅变化记录展开完整标注及必要来源，未变组按文档键共享祖先节点。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
+3. 在一个短 ReadTx 中由各材料 owner 捕获 generation G、当前材料事实和精确内容引用，并按共同资格事实判断组资格。以材料和组合同、精确修订、正文、来源、活动标注及候选布局匹配可复用投影单元；变化材料展开必要来源，未变组按文档键共享祖先节点。正文读取和解析在事务外进行。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
 4. 网络向量、CAS 读取、Native 构建全在事务外。同一正文和表示在一次构建中只准备一次，复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
 5. 在稳定组件目录完成构建并校验完成清单。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
 6. 本次查询使用捕获的 G；后来写入由下一次 current 查询或显式 refresh 处理。返回 captured_generation，必要时提示已有更晚版本。不要让持续写入造成无限追赶或持有数据库事务等待模型。
@@ -49,7 +49,7 @@ WaveOperations.query(WaveQuery) -> WaveSearchResult
 
 ## 候选和证据
 
-Journal 及 remember=true 的 Note 提供当前版本。归档文稿不再贡献自身候选或概念路径；其它 active 文稿明确引用它的历史内容仍可保留来源关系。archive 是收纳选择，不声明那段经历错误。
+Journal、remember=true 的 Note，以及明确开启召回的 Work 提供当前修订。归档文稿不再贡献自身候选或概念路径；其它 active 文稿明确引用它的历史内容仍可保留来源关系。archive 是收纳选择，不声明那段经历错误。
 
 认知投影声明 DocumentCandidates，由 Wave 使用共同内容批量准备，在同一 TextView 上生成整文和有界局部候选。whole/section/block 必须指同一 exact revision；召回前就使用文稿分组，不采用 top_k 乘常数后去重。具体行为见 [准备](../wave/corpus-preparation.md)和[分组](../wave/grouped-delivery.md)。局部候选只拥有实际覆盖的 occurrence 和路径片段，截去中间 occurrence 时保留断点，不补新相邻关系。
 
@@ -61,9 +61,9 @@ Journal 及 remember=true 的 Note 提供当前版本。归档文稿不再贡献
 
 保存和刷新分开：未请求刷新时返回 not_requested；用户要求刷新而失败时返回原 revision 与失败原因。正文保持可读，索引新鲜度由捕获代次和当前代次表达。
 
-`query` 在无法建立所请求当前视图时返回 projection failure；显式 snapshot 查询仍可读旧快照。错误可建议 `--mode lexical`，但程序不自行执行另一条检索来掩盖失败。
+`query` 在无法建立所请求当前视图时返回 projection failure；锚定的查询使用指定快照。
 
-不为每次搜索持久保存一套 query receipt。命中含 snapshot_ref + exact revision/selection，反馈时可直接带这些值；需要评价整次查询时提交类型化 QueryResult，固定实际参与的上下文和交付范围；见 [查询情境](query-use-context.md)。快照所属范围使用 typed owner，集合名不承担身份协议。
+未请求保存的查询只返回内存交付。保存或阅读整理时，精确证据成为正式成果；调用者也可随后采用已完成的内存交付。反馈通过该成果及所属 E 键固定实际目标，见[查询情境](query-use-context.md)。普通保存不为回读原文保留计算快照；明确锚定的保存和可用的反馈快照按历史计算需要保留。快照回收后，已保存 E 仍可通过精确材料选区读取，反馈保留当时的排名依据并标记快照不可用。快照所属范围使用 typed owner，集合名不承担身份协议。
 
 ## 认知与内容血缘的接缝
 

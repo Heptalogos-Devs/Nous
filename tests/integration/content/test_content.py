@@ -467,7 +467,7 @@ def test_xml_text_remains_available_across_content_and_model_inputs(tmp_path: Pa
                     runtime.artifacts,
                     structured=True,
                 )
-                passages = json.loads(outputs["passages"].data)
+                passages = json.loads(outputs.outputs["passages"].data)
                 assert passages[0]["text"] == view.body_text
                 assert passages[0]["content"] == source.group.parts[0].content.model_dump(
                     mode="json"
@@ -624,6 +624,16 @@ def test_exact_text_selection_and_lossless_edits(tmp_path: Path) -> None:
             )
             packed = multi_view.complete_chunks(64)
             assert len(packed) > 1 and "".join(chunk.text for chunk in packed) == many_blocks
+            table_text = "# Caption\n\n| Name | Value |\n| --- | --- |\n| Item | 3 |\n"
+            table_artifact = await runtime.artifacts.ingest(table_text)
+            table_view = await runtime.artifacts.text_view(table_artifact.ref)
+            row_start = len(table_text[: table_text.index("| Item")].encode())
+            row = ContentSelection(
+                artifact=table_artifact.ref,
+                selection=SourceSelection(start_byte=row_start, end_byte=len(table_text.encode())),
+            )
+            expected_context = table_view.structural_context(row)
+            assert len(expected_context) == 2
             definition = ContentSelection(
                 artifact=artifact.ref, selection=SourceSelection(start_line=1, end_line=1)
             )
@@ -645,6 +655,9 @@ def test_exact_text_selection_and_lossless_edits(tmp_path: Path) -> None:
             )
             batch = await runtime.generation.preparer.materialize(plan.batches[0])
             assert batch.sources[0].text == "[label]: source:S1\r\n"
+        async with open_instance(instance, environment={}) as runtime:
+            cached_view = await runtime.artifacts.text_view(table_artifact.ref)
+            assert cached_view.structural_context(row) == expected_context
         async with open_instance(
             instance, environment={}, overrides={"content.text_read_max_bytes": 11}
         ) as runtime:
@@ -688,6 +701,91 @@ def test_exact_text_selection_and_lossless_edits(tmp_path: Path) -> None:
                 )
 
     asyncio.run(scenario())
+
+
+def test_sentence_closure_uses_original_bytes_and_paragraph_boundaries() -> None:
+    from nous.content.contracts import ArtifactRef
+    from nous.content.text import TextView
+
+    artifact = ArtifactRef(instance_id="instance", id="object", identifier="art-example")
+    text = (
+        "# 标题\r\n\r\n"
+        "前一句。日期\r\n为 2024 年 8 月。末句。\r\n\r\n"
+        "另一个段落有问题。结尾。\r\n\r\n"
+        "文中引用 [出处](source:E1) 是依据。\r\n\r\n"
+        "First line  \r\nsecond line. Third.\r\n"
+        "\r\n- 列表前句。列表原因\r\n  继续。列表结束。\r\n"
+        "\r\n> 引用前句。引用原因\r\n> 继续。引用结束。\r\n"
+    )
+    view = TextView.parse(ContentSelection(artifact=artifact), text)
+
+    def selected(first: str, last: str | None = None) -> ContentSelection:
+        start = text.index(first)
+        end = text.index(last or first, start) + len(last or first)
+        return ContentSelection(
+            artifact=artifact,
+            selection=SourceSelection(
+                start_byte=len(text[:start].encode()), end_byte=len(text[:end].encode())
+            ),
+        )
+
+    def closed(first: str, last: str | None = None) -> str:
+        bounds = view.sentence_closure(selected(first, last)).selection
+        return text.encode()[bounds.start_byte : bounds.end_byte].decode()
+
+    assert closed("2024") == "日期\r\n为 2024 年 8 月。"
+    assert closed("标题") == "标题"
+    assert closed("2024", "问题") == ("日期\r\n为 2024 年 8 月。末句。\r\n\r\n另一个段落有问题。")
+    assert "[出处](source:E1)" in closed("source:E1")
+    assert closed("First") == "First line  \r\n"
+    assert closed("second") == "second line. "
+    assert closed("列表原因") == "列表原因\r\n  继续。"
+    assert closed("引用原因") == "引用原因\r\n> 继续。"
+    with pytest.raises(NousError, match="UTF-8"):
+        view.sentence_closure(
+            ContentSelection(artifact=artifact, selection=SourceSelection(start_byte=3, end_byte=4))
+        )
+
+
+def test_structural_context_uses_exact_markdown_source_ranges() -> None:
+    from nous.content.contracts import ArtifactRef
+    from nous.content.text import TextView
+
+    artifact = ArtifactRef(instance_id="instance", id="body", identifier="art-body")
+    text = (
+        "# 标题\r\n\r\n## 细节\r\n\r\n条件如下：\r\n\r\n"
+        "- 主要条件\r\n  - 子项内容\r\n\r\n"
+        "| 项目 | 时长 |\r\n| --- | --- |\r\n| A | 3 |\r\n| B | 5 |\r\n\r\n"
+        "```python\r\nprint('值')\r\n```\r\n\r\n# 其他\r\n\r\n独立内容。\r\n"
+    )
+    view = TextView.parse(ContentSelection(artifact=artifact), text)
+    raw = text.encode("utf-8")
+
+    def selection(phrase: str) -> ContentSelection:
+        start = text.index(phrase)
+        return ContentSelection(
+            artifact=artifact,
+            selection=SourceSelection(
+                start_byte=len(text[:start].encode()),
+                end_byte=len(text[: start + len(phrase)].encode()),
+            ),
+        )
+
+    def context(phrase: str) -> tuple[str, ...]:
+        return tuple(
+            raw[item.selection.start_byte : item.selection.end_byte].decode()
+            for item in view.structural_context(selection(phrase))
+        )
+
+    listed = context("子项内容")
+    assert listed == ("# 标题\r\n", "## 细节\r\n", "条件如下：\r\n", "- 主要条件\r\n")
+    table = context("| B | 5 |")
+    assert table == ("# 标题\r\n", "## 细节\r\n", "| 项目 | 时长 |\r\n| --- | --- |\r\n")
+    closed = view.sentence_closure(selection("| B | 5 |"))
+    assert raw[closed.selection.start_byte : closed.selection.end_byte].decode() == "| B | 5 |\r\n"
+    fenced = context("print('值')")
+    assert fenced == ("# 标题\r\n", "## 细节\r\n", "```python\r\n", "```\r\n")
+    assert context("独立内容") == ("# 其他\r\n",)
 
 
 def test_adopted_text_projection_maps_exact_regions_without_matching_bytes(tmp_path: Path) -> None:

@@ -13,22 +13,20 @@ Rust 核心无 pyo3/numpy 依赖；Python bundle 转成核心自有结构后调�
 ```text
 Engine.build(FrozenAssets, BuildOptions, component_path, cancel) -> BuiltSnapshot
 Engine.open(published_path, expected_identity, cancel) -> Snapshot
+Snapshot.execute_program(program, query_signals, allowed, cancel) -> NativeQueryResult
 Snapshot.observe(QuerySignals, ObserveOptions, cancel) -> Observation
-Snapshot.recall(observation_or_query, RetrievalPlan, allowed, cancel) -> CandidatePool
-Snapshot.readout(Observation, CandidatePool, ReadoutOptions, cancel) -> QueryResult
 Snapshot.think(Observation, Stages, ThinkingOptions, cancel) -> ThinkingResult
-Snapshot.search(QueryRequest, cancel) -> QueryResult
 ```
 
-`search` 是上述操作的完整组合，最多一次 observe；readout 消费给定池，不再 ANN/BM25。公开 Python binding 同时提供 search 与高级 observe/readout/think。无需额外进程、HTTP 内核或内部命令总线。
+查询程序由类型化算子连接而成。Native 在同一快照借用内执行数值子图；相同的确定性节点共享执行结果，RiverMemo 和 DTSC 的读出消费图中传入的候选与观测。Python 完成原文映射、可选评价和预算选择。算子端口和配置见 [Wave 程序](program.md)。
 
-CandidatePool 绑定 snapshot/space；条目保存 row、lane 原始分/名次和来源位。外部提供时间/实体等候选时，它们必须对应当前快照已声明的正文和向量；新增候选需要新快照，不临时伪造行号。每个 row 保存合并后的 lane；重复或未知 row 返回明确错误。空 allowed 是空集合，None 才是全部。
+CandidateSet 绑定 snapshot/space；条目保存 row、lane 原始分/名次和来源位。CalibratedPool 同时绑定其观测、候选和校准参照。外部提供候选时，它们必须对应当前快照已声明的正文和向量；新增候选需要新快照。重复或未知 row 返回明确错误。空 allowed 是空集合，None 才是全部。
 
 Observation 保留实际查询向量、核心概念、临时 cue、河网、双场与实际 observe 参数。readout 不要求调用者重新传一份 core_rows，不能因漏传而失去直接锚；也不以 readout 的默认配置重算观测。
 
 ## 通道规划只有一个定义
 
-RetrievalPlan 持有每路 enabled、k 和合并上限。query/denoised/local/transfer/BM25/direct-anchor 各按自己的 k 获取候选，k=0 不执行对应工作。移除现有独立 candidate_budget；使用各 lane K 与唯一 maxUnionCandidates，参数目录、帮助和消费者一起迁移。
+程序显式连接 query/denoised/local/transfer/BM25/direct-anchor 等召回节点，各路使用自己的预算，预算为零时不执行该路计算。候选联合的预算和最终材料组数分别指定。
 
 候选合并保留各路名次，按既有 union 规则和明确上限选择，之后一次读出。VCP 原生 select_superset 与外层规划合并为一项合同，不在两处做不同截断。达到上限报告实际规模与截断位置。
 
@@ -48,7 +46,7 @@ RiverMemo 已包含内部分数和条件 RRF；hybrid 不把同一组内部 lane
 
 Thinking 使用同次完整前驱记录。请求需要记录时，在 observe 规划中明确 record_transitions 与有界记录额度；配置禁用时返回 `thinking.records_disabled`。不能暗改 0 为 usize::MAX。达到额度标 truncated，Thinking 可用状态说明缺少路线；取消、非法参数和内部错误仍传播。
 
-DTSC 保留独立模式与原数学合同。转换时类型化传递 EPA/Pyramid 几何，删除 unwrap_or_default；算法本身定义的低支持行为继续保留。
+DTSC 是独立读出算子，接收同次观测和明确候选集合，保留自己的几何、低支持行为及分数单位。
 
 NativeError 使用 code/message/details，错误在了解含义的模块构造；不把 details 固定为空，也不靠匹配字符串决定 code。预期无结果正常返回空 hits；数值失败不能伪装为没有记忆。
 
@@ -62,7 +60,7 @@ Python QueryInput 支持文字、上下文、概念线索，以及显式 VectorR
 
 ## 候选校准与原数值次序
 
-迁出 VCP select_superset 时保留其“授权池内归一化→通道联合选择→曲线读出”的计算次序、BM25 参照和原公式。普通 recall 在完整召回池上完成一次校准/选择，CandidatePool 保留需要的参照；readout 不再重做选择或截断。高级调用提供的最终池经同一校准规则准备，候选集合由调用者明确给定。
+VCP 校准保留“授权池内归一化→通道联合选择→曲线读出”的计算次序、BM25 参照和原公式。`vcp.calibrate` 在明确的候选总体上计算一次校准；RiverMemo 读出消费对应的 CalibratedPool，不再次召回或重算参照。
 
 不能在截断后重算参照导致普通 search 与同池 readout 的质量变化。外部 lane 分数标明来源与单位，无法与已知 lane 合并的分数只作独立诊断/融合输入，不冒充 BM25 或余弦。
 ## 数值范围与取消

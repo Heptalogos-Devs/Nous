@@ -9,7 +9,12 @@ import pytest
 import sqlalchemy as sa
 
 from nous.cognition.contracts import CreateNamespace, RenameNamespace
-from nous.cognition.retrieval.contracts import CognitiveQuery, RefreshRetrieval
+from nous.cognition.retrieval.contracts import (
+    QueryAnchor,
+    QueryControls,
+    QueryRequest,
+    RefreshRetrieval,
+)
 from nous.cognition.retrieval.operations import QUERY, REFRESH
 from nous.cognition.scope import CREATE_NAMESPACE, RENAME_NAMESPACE
 from nous.cognition.writing.contracts import (
@@ -65,7 +70,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 ),
             )
             original = await runtime.app.call(
-                QUERY, CognitiveQuery(text="sharedterm", mode="lexical", top_k=5)
+                QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
             old_view = await runtime.app.call(
                 READ_RECORD, ReadRecord(target=first.commit.revision_ref)
@@ -84,15 +89,12 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 READ_RECORD, ReadRecord(target=renamed.commit.revision_ref)
             )
             assert new_view.body_artifact == old_view.body_artifact
-            title = await runtime.app.call(
-                QUERY, CognitiveQuery(text="uniqueheading", mode="lexical")
-            )
-            assert title.groups[0].context.revision_ref == renamed.commit.revision_ref
-            assert title.groups[0].passages[0].delivery.reason == "title_preview"
+            title = await runtime.app.call(QUERY, QueryRequest(text="uniqueheading"))
+            assert title.evidence.materials[0].material.ref == renamed.commit.revision_ref
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
-                        schema.snapshots.c.id == title.context.snapshot_ref.id
+                        schema.snapshots.c.id == title.evidence.snapshot.id
                     )
                 )
             assert summary is not None
@@ -109,16 +111,18 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 ),
             )
             after_archive = await runtime.app.call(
-                QUERY, CognitiveQuery(text="sharedterm", mode="lexical", top_k=5)
+                QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
-            assert {group.context.revision_ref.revision_id for group in after_archive.groups} == {
-                renamed.commit.revision_ref.revision_id,
-                long.commit.revision_ref.revision_id,
+            assert {
+                group.material.ref.model_dump_json() for group in after_archive.evidence.materials
+            } == {
+                renamed.commit.revision_ref.model_dump_json(),
+                long.commit.revision_ref.model_dump_json(),
             }
             async with runtime.database.read() as tx:
                 archived_summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
-                        schema.snapshots.c.id == after_archive.context.snapshot_ref.id
+                        schema.snapshots.c.id == after_archive.evidence.snapshot.id
                     )
                 )
             assert archived_summary is not None
@@ -135,12 +139,12 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 ),
             )
             fresh = await runtime.app.call(
-                QUERY, CognitiveQuery(text="sharedterm", mode="lexical", top_k=5)
+                QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
-            revisions = {group.context.revision_ref.revision_id for group in fresh.groups}
+            revisions = {group.material.ref.model_dump_json() for group in fresh.evidence.materials}
             assert revisions == {
-                renamed.commit.revision_ref.revision_id,
-                changed.commit.revision_ref.revision_id,
+                renamed.commit.revision_ref.model_dump_json(),
+                changed.commit.revision_ref.model_dump_json(),
             }
             await runtime.app.call(
                 SET_RECALL,
@@ -152,15 +156,15 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 ),
             )
             after_recall_change = await runtime.app.call(
-                QUERY, CognitiveQuery(text="sharedterm", mode="lexical", top_k=5)
+                QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
-            assert [group.context.revision_ref for group in after_recall_change.groups] == [
+            assert [group.material.ref for group in after_recall_change.evidence.materials] == [
                 renamed.commit.revision_ref
             ]
             async with runtime.database.read() as tx:
                 recall_summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
-                        schema.snapshots.c.id == after_recall_change.context.snapshot_ref.id
+                        schema.snapshots.c.id == after_recall_change.evidence.snapshot.id
                     )
                 )
             assert recall_summary is not None
@@ -168,37 +172,37 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             assert recall_work["bodies"] == recall_work["bytes_read"] == recall_work["parsed"] == 0
             historical = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(
+                QueryRequest(
                     text="sharedterm",
-                    mode="lexical",
-                    snapshot=original.context.snapshot_ref,
-                    top_k=5,
+                    anchor=QueryAnchor(snapshot=original.evidence.snapshot, view="anchored"),
+                    controls=QueryControls(limit=5),
                 ),
             )
-            assert not historical.current
-            assert {group.context.revision_ref.revision_id for group in historical.groups} == {
-                first.commit.revision_ref.revision_id,
-                long.commit.revision_ref.revision_id,
-                archived.commit.revision_ref.revision_id,
+            assert historical.evidence.captured_generation == original.evidence.captured_generation
+            assert {
+                group.material.ref.model_dump_json() for group in historical.evidence.materials
+            } == {
+                first.commit.revision_ref.model_dump_json(),
+                long.commit.revision_ref.model_dump_json(),
+                archived.commit.revision_ref.model_dump_json(),
             }
             old_tail = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(
+                QueryRequest(
                     text="endingquartz",
-                    mode="lexical",
-                    snapshot=original.context.snapshot_ref,
+                    anchor=QueryAnchor(snapshot=original.evidence.snapshot, view="anchored"),
                 ),
             )
             assert any(
-                "Final endingquartz" in passage.delivery.text
-                for group in old_tail.groups
-                if group.context.revision_ref == long.commit.revision_ref
-                for passage in group.passages
+                "Final endingquartz" in fragment.text
+                for passage in old_tail.evidence.passages
+                if passage.material == long.commit.revision_ref
+                for fragment in passage.fragments
             )
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
-                        schema.snapshots.c.id == fresh.context.snapshot_ref.id
+                        schema.snapshots.c.id == fresh.evidence.snapshot.id
                     )
                 )
             assert summary is not None
@@ -217,7 +221,7 @@ def test_cancelled_native_build_waits_for_worker_and_keeps_base(tmp_path: Path) 
                 ADD_NOTE,
                 AddNote(body=InlineText(text="stable record"), remember=True, after=policy),
             )
-            baseline = await runtime.app.call(REFRESH, RefreshRetrieval(mode="lexical"))
+            baseline = await runtime.app.call(REFRESH, RefreshRetrieval())
             await runtime.app.call(
                 ADD_NOTE, AddNote(body=InlineText(text="new record"), remember=True, after=policy)
             )
@@ -239,9 +243,7 @@ def test_cancelled_native_build_waits_for_worker_and_keeps_base(tmp_path: Path) 
                     engine.close()
 
             with patch.object(snapshots, "_engine", PausedEngine()):
-                task = asyncio.create_task(
-                    runtime.app.call(REFRESH, RefreshRetrieval(mode="lexical"))
-                )
+                task = asyncio.create_task(runtime.app.call(REFRESH, RefreshRetrieval()))
                 try:
                     assert await asyncio.to_thread(entered.wait, 10)
                     task.cancel()
@@ -253,7 +255,7 @@ def test_cancelled_native_build_waits_for_worker_and_keeps_base(tmp_path: Path) 
                     release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await task
-            current = await runtime.app.call(REFRESH, RefreshRetrieval(mode="lexical"))
+            current = await runtime.app.call(REFRESH, RefreshRetrieval())
             assert current.current and current.captured_generation == 2
             assert baseline.snapshot.identifier in (await runtime.wave.cleanup()).snapshots
 
@@ -275,33 +277,33 @@ def test_snapshot_owner_and_namespace_references_survive_rename(tmp_path: Path) 
                     after=AfterWrite(annotation="skip"),
                 ),
             )
-            snapshot = await runtime.app.call(
-                REFRESH, RefreshRetrieval(namespace=namespace.ref, mode="lexical")
-            )
+            snapshot = await runtime.app.call(REFRESH, RefreshRetrieval(namespace=namespace.ref))
             await runtime.app.call(
                 RENAME_NAMESPACE, RenameNamespace(namespace=namespace.ref, name="renamed")
             )
             for selector in (snapshot.snapshot, snapshot.snapshot.identifier):
                 result = await runtime.app.call(
-                    QUERY, CognitiveQuery(snapshot=selector, text="scopequartz", mode="lexical")
+                    QUERY,
+                    QueryRequest(
+                        anchor=QueryAnchor(snapshot=selector, view="anchored"), text="scopequartz"
+                    ),
                 )
-                assert result.namespace.ref == namespace.ref
-                assert result.namespace.name == "renamed"
-                assert result.groups
+                assert result.evidence.intent.constraints.namespace == namespace.ref
+                assert (await runtime.namespaces.read(namespace.ref)).name == "renamed"
+                assert result.evidence.materials
             with pytest.raises(NousError) as error:
                 await runtime.app.call(
                     QUERY,
-                    CognitiveQuery(
-                        snapshot=snapshot.snapshot,
+                    QueryRequest(
+                        anchor=QueryAnchor(snapshot=snapshot.snapshot, view="anchored"),
                         namespace="default",
                         text="scopequartz",
-                        mode="lexical",
                     ),
                 )
             assert error.value.code == "cognition.namespace_mismatch"
             foreign = namespace.ref.model_copy(update={"instance_id": "other-instance"})
             with pytest.raises(NousError) as error:
-                await runtime.app.call(REFRESH, RefreshRetrieval(namespace=foreign, mode="lexical"))
+                await runtime.app.call(REFRESH, RefreshRetrieval(namespace=foreign))
             assert error.value.code == "cognition.instance_mismatch"
 
     asyncio.run(scenario())

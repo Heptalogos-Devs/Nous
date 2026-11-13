@@ -8,10 +8,10 @@
 nous --instance ./temp/nous-wave tools wave build --manifest ./collection.json --space chosen-text
 nous --instance ./temp/nous-wave tools wave inspect "<完整wav标识符>"
 nous --instance ./temp/nous-wave tools wave inspect "<完整wav标识符>" --concept "resource-ownership"
-nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "取消之后文件为何仍被占用" --mode hybrid
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "取消之后文件为何仍被占用" --program hybrid
 nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "此前相关经验" --context ./context.json --core "resource-ownership" --cue "协程退出与实际工作结束的区别" --explain
-nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "查找解决过程" --mode rivermemo --thinking-stages ./stages.json
-nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "字面线索" --mode rivermemo --vector-ref ./vector.json --candidate-pool ./pool.json
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "查找解决过程" --program research --thinking-stages ./stages.json
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "字面线索" --program fixed_set --vector-ref ./vector.json --candidate-set ./set.json
 nous --instance ./temp/nous-wave tools wave read "<完整wav标识符>" "candidate-key" --sources
 nous --instance ./temp/nous-wave tools wave segment "<完整wav标识符>" ./context.json
 nous --instance ./temp/nous-wave tools wave cleanup --keep-recent 2 --retain "<需保留的快照>"
@@ -19,13 +19,13 @@ nous --instance ./temp/nous-wave tools wave cleanup --keep-recent 2 --retain "<�
 
 wav 标识符由共用可读标识符能力分配并持久保存，例子中的占位符替换为 build 实际返回的完整标识符，并保留引号。candidate-key 是集合内稳定 key，使用实际命中键并保留引号；hit 同时返回可直接用 content read 的精确 Artifact 与选区。
 
-build 的 --space 覆盖清单未指定值；两处都给且冲突时明确报错，避免静默选择另一向量空间。清单本地路径相对其文件位置，与 shell cwd 无关。重复 --core/--cue 顺序保持。query 的 --filter 接收 CandidateFilter JSON，--top-k 指定结果数量。
+build 的 --space 指定向量空间；清单也指定了空间且两者冲突时会报错。清单本地路径相对其文件位置。query 的 --program 指定实例配置中的 Wave 程序；省略时使用实例默认程序，未具备所需快照能力时按配置的备用程序处理。重复 --core/--cue 顺序保持。--filter 接收 CandidateFilter JSON，--top-k 指定结果数量。
 
 ## 输入与默认呈现
 
 query 普通文字即可使用。context JSON 提供有序片段，roles 和序位可读；Thinking stages 使用候选 key 数组和阶段名称，不要求内部矩阵/UUID。
 
-普通返回按 Native 数组顺序显示排名、ranking_score、可用的 quality_score、score_kind、正文片段、概念匹配、精确短引用和来源摘要。--explain 展开本次 lane、quality/ranking score、实际算法版本、context/cue 作用、传播/反证路线与裁剪信息。默认不打印向量、全部 CSR 和全部参数。
+普通返回显示排序、分数种类、原文片段及精确内容引用。--explain 在普通输出中展开命中依据；--json 返回完整结果，包括本次程序、通路、覆盖、情境和可用的诊断信息。
 
 cleanup 显式删除不再保留的旧快照与无引用组件；当前快照、运行中的读取、正在准备的结果和正式反馈所需快照自动保留。`--keep-recent` 指定每个集合额外保留的最近快照数，`--retain` 可重复指定本次保留的快照。
 
@@ -41,8 +41,8 @@ cleanup 显式删除不再保留的旧快照与无引用组件；当前快照、
 
 `--vector-ref` 读取 Embedding owner 的 VectorRef JSON：`space` 为完整 SpaceDefinition、`purpose` 为 `query`、`artifact` 为已采用向量矩阵的 ArtifactRef、`row_index` 为矩阵行。Wave 核对快照空间并通过 EmbeddingOperations.read_vector 读取；文字继续提供字面线索，原始查询向量复用该行。
 
-`--candidate-pool` 的 JSON 为 `{snapshot, entries:[{candidate, lanes:{lane:{score,rank}}}]}`。snapshot 使用明确 wav 标识符或 snapshot id，candidate 使用该快照的 key，rank 从一开始。固定池适用于 rivermemo、hybrid 和 dtsc；系统执行一次 observe 后直接读出给定候选，不再次 ANN/BM25。空 entries 返回空命中；`--filter` 继续限制允许集合。
+`--candidate-set` 的 JSON 为 `{snapshot, rank_scope, entries:[{candidate, lanes:{lane:{score,rank}}}]}`。snapshot 使用 wav 标识符或 snapshot id，candidate 使用该快照的 key，rank 从一开始。`fixed_set` 程序读取候选的 `provided` 通路后执行局部定位；其他程序按其算子定义消费候选集合。空 entries 返回空命中；`--filter` 继续限制允许集合。
 
-Thinking 在同一次观测上执行。通过 `wave.native.query.pipeline.spikeRouting.maxTransitionRecords` 明确设置记录额度；0 表示禁用。结果分别报告 records_disabled、records_missing、records_truncated 或 no_grounded_route，非法请求和计算失败保留错误。查询不改变配置中的记录额度。
+包含 `vcp.think` 的程序（如 `research`）可以使用 --thinking-stages，在本次观测上计算路线。通过 `wave.native.query.pipeline.spikeRouting.maxTransitionRecords` 设置记录额度；0 表示禁用。结果报告实际路线或未形成路线的状态。
 
 清单和 context 文件的 selector 直接使用内容 SourceSelection。例如 `{"start_line":3,"end_line":7}` 读取原 Artifact 第 3–7 行，`{"start_byte":0,"end_byte":128}` 读取字节区间，`{}` 选择全文。候选坐标始终指向原件；文稿已经指定范围时，通过共同 restrict 保持候选位于该范围内。

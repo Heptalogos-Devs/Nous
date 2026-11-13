@@ -588,17 +588,17 @@
         "minimum": 0.0,
         "type": "number"
       },
-      "decay": {
-        "default": 0.75,
-        "format": "double",
-        "maximum": 1.0,
-        "minimum": 0.0,
-        "type": "number"
-      },
       "default_role_weight": {
         "default": 1.0,
         "format": "double",
         "minimum": 0.0,
+        "type": "number"
+      },
+      "null_mass": {
+        "default": 1.0,
+        "description": "Unused context mass for the parent-based relevance allocation.",
+        "exclusiveMinimum": 0.0,
+        "format": "double",
         "type": "number"
       },
       "role_weights": {
@@ -1054,6 +1054,376 @@
     "title": "ReferenceDtscConfig",
     "type": "object"
   },
+  "operators": {
+    "ann.search": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "candidates_per_group": {
+          "default": null,
+          "format": "uint",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "search_effort": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "AnnParameters",
+      "type": "object"
+    },
+    "candidates.union": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "candidates_per_group": {
+          "default": null,
+          "format": "uint",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "group_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "UnionParameters",
+      "type": "object"
+    },
+    "concept.direct": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "candidates_per_group": {
+          "default": null,
+          "format": "uint",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "LaneParameters",
+      "type": "object"
+    },
+    "context.recall": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "delivery.read": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "dtsc.readout": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "group_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "ReadoutParameters",
+      "type": "object"
+    },
+    "lexical.search": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "candidate_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "candidates_per_group": {
+          "default": null,
+          "format": "uint",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "LaneParameters",
+      "type": "object"
+    },
+    "passages.locate": {
+      "$defs": {
+        "LocateSignal": {
+          "enum": [
+            "lexical",
+            "semantic"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "lexical_weight": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "local_units_per_group": {
+          "default": 64,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "rrf_k": {
+          "default": 60.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "semantic_weight": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "signals": {
+          "default": [
+            "semantic"
+          ],
+          "items": {
+            "$ref": "#/$defs/LocateSignal"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "title": "LocateParameters",
+      "type": "object"
+    },
+    "passages.select": {
+      "$defs": {
+        "DeliveryBudget": {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "format": "uint",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "unit": {
+              "$ref": "#/$defs/DeliveryUnit"
+            }
+          },
+          "required": [
+            "amount",
+            "unit"
+          ],
+          "type": "object"
+        },
+        "DeliveryUnit": {
+          "enum": [
+            "characters",
+            "bytes",
+            "tokens"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliveryBudget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": {
+            "amount": 2048,
+            "unit": "characters"
+          }
+        }
+      },
+      "title": "SelectParameters",
+      "type": "object"
+    },
+    "rank.context": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "rank.cosine": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "rank.from_lane": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "group_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lane": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lane"
+      ],
+      "title": "LaneRankParameters",
+      "type": "object"
+    },
+    "rank.fuse": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "k": {
+          "default": null,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "weights": {
+          "default": [],
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "title": "FusionParameters",
+      "type": "object"
+    },
+    "river.readout": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "group_limit": {
+          "default": null,
+          "format": "uint",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "ReadoutParameters",
+      "type": "object"
+    },
+    "vcp.calibrate": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "vcp.observe": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    },
+    "vcp.think": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Typed parameters for Wave's independently composable numerical operators.",
+      "title": "EmptyOperatorParameters",
+      "type": "object"
+    }
+  },
   "pipeline": {
     "$defs": {
       "SenseConfig": {
@@ -1378,6 +1748,22 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "ann_search_effort": {
+        "default": 32,
+        "description": "Candidate ANN graph expansion used for each search.",
+        "format": "uint",
+        "maximum": 1000000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "candidates_per_group": {
+        "default": 2,
+        "description": "Maximum candidates retained per material while recalling and combining lanes.",
+        "format": "uint",
+        "maximum": 10000,
+        "minimum": 1,
+        "type": "integer"
+      },
       "group_scan_limit": {
         "default": 4096,
         "description": "Maximum different candidate rows inspected per grouped vector lane.",
@@ -1385,6 +1771,13 @@
         "maximum": 1000000,
         "minimum": 1,
         "type": "integer"
+      },
+      "preference_weight": {
+        "default": 0.25,
+        "format": "double",
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
       },
       "rrf_k": {
         "default": 60.0,

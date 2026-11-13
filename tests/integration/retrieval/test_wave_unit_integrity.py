@@ -10,7 +10,7 @@ import pytest
 
 from nous.application.inputs import StreamInput
 from nous.application.preparation import TextPreparation
-from nous.cognition.retrieval.contracts import CognitiveQuery
+from nous.cognition.retrieval.contracts import QueryAnchor, QueryControls, QueryRequest
 from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import (
     AddNote,
@@ -70,7 +70,7 @@ def test_imported_cross_document_candidates_reuse_exact_content(tmp_path: Path) 
                 snapshot = built.snapshot.identifier
                 result = await runtime.app.call(
                     WAVE_QUERY,
-                    WaveQuery(snapshot=snapshot, text="crossdocumentneedle", mode="lexical"),
+                    WaveQuery(snapshot=snapshot, text="crossdocumentneedle", program="lexical"),
                 )
                 hit = next(
                     hit
@@ -108,7 +108,7 @@ def test_imported_cross_document_candidates_reuse_exact_content(tmp_path: Path) 
                 WaveQuery(
                     snapshot=rebuilt.snapshot.identifier,
                     text="crossdocumentneedle",
-                    mode="lexical",
+                    program="lexical",
                 ),
             )
             assert any(
@@ -211,7 +211,7 @@ def test_support_graph_reuse_preserves_exact_source_ranges(tmp_path: Path) -> No
             assert support["roots"] == [f"artifact:{source.ref.id}"]
             result = await runtime.app.call(
                 WAVE_QUERY,
-                WaveQuery(snapshot=refs[1], text="Evidence", mode="lexical", include_trace=True),
+                WaveQuery(snapshot=refs[1], text="Evidence", program="lexical", include_trace=True),
             )
             candidate = next(hit for hit in result.hits if hit.basis.candidate.key == "candidate")
             explanation = candidate.basis.details
@@ -250,10 +250,13 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
             )
             initial = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(text="Reviewmarker", mode="lexical", include_review=True),
+                QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=True)),
             )
-            assert initial.groups[0].context.revision_ref == journal.commit.revision_ref
-            assert initial.groups[0].context.sources[0].owner_revision == source.commit.revision_ref
+            assert initial.evidence.materials[0].material.ref == journal.commit.revision_ref
+            assert (
+                initial.evidence.materials[0].material.sources[0].owner_revision
+                == source.commit.revision_ref
+            )
             corrected = await runtime.app.call(
                 REPLACE_RECORD,
                 ReplaceRecord(
@@ -267,12 +270,12 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
             )
             revised = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(text="Reviewmarker", mode="lexical", include_review=True),
+                QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=True)),
             )
-            group = revised.groups[0]
-            assert group.context.needs_review
-            assert group.context.revision_ref == journal.commit.revision_ref
-            binding = group.context.sources[0]
+            group = revised.evidence.materials[0]
+            assert group.material.attributes.values["needs_review"] is True
+            assert group.material.ref == journal.commit.revision_ref
+            binding = group.material.sources[0]
             assert binding.owner_revision == source.commit.revision_ref
             assert binding.owner_revision != corrected.commit.revision_ref
             contents = await runtime.app.call(
@@ -282,21 +285,25 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
             assert "".join(item.body_text or "" for item in contents) == "Original source text."
             without_review = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(text="Reviewmarker", mode="lexical", include_review=False),
+                QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=False)),
             )
             assert all(
-                group.context.revision_ref != journal.commit.revision_ref
-                for group in without_review.groups
+                group.material.ref != journal.commit.revision_ref
+                for group in without_review.evidence.materials
             )
             historical = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(
-                    text="Reviewmarker", mode="lexical", snapshot=initial.context.snapshot_ref
+                QueryRequest(
+                    text="Reviewmarker",
+                    anchor=QueryAnchor(snapshot=initial.evidence.snapshot, view="anchored"),
                 ),
             )
-            assert not historical.groups[0].context.needs_review
             assert (
-                historical.groups[0].context.sources[0].owner_revision == source.commit.revision_ref
+                historical.evidence.materials[0].material.attributes.values["needs_review"] is False
+            )
+            assert (
+                historical.evidence.materials[0].material.sources[0].owner_revision
+                == source.commit.revision_ref
             )
 
     asyncio.run(scenario())
@@ -311,13 +318,13 @@ def test_cleanup_retries_unreferenced_component_after_delete_failure(tmp_path: P
             await runtime.app.call(
                 ADD_NOTE, AddNote(body=InlineText(text="old unique"), remember=True, after=policy)
             )
-            old = await runtime.app.call(QUERY, CognitiveQuery(text="old", mode="lexical"))
-            row = await runtime.wave.snapshots.resolve(old.context.snapshot_ref)
+            old = await runtime.app.call(QUERY, QueryRequest(text="old"))
+            row = await runtime.wave.snapshots.resolve(old.evidence.snapshot)
             component = runtime.paths.resolve_owned("index", row["index_location"])
             await runtime.app.call(
                 ADD_NOTE, AddNote(body=InlineText(text="new unique"), remember=True, after=policy)
             )
-            current = await runtime.app.call(QUERY, CognitiveQuery(text="new", mode="lexical"))
+            current = await runtime.app.call(QUERY, QueryRequest(text="new"))
             remove = runtime.wave.snapshots._remove_owned  # pyright: ignore[reportPrivateUsage]
 
             def interrupted(path: Path, root: Path, name: str) -> None:
@@ -333,102 +340,11 @@ def test_cleanup_retries_unreferenced_component_after_delete_failure(tmp_path: P
             assert not component.exists()
             result = await runtime.app.call(
                 QUERY,
-                CognitiveQuery(text="new", snapshot=current.context.snapshot_ref, mode="lexical"),
+                QueryRequest(
+                    text="new",
+                    anchor=QueryAnchor(snapshot=current.evidence.snapshot, view="anchored"),
+                ),
             )
-            assert result.groups
+            assert result.evidence.materials
 
     asyncio.run(scenario())
-
-
-def test_grouped_native_readout_prefers_already_ranked_passages(tmp_path: Path) -> None:
-    import numpy as np
-
-    import nous_native as native
-
-    count = 3
-    empty = np.array([], dtype=np.uint64)
-    offsets = np.zeros(count + 1, dtype=np.uint64)
-    zero = np.array([0], dtype=np.uint64)
-    positions = np.array([], dtype=np.int64)
-    flags = np.array([], dtype=np.bool_)
-    floats = np.array([], dtype=np.float64)
-    metadata = {
-        "keys": ["whole", "less-relevant", "ranked-local"],
-        "documents": ["document"] * count,
-        "titles": [""] * count,
-        "group_keys": ["document"],
-        "group_rows": [0, 0, 0],
-        "local": [False, True, True],
-    }
-    candidates = native.Candidates(
-        json.dumps(metadata),
-        ["whole text", "first local text", "stronger local text"],
-        np.array([[1.0, 0.0], [0.7, 0.7], [0.99, 0.1]], dtype=np.float32),
-        offsets,
-        empty,
-        offsets,
-        zero,
-        empty,
-        positions,
-        offsets,
-        empty,
-    )
-    concepts = native.Concepts(json.dumps({"keys": [], "labels": [], "aliases": []}), None)
-    facts = native.SourceFacts(
-        json.dumps({"root_keys": [], "root_checksums": [], "sequence_keys": []}),
-        empty,
-        zero,
-        empty,
-        positions,
-        flags,
-    )
-    associations = native.Associations(
-        json.dumps({"support_groups": [], "keys": [], "relations": []}),
-        empty,
-        empty,
-        flags,
-        floats,
-        floats,
-        np.array([], dtype=np.int8),
-        empty,
-        zero,
-        empty,
-    )
-    identity = json.dumps(
-        {"snapshot_id": "grouped", "space_signature": "space", "build_config_signature": "config"}
-    )
-    options = json.dumps(
-        {
-            "grouping": "document",
-            "top_k": 1,
-            "passages_per_group": 2,
-            "query_space_signature": "space",
-        }
-    )
-    engine = native.NativeEngine()
-    try:
-        engine.build(candidates, concepts, facts, associations, identity, str(tmp_path / "index"))
-        snapshot = engine.open(str(tmp_path / "index"), identity)
-        query = np.array([1.0, 0.0], dtype=np.float32)
-        result = json.loads(
-            snapshot.search(mode="hybrid", text="", vector=query, options_json=options).result_json
-        )
-        group = result["groups"][0]
-        assert group["rank_basis_row"] == 0
-        assert group["passages"][0]["row"] == 2
-        assert group["passages"][0]["reason"] == "local_score"
-        assert group["passages"][0]["evidence_row"] == 2
-        assert all(passage["row"] != 0 for passage in group["passages"])
-
-        filtered = json.loads(
-            snapshot.search(
-                mode="hybrid",
-                text="",
-                vector=query,
-                allowed_rows=np.array([0, 1], dtype=np.uint64),
-                options_json=options,
-            ).result_json
-        )
-        assert filtered["groups"][0]["passages"][0]["row"] == 1
-    finally:
-        engine.close()

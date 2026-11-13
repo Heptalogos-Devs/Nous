@@ -44,7 +44,7 @@ nous journal revise "jrn(…)@3" --feedback "fbk(…)"
 nous feedback resolve "fbk(…)" --action not_applied --note "..."
 ```
 
-query result 文件是正式 QueryResult 的序列化，`feedback record --query-result` 反序列化同一类型。提交意见不触发更正，显式修订采用后反馈才标为已处理。每个 complete command 只有一个根 operation。
+查询意见使用已保存的证据引用及可选 E 键：`feedback record --evidence "res(...)" --passage E1`。提交意见不触发更正，显式修订采用后反馈才标为已处理。每个完整命令只有一个根 operation。
 
 ## 标注完整性
 

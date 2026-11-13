@@ -23,7 +23,7 @@ ContentReadView (`content.contracts`):
   coverage
 ```
 
-文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。`media_type` 是接纳类型，`detected_media_type` 是已探测的实际类型；未知类型的 UTF-8 正文也可以直接读取。没有可读表示也是正常的媒体视图。表示由 inputs/parts/origins/outputs 查找，依据输出的 `representation_kind` 和实际覆盖筛选；每项保留命名输出及精确来源。映射指向抽帧等中间表示时，还保留对应实际输入槽关联的原件选区。表示的坐标换算使用生产者采用时登记的 OutputMapping，见[选区与正文](selection-and-text.md#已采用表示回原文)。
+文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。`media_type` 是接纳类型，`detected_media_type` 是已探测的实际类型；未知类型的 UTF-8 正文也可以直接读取。没有可读表示也是正常的媒体视图。成果采用时将各表示输出声明的 OutputMapping 来源写入索引，读取按该索引找到覆盖所选范围的表示；每项保留命名输出及生产者声明的精确来源。表示的坐标换算使用这些正式映射，见[选区与正文](selection-and-text.md#已采用表示回原文)。
 
 内容读取、媒体准备和模型输出共用文本类型判断：`text/*`、JSON、XML 和 XHTML 按 UTF-8 文本处理，选区和原件身份贯穿各入口。
 

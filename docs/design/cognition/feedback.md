@@ -2,7 +2,7 @@
 
 ## 反馈目标
 
-Feedback 指向 exact record revision/selection、某个检索命中（含 snapshot）、或调用方提供的整次 query context。记录文稿意见时提供精确版本；当时评价的版本保持固定。
+Feedback 指向精确文稿修订和选区，或一份已保存的证据及其可选 E 键。记录文稿意见时提供精确版本；当时评价的版本保持固定。
 
 字段为 namespace、target、category（usefulness / agreement / accuracy / retrieval）、value（positive / negative / neutral）、comment、author、recorded_at，以及可选 resolution（action、note、mapping_note、applied_revision、resolved_at、actor）。category 与 value 是意见，不能自动转换成真实性概率或图增益。
 
@@ -22,6 +22,6 @@ feedback.read/list/resolve(...) -> 已有意见及处理结果
 
 ## 查看与诊断
 
-反馈列表可以按目标/类别读取。对查询反馈，调用者提交正式 QueryResult；反馈 owner 保存实际问题、参与上下文、精确快照及操作关联。指定组和片段索引或已交付选区时，额外保存该组排名依据和所评价的实际片段。CLI 可用 `--query-result result.json`，程序可直接传类型化值。快照 owner 使用正式字段验证；见[查询情境](query-use-context.md)。
+反馈列表可以按目标/类别读取。对查询反馈，调用者提供已保存的证据引用与可选 E 键；反馈保存实际问题、参与上下文、快照引用和所选片段的排名依据。快照仍存在时随反馈固定；已经清理时 `snapshot_available` 为 false，所保存的证据和排名依据仍可读取。CLI 使用 `--evidence "res(...)" --passage E1`；见[查询情境](query-use-context.md)。
 
 完成输出表达“已记录反馈”或“已更正为 revision N”，附可读短引用和检索是否待更新。来源、操作关联与失败原因经共同错误与日志能力返回。

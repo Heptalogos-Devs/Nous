@@ -44,7 +44,7 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
     if feedback.target.revision is not None:
         typer.echo(f"{tr('Target')}: {feedback.target.revision.identifier}")
     elif feedback.target.query is not None:
-        typer.echo(f"{tr('Query')}: {feedback.target.query.context.request_text}")
+        typer.echo(f"{tr('Query')}: {feedback.target.query.intent.original_text}")
     typer.echo(f"{tr('Category')}: {tr(feedback.category)}")
     if feedback.value is not None:
         typer.echo(f"{tr('Value')}: {tr(feedback.value)}")
@@ -80,45 +80,35 @@ def record(
     selection: Annotated[
         Path | None, typer.Option("--selection", exists=True, dir_okay=False)
     ] = None,
-    query_result: Annotated[
-        Path | None, typer.Option("--query-result", exists=True, dir_okay=False)
-    ] = None,
+    evidence: str | None = None,
     passage: Annotated[
-        str | None, typer.Option("--passage", help="Group:passage, starting at 1")
+        str | None, typer.Option("--passage", help="Evidence key, for example E1")
     ] = None,
 ) -> None:
-    if (ref is None) == (query_result is None):
+    if (ref is None) == (evidence is None):
         raise NousError(
             "input.invalid_feedback", "Choose an exact record revision or a query result"
         )
-    if passage is not None and query_result is None:
+    if passage is not None and evidence is None:
         raise NousError("input.invalid_feedback", "A passage requires a query result")
-    if selection is not None and query_result is not None:
+    if selection is not None and evidence is not None:
         raise NousError(
             "input.invalid_feedback", "Choose the delivered candidate from the query result"
         )
 
-    if query_result is not None:
-        source, inputs = json_binding(query_result, key="result")
-        target = None
-        if passage is not None:
-            parts = passage.split(":")
-            if len(parts) != 2 or not all(part.isdecimal() and int(part) > 0 for part in parts):
-                raise NousError("input.invalid_feedback", "Use a 1-based group:passage pair")
-            target = (int(parts[0]) - 1, int(parts[1]) - 1)
+    if evidence is not None:
         result = application_call(
             ctx,
             RECORD_QUERY_FEEDBACK,
             QueryFeedbackRequest(
-                result=source,
+                evidence=evidence,
                 category=category,
                 namespace=namespace,
-                target=target,
+                passage_key=passage,
                 value=value,
                 comment=comment,
                 author=author,
             ),
-            inputs=inputs,
         )
     else:
         assert ref is not None

@@ -183,6 +183,24 @@ msgstr "期望值"
 msgid "Details"
 msgstr "详情"
 
+msgid "Retry after {seconds} seconds."
+msgstr "请在 {seconds} 秒后重试。"
+
+msgid "Model resource: {resource}"
+msgstr "模型资源：{resource}"
+
+msgid "Interface: {interface}"
+msgstr "接口：{interface}"
+
+msgid "Service request: {request}"
+msgstr "服务请求：{request}"
+
+msgid "Operation: {operation}"
+msgstr "操作：{operation}"
+
+msgid "Completed: {references}"
+msgstr "已完成：{references}"
+
 msgid "Diagnostic"
 msgstr "诊断"
 
@@ -1206,3 +1224,69 @@ msgstr "已完成"
 
 msgid "completed"
 msgstr "已完成"
+
+msgid "Title"
+msgstr "标题"
+
+msgid "Objective"
+msgstr "目标"
+
+msgid "Focus"
+msgstr "当前焦点"
+
+msgid "Progress"
+msgstr "进展"
+
+msgid "Blocker"
+msgstr "阻碍"
+
+msgid "Notes"
+msgstr "说明"
+
+msgid "Decision {key} ({state})"
+msgstr "决定 {key}（{state}）"
+
+msgid "Question {key} ({state})"
+msgstr "问题 {key}（{state}）"
+
+msgid "withdrawn"
+msgstr "已撤销"
+
+msgid "open"
+msgstr "未解决"
+
+msgid "resolved"
+msgstr "已解决"
+
+msgid "Evidence"
+msgstr "证据"
+
+msgid "Reading"
+msgstr "阅读整理"
+
+msgid "Material"
+msgstr "材料"
+
+msgid "Untitled work"
+msgstr "未命名工作"
+
+msgid "Read remaining"
+msgstr "继续阅读"
+
+msgid "Read material"
+msgstr "阅读材料"
+
+msgid "No material selected"
+msgstr "没有选中可交付的材料"
+
+msgid "Delivery budget exhausted"
+msgstr "正文超出本次交付预算"
+
+msgid "Passage already included above"
+msgstr "片段已在上文提供"
+
+msgid "No passage located"
+msgstr "未定位到正文片段"
+
+msgid "No passage selected"
+msgstr "未选出正文片段"

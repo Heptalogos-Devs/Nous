@@ -20,6 +20,7 @@ from .contracts import GenerationResult
 from .policy import (
     attempt_reports,
     attempt_scope,
+    endpoint_path,
     error_report,
     model_error,
     retry_delay,
@@ -96,7 +97,14 @@ class GenerationStream:
                 result: GenerationResult | None = None
                 with attempt_scope(
                     attempt,
-                    {"model_id": route.model_id, "provider": route.model.provider},
+                    {
+                        "model_id": route.model_id,
+                        "provider": route.model.provider,
+                        "protocol": "openai-chat-completions",
+                        "endpoint_path": endpoint_path(
+                            active.snapshot, route.model.provider, "chat/completions"
+                        ),
+                    },
                     prepared.task,
                 ) as scope:
                     try:

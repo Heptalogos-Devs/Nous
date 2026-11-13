@@ -4,61 +4,60 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import cast
 
-import sqlalchemy as sa
-from pydantic import JsonValue, TypeAdapter
-
-from nous.application.contracts import CallContext, define_operation
+from nous.application.contracts import CallContext, LanguageEvents, define_operation
 from nous.common.errors import NousError
 from nous.common.keyed_locks import KeyedLocks
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ExternalInput
+from nous.content.contracts import ResultRef
 from nous.content.results import ResultStore
 from nous.content.text import PARSER_PROFILE
 from nous.observability.instrumentation import get_logger
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database
+from nous.temporal.domains import TimeService
 from nous.wave.contracts import (
-    CandidateFilter,
     CognitionOwner,
-    ContextFragment,
     CorpusView,
     GroupDescriptor,
     ReusableDocument,
-    SelectedContext,
     SnapshotDescriptor,
-    WaveQuery,
 )
 from nous.wave.operations import WaveOperations
+from nous.wave.program import resolve_program
 from nous.wave.serialization import content_signature
 
-from .. import basis, schema
 from ..annotation.operations import AnnotationOperations
-from ..contracts import Namespace, NamespaceRef, NamespaceSelector, RevisionSelection
+from ..contracts import Namespace, NamespaceRef, NamespaceSelector
+from ..material_contracts import MaterialIndex
+from ..materials import Materials
 from ..scope import NamespaceOperations
-from ..writing.reading import RecordReader
+from ..steward.operations import StewardOperations
+from ..work.operations import WorkOperations
+from .adoption import EvidenceAdoption
 from .capture import CorpusCapture
 from .contracts import (
-    CognitiveGroup,
     CognitiveGroupContext,
-    CognitiveQuery,
-    Mode,
-    QueryContext,
-    QueryOperationContext,
-    QueryResult,
+    QueryRequest,
     RefreshResult,
     RefreshRetrieval,
-    RevisionPassage,
-    SearchMode,
+    RetrievalOutcome,
+    SaveEvidence,
 )
 from .projection import ProjectionBuilder
 
 QUERY = define_operation(
     "retrieval.query",
-    request=CognitiveQuery,
-    result=QueryResult,
+    request=QueryRequest,
+    result=RetrievalOutcome,
+    events=LanguageEvents,
     description="Search cognitive records and return exact passages",
+)
+SAVE_EVIDENCE = define_operation(
+    "retrieval.save_evidence",
+    request=SaveEvidence,
+    result=ResultRef,
+    description="Save a completed evidence delivery without repeating its query",
 )
 REFRESH = define_operation(
     "retrieval.refresh",
@@ -71,11 +70,12 @@ REFRESH = define_operation(
 @dataclass(frozen=True)
 class SearchOptions:
     namespace: str
-    mode: SearchMode
+    program: str
     space: str | None
     include_review: bool
     include_exploration: bool
     candidate_limit: int
+    include_work: bool
 
 
 class CognitiveRetrieval:
@@ -90,23 +90,31 @@ class CognitiveRetrieval:
         database: Database,
         execution: ExecutionManager,
         scope: NamespaceOperations,
-        records: RecordReader,
         artifacts: ArtifactStore,
         results: ResultStore,
         wave: WaveOperations,
         annotations: AnnotationOperations,
+        materials: Materials,
+        work: WorkOperations,
+        steward: StewardOperations,
+        time: TimeService,
     ):
         self.database, self.execution, self.scope = database, execution, scope
-        self.records, self.artifacts, self.results, self.wave = records, artifacts, results, wave
+        self.artifacts, self.results, self.wave = artifacts, results, wave
         self.annotations = annotations
-        self.capture = CorpusCapture(scope, records, artifacts, annotations)
-        self.projection = ProjectionBuilder(results)
+        self.materials, self.work, self.steward = materials, work, steward
+        self.evidence_adoption = EvidenceAdoption(
+            database, artifacts, results, materials, scope, wave
+        )
+        self.time = time
+        self.capture = CorpusCapture(scope, materials)
+        self.projection = ProjectionBuilder(results, materials)
         self._locks = KeyedLocks[tuple[str, str]]()
 
-    async def _options(
+    async def resolve_options(
         self,
         namespace: NamespaceSelector,
-        mode: Mode | None,
+        program: str | None,
         include_review: bool | None,
         include_exploration: bool | None,
         candidate_limit: int | None = None,
@@ -116,17 +124,24 @@ class CognitiveRetrieval:
     ) -> SearchOptions:
         settings = self.execution.snapshot.values.cognition
         namespace_id = (await self.scope.resolve_for(namespace, target)).id
-        selected = mode or settings.search.default_mode
-        if selected == "auto":
-            selected = "hybrid" if settings.search.space else "lexical"
-        space = None if selected == "lexical" else (space_override or settings.search.space)
-        if selected != "lexical" and not space:
-            raise NousError(
-                "cognition.space_required", "This retrieval mode requires an embedding space"
-            )
+        wave_settings = self.execution.snapshot.values.wave
+        compiled = resolve_program(wave_settings, program)
+        space = space_override or settings.search.space
+        if "vectors" in compiled.requirements and not space:
+            if program is not None or not wave_settings.unavailable_program:
+                raise NousError(
+                    "cognition.space_required", "This query program requires an embedding space"
+                )
+            compiled = resolve_program(wave_settings, wave_settings.unavailable_program)
+            if "vectors" in compiled.requirements:
+                raise NousError(
+                    "cognition.space_required", "The fallback program requires an embedding space"
+                )
+        if "vectors" not in compiled.requirements:
+            space = None
         return SearchOptions(
             namespace_id,
-            selected,
+            compiled.name,
             space,
             settings.search.include_review if include_review is None else include_review,
             settings.search.include_exploration
@@ -135,19 +150,33 @@ class CognitiveRetrieval:
             candidate_limit
             if candidate_limit is not None
             else settings.search.local_candidate_max_bytes,
+            settings.search.include_work,
         )
 
-    async def _current_view(
+    def _projection_policy(self, selected: SearchOptions) -> dict[str, object]:
+        material_contract = content_signature(
+            {
+                "material_index_schema": MaterialIndex.model_json_schema(),
+                "group_context_schema": CognitiveGroupContext.model_json_schema(),
+                "material_schemas": self.materials.describe(),
+                "searchable_kinds": self.materials.searchable_kinds(),
+            }
+        )
+        return {
+            "include_review": selected.include_review,
+            "include_exploration": selected.include_exploration,
+            "local_candidate_max_bytes": selected.candidate_limit,
+            "include_work": selected.include_work,
+            "material_contract": material_contract,
+        }
+
+    async def current_view(
         self,
         selected: SearchOptions,
         *,
         build_config: dict[str, object] | None = None,
     ) -> tuple[Namespace, SnapshotDescriptor, int]:
-        policy: dict[str, object] = {
-            "include_review": selected.include_review,
-            "include_exploration": selected.include_exploration,
-            "local_candidate_max_bytes": selected.candidate_limit,
-        }
+        policy = self._projection_policy(selected)
         profile = self.wave.profile(selected.space, policy, build_config=build_config)
         async with self.database.read() as tx:
             ns = await self.scope.get_in(tx, selected.namespace)
@@ -158,7 +187,7 @@ class CognitiveRetrieval:
             and existing.captured_generation == ns.content_generation
             and existing.profile_signature == profile
         ):
-            self._check_owner(existing, ns)
+            self.check_owner(existing, ns)
             return ns, existing, ns.content_generation
         async with self._locks.hold((ns.id, profile)):
             async with self.database.read() as tx:
@@ -169,7 +198,7 @@ class CognitiveRetrieval:
                 and existing.captured_generation == ns.content_generation
                 and existing.profile_signature == profile
             ):
-                self._check_owner(existing, ns)
+                self.check_owner(existing, ns)
                 return ns, existing, ns.content_generation
             captured_at = perf_counter()
             async with self.database.read() as tx:
@@ -178,25 +207,33 @@ class CognitiveRetrieval:
                     ns.id,
                     include_review=selected.include_review,
                     include_exploration=selected.include_exploration,
+                    include_work=selected.include_work,
                 )
                 eligible = directory.entries
-                stamps = {
-                    key: content_signature(
+                stamps: dict[str, str] = {}
+                for key, entry in eligible.items():
+                    material = entry.view
+                    stamps[key] = content_signature(
                         {
-                            "revision": entry.ref.model_dump(mode="json"),
-                            "body_artifact": entry.revision["body_artifact_id"],
+                            "revision": material.ref.model_dump(mode="json"),
+                            "body": material.body.model_dump(mode="json")
+                            if material.body
+                            else None,
                             "body_digest": entry.body_digest,
-                            "title": entry.revision["title"],
-                            "purpose": entry.revision["purpose"],
-                            "times": entry.revision["cognitive_times"],
-                            "sources": entry.revision["source_signature"],
-                            "annotation": entry.annotation_id,
+                            "material_contract": policy["material_contract"],
+                            "title": material.title,
+                            "attributes": material.attributes.model_dump(mode="json"),
+                            "times": material.times.model_dump(mode="json")
+                            if material.times
+                            else None,
+                            "index": entry.index.model_dump(mode="json"),
+                            "relations": [
+                                item.model_dump(mode="json") for item in material.relations
+                            ],
                             "parser": PARSER_PROFILE,
                             "candidate_limit": selected.candidate_limit,
                         }
                     )
-                    for key, entry in eligible.items()
-                }
                 reusable = await self.wave.match_units_in(tx, tuple(stamps.values()))
                 needed = tuple(key for key, stamp in stamps.items() if stamp not in reusable)
                 sources = {unit.document.key: unit for unit, _ in reusable.values()}
@@ -220,14 +257,10 @@ class CognitiveRetrieval:
             capture_ms = (perf_counter() - captured_at) * 1000
             projection_at = perf_counter()
             fragments: list[tuple[str, str, CorpusView | ReusableDocument, GroupDescriptor]] = []
-            for key, entry in eligible.items():
-                document_key = "revision:" + key
+            for key in eligible:
                 cached = reusable.get(stamps[key])
                 if cached is not None:
                     fragment, group = cached
-                    group = group.model_copy(
-                        update={"context": {**group.context, "needs_review": entry.needs_review}}
-                    )
                 else:
                     relevant: set[str] = set()
                     pending = [key]
@@ -236,28 +269,25 @@ class CognitiveRetrieval:
                         if current in relevant:
                             continue
                         relevant.add(current)
-                        pending.extend(
-                            source.owner_revision.revision_id
-                            for source in captured.records[current].sources
-                            if source.usage != "inspiration" and source.owner_revision is not None
-                        )
+                        for relation in captured.materials[current].index.support_relations:
+                            target = self.materials.key(relation.target)
+                            pending.append(target)
+                            target_body = captured.materials[target].view.body
+                            pending.extend(
+                                self.materials.key(part.artifact)
+                                for part in relation.evidence
+                                if target_body is None or part.artifact != target_body.artifact
+                            )
                     subset = replace(
                         captured,
-                        records={item: captured.records[item] for item in relevant},
+                        materials={item: captured.materials[item] for item in relevant},
                         current=(key,),
-                        annotations={key: captured.annotations[key]}
-                        if key in captured.annotations
-                        else {},
-                        needs_review=frozenset({key} if entry.needs_review else ()),
                     )
                     fragment = await self.projection.build(
-                        subset,
-                        collection,
-                        profile,
-                        candidate_limit=selected.candidate_limit,
+                        subset, collection, profile, candidate_limit=selected.candidate_limit
                     )
                     group = fragment.groups[0]
-                fragments.append((document_key, stamps[key], fragment, group))
+                fragments.append((key, stamps[key], fragment, group))
             view = self.projection.combine(
                 collection,
                 profile,
@@ -316,7 +346,7 @@ class CognitiveRetrieval:
             return directory.namespace, descriptor, published_generation
 
     @staticmethod
-    def _check_owner(snapshot: SnapshotDescriptor, namespace: Namespace) -> None:
+    def check_owner(snapshot: SnapshotDescriptor, namespace: Namespace) -> None:
         if (
             not isinstance(snapshot.owner, CognitionOwner)
             or snapshot.owner.namespace_id != namespace.id
@@ -327,33 +357,15 @@ class CognitiveRetrieval:
         self,
         namespace: NamespaceSelector = None,
         *,
-        mode: Mode | None = None,
         include_review: bool | None = None,
         include_exploration: bool | None = None,
     ) -> RefreshResult:
-        """Ensure a retrieval snapshot for the selected namespace.
-
-        A matching current snapshot is reused; otherwise the service captures and
-        publishes a new one. The optional mode and inclusion flags override the
-        operation configuration.
-
-        Returns:
-            A descriptor containing the namespace, snapshot, covered content generation,
-            profile and metadata. Compare the generation with current content.
-
-        Raises:
-            NousError: ``cognition.space_required`` when the selected mode requires an
-                unconfigured embedding space; or ``cognition.projection_failed`` when
-                Wave cannot build the view.
-        """
+        """Publish or reuse the current view for the configured query program."""
         async with self.execution.operation("cognition.refresh"):
-            selected = await self._options(
-                namespace,
-                mode,
-                include_review,
-                include_exploration,
+            selected = await self.resolve_options(
+                namespace, None, include_review, include_exploration
             )
-            ns, snapshot, current_generation = await self._current_view(selected)
+            ns, snapshot, current_generation = await self.current_view(selected)
             return RefreshResult(
                 namespace=ns,
                 snapshot=snapshot.ref,
@@ -367,247 +379,57 @@ class CognitiveRetrieval:
     async def handle_refresh(self, request: RefreshRetrieval, _call: CallContext) -> RefreshResult:
         return await self.refresh(
             request.namespace,
-            mode=request.mode,
             include_review=request.include_review,
             include_exploration=request.include_exploration,
         )
 
-    async def handle_query(self, request: CognitiveQuery, call: CallContext) -> QueryResult:
-        context, filters = request.context, request.filters
-        limit = call.settings.values.content.text_read_max_bytes
-        if isinstance(context, ExternalInput):
-            selected = await call.inputs.read_text(context.key, context.selection, limit)
-            context = TypeAdapter(tuple[ContextFragment, ...]).validate_json(selected.data)
-        if isinstance(filters, ExternalInput):
-            selected = await call.inputs.read_text(filters.key, filters.selection, limit)
-            filters = CandidateFilter.model_validate_json(selected.data)
-        return await self.query(request.model_copy(update={"context": context, "filters": filters}))
+    async def handle_query(self, request: QueryRequest, call: CallContext) -> RetrievalOutcome:
+        from .query import QueryExecutor
 
-    async def query(self, request: CognitiveQuery) -> QueryResult:
-        """Query a current or explicitly selected snapshot and return grouped delivery.
+        return await QueryExecutor(self).run(request, call)
 
-        Without ``request.snapshot``, the service reuses a matching current view or
-        builds one. An explicit snapshot supplies its namespace unless the request
-        selects one, in which case the two identities must agree.
+    async def save_evidence(self, request: SaveEvidence, call: CallContext) -> ResultRef:
+        return await self.evidence_adoption.save(
+            request.evidence, call, retain_snapshot=request.retain_snapshot
+        )
 
-        Returns:
-            Grouped results and actual delivered selections, with the snapshot and
-            generation context required to record query feedback.
-
-        Raises:
-            NousError: ``cognition.namespace_mismatch`` for a conflicting snapshot owner;
-                ``cognition.space_required`` when the selected mode
-                requires an unconfigured embedding space; or
-                ``cognition.projection_failed`` if Wave cannot build the current view.
-        """
-        if isinstance(request.context, ExternalInput) or isinstance(request.filters, ExternalInput):
-            raise NousError(
-                "input.missing_binding", "External query inputs require an application call"
-            )
-        async with self.execution.operation("cognition.query") as operation:
-            snapshot = await self.wave.describe(request.snapshot) if request.snapshot else None
-            target = None
-            if snapshot is not None:
-                if not isinstance(snapshot.owner, CognitionOwner):
-                    raise NousError(
-                        "cognition.namespace_mismatch", "Snapshot is not a cognitive view"
-                    )
-                target = NamespaceRef(
-                    instance_id=snapshot.ref.instance_id, id=snapshot.owner.namespace_id
-                )
-            selected = await self._options(
-                request.namespace,
-                request.mode,
-                request.include_review,
-                request.include_exploration,
-                target=target,
-            )
-            if snapshot is not None:
-                async with self.database.read() as tx:
-                    ns = await self.scope.get_in(tx, selected.namespace)
-                self._check_owner(snapshot, ns)
-            else:
-                ns, snapshot, _ = await self._current_view(selected)
-            settings = self.execution.snapshot.values
-            result = await self.wave.query(
-                WaveQuery(
-                    snapshot=snapshot.ref.identifier,
-                    text=request.text,
-                    mode=selected.mode,
-                    top_k=request.top_k or settings.wave.query.top_k,
-                    grouping="document",
-                    passages_per_group=settings.cognition.search.passages_per_record,
-                    include_trace=request.explain,
-                    context=request.context,
-                    core_concepts=request.core_concepts,
-                    cues=request.cues,
-                    candidate_filter=request.filters,
-                )
-            )
-            wave_groups = result.groups
-            contexts = [
-                CognitiveGroupContext.model_validate(group.group.context) for group in wave_groups
-            ]
-            async with self.database.read() as tx:
-                rows = (
-                    (
-                        await tx.connection.execute(
-                            sa.select(
-                                schema.revisions.c.id,
-                                schema.revisions.c.record_id,
-                                schema.revisions.c.body_artifact_id,
-                            ).where(
-                                schema.revisions.c.id.in_(
-                                    [context.revision_ref.revision_id for context in contexts]
-                                )
-                            )
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
-            revisions = {str(item["id"]): item for item in rows}
-            groups: list[CognitiveGroup] = []
-            for hit, context in zip(wave_groups, contexts, strict=True):
-                revision = context.revision_ref
-                stored = revisions.get(revision.revision_id)
-                if (
-                    stored is None
-                    or stored["record_id"] != revision.record_ref.id
-                    or revision.record_ref.namespace_id != ns.id
-                    or any(
-                        fragment.content.artifact.id != stored["body_artifact_id"]
-                        for passage in hit.passages
-                        for fragment in passage.fragments
-                    )
-                ):
-                    raise NousError(
-                        "cognition.selection_mismatch",
-                        "Delivered content does not belong to the captured revision",
-                    )
-                groups.append(
-                    CognitiveGroup(
-                        group_key=hit.group.key,
-                        context=context,
-                        title=hit.group.title,
-                        rank=hit.rank,
-                        basis=hit.basis,
-                        passages=tuple(
-                            RevisionPassage(
-                                selection=RevisionSelection(
-                                    revision=revision, selections=passage.selections
-                                ),
-                                delivery=passage,
-                            )
-                            for passage in hit.passages
-                        ),
-                    )
-                )
-            summary = result.context_summary
-            context = QueryContext(
-                request_text=request.text,
-                namespace_id=ns.id,
-                snapshot_ref=snapshot.ref,
-                captured_generation=snapshot.captured_generation,
-                profile_signature=snapshot.profile_signature,
-                space_signature=snapshot.space_signature,
-                mode=selected.mode,
-                selected_context=TypeAdapter(tuple[SelectedContext, ...]).validate_python(
-                    summary.get("selected_context", [])
-                ),
-                omitted_context_count=cast(
-                    int, summary.get("omitted_context_count", len(request.context))
-                ),
-                effective_query_options=TypeAdapter(dict[str, JsonValue]).validate_python(
-                    summary["effective_query_options"]
-                ),
-                filters=request.filters,
-                core_concept_refs=tuple(cast(list[str], summary["core_keys"])),
-                temporary_cues=request.cues,
-                purpose=request.purpose,
-            )
-            async with self.database.read() as tx:
-                current = await self.scope.get_in(tx, ns.id)
-            return QueryResult(
-                context=context,
-                namespace=ns,
-                current=current.content_generation == snapshot.captured_generation,
-                groups=tuple(groups),
-                coverage=result.coverage,
-                operation_context=QueryOperationContext(
-                    operation_id=operation.diagnostics.operation_id,
-                    root_name=operation.diagnostics.name,
-                    stage=operation.stage,
-                ),
-                score_kind=result.score_kind,
-                used_lanes=result.used_lanes,
-                skipped_lanes=result.skipped_lanes,
-                algorithm_versions=result.algorithm_versions,
-                needs_review_count=cast(int, snapshot.metadata.get("needs_review_count", 0)),
-                thinking=result.thinking,
-                diagnostics=result.diagnostics,
-            )
-
-    async def status(self, *, mode: Mode | None = None) -> dict[str, object]:
-        """Report content and published generations without rebuilding or calling models."""
+    async def status(self) -> dict[str, object]:
+        """Report published retrieval views without building or calling models."""
         async with self.execution.operation("cognition.retrieval_status"):
             failure = None
+            selected = None
             try:
-                selected = await self._options(None, mode, None, None)
+                selected = await self.resolve_options(None, None, None, None)
             except NousError as error:
                 failure = error.to_dict()
-                settings = self.execution.snapshot.values.cognition
-                selected_mode = mode or settings.search.default_mode
-                if selected_mode == "auto":
-                    selected_mode = "hybrid" if settings.search.space else "lexical"
-                selected = SearchOptions(
-                    settings.default_namespace,
-                    selected_mode,
-                    None if selected_mode == "lexical" else settings.search.space,
-                    settings.search.include_review,
-                    settings.search.include_exploration,
-                    settings.search.local_candidate_max_bytes,
-                )
             profile = (
-                None
-                if failure
-                else self.wave.profile(
-                    selected.space,
-                    {
-                        "include_review": selected.include_review,
-                        "include_exploration": selected.include_exploration,
-                        "local_candidate_max_bytes": selected.candidate_limit,
-                    },
-                )
+                self.wave.profile(selected.space, self._projection_policy(selected))
+                if selected
+                else None
             )
             states: list[dict[str, object]] = []
             async with self.database.read() as tx:
                 namespaces = await self.scope.list_in(tx)
                 for ns in namespaces:
-                    heads = list(
-                        (
-                            await tx.connection.scalars(
-                                sa.select(schema.records.c.head_revision_id).where(
-                                    schema.records.c.namespace_id == ns.id,
-                                    schema.records.c.archived.is_(False),
-                                    schema.records.c.recall.is_(True),
-                                )
-                            )
-                        ).all()
+                    directory = await self.capture.directory_in(
+                        tx,
+                        ns.id,
+                        include_review=True,
+                        include_exploration=True,
+                        include_work=self.execution.snapshot.values.cognition.search.include_work,
                     )
-                    needs_review = len(await basis.needs_review_in(tx, heads))
                     states.append(
                         {
                             "namespace": ns.name,
                             "namespace_id": ns.id,
                             "content_generation": ns.content_generation,
-                            "needs_review": needs_review,
+                            "needs_review": directory.needs_review_count,
                         }
                     )
             for state in states:
                 current = (
                     await self.wave.current(f"cognition:{state['namespace_id']}:{profile}")
-                    if profile is not None
+                    if profile
                     else None
                 )
                 covered = current.captured_generation if current else None
@@ -620,7 +442,7 @@ class CognitiveRetrieval:
                 )
             return {
                 "profile": profile,
-                "mode": selected.mode,
+                "program": selected.program if selected else None,
                 "namespaces": states,
                 "state": "unconfigured" if failure else "ready",
                 "error": failure,

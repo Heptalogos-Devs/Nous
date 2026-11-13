@@ -15,10 +15,12 @@
 | cognition.annotation.on_save | false | next operation，显式保存后是否接续提案并采用 |
 | cognition.annotation.known_concept_limit | 12，整数 >=0 | next operation，既有概念候选清单；0 不提供候选 |
 | cognition.search.space | null 或已配置空间 | 新 projection profile，查询；不是修改已绑定空间 |
-| cognition.search.default_mode | `auto` 或 lexical/dense/tagmemo/rivermemo/hybrid/dtsc | next query；auto 仅按 space 配置选择 profile |
+| cognition.search.steward | off | next query；默认阅读整理策略，可由查询覆盖 |
+| cognition.search.include_work | false | next query；将当前 Work 修订纳入召回 |
+| cognition.search.active_use_half_life | null 或正数 | next query；近期使用按记录距离衰减的半衰期 |
 | cognition.search.include_review | false | call 可覆盖，待复核内容呈现 |
 | cognition.search.include_exploration | true | call 可覆盖，探索文稿显式标 purpose，不伪装为经历 |
-| cognition.search.local_candidate_max_bytes | 4096，整数 >=256 | 新 projection，基于完整 TextView 块的局部候选规划 |
+| cognition.search.local_candidate_max_bytes | 384，整数 >=256 | 新 projection，基于完整 TextView 块的局部候选规划 |
 | cognition.list.page_size | 20，1..200 | call 可覆盖，列表 |
 
 这些默认是起步设计值，可按实际使用调整。已有 Wave top_k、算法与索引参数继续归 Wave；不在 cognition 再复制。单块超出 local_candidate_max_bytes 时保留整块或只提供整文，报告覆盖；不得截断代码块并假称精确段落。

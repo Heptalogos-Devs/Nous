@@ -17,12 +17,10 @@ from nous.content.contracts import (
     InlineText,
     ModelProducer,
     OutputContent,
-    OutputMapping,
     ProcessingResult,
     ResultFacts,
     ResultRef,
     SelectedInputs,
-    SourceSelection,
 )
 from nous.content.results import ResultStore
 from nous.models.configuration import ModelRoute, PresetConfig, TaskAssignment
@@ -217,14 +215,14 @@ class GenerationOperations:
         if frozen.resource is None:
             raise NousError("model.task_contract_missing", "The task has no output contract")
         definition = self.executor.compiler.catalog.tasks[frozen.resource.manifest.contract_id]
-        outputs = await definition.outputs(
+        interpreted = await definition.outputs(
             generated.output,
             reading,
             self.results.artifacts,
             structured=prepared.compiled.schema is not None,
             producer=generated.producer,
         )
-        outputs = definition.describe_outputs(outputs)
+        outputs = definition.describe_outputs(interpreted.outputs)
         if generated.response:
             outputs["response"] = OutputContent(
                 data=json.dumps(generated.response, ensure_ascii=False, indent=2).encode(),
@@ -233,17 +231,6 @@ class GenerationOperations:
                 role="diagnostic",
             )
         actual = tuple(source.group for source in reading.sources if source.group is not None)
-        origins = tuple(dict.fromkeys(part.content for group in actual for part in group.parts))
-        mappings = tuple(
-            OutputMapping(
-                output_name=name,
-                selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
-                relation="derived",
-                origins=origins,
-            )
-            for name, output in outputs.items()
-            if output.role != "diagnostic" and output.data and origins
-        )
         selected = group.unit.inputs
         artifacts = await self.results.artifacts.get_many(
             [item.artifact for source in selected.sources for item in source.selections]
@@ -284,7 +271,8 @@ class GenerationOperations:
                 "finish_reason": generated.finish_reason,
             },
             coverage=generated.coverage,
-            mappings=mappings,
+            mappings=interpreted.mappings,
+            selections=interpreted.selections,
             dependencies=dependencies,
             formed_at=self.results.artifacts.clock.utc_now(),
         )

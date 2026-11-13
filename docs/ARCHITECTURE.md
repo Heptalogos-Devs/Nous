@@ -2,16 +2,16 @@
 
 ## 产品能力与本次范围
 
-Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。Runtime 装配类型化完整操作，CLI、程序内 SDK 和本地宿主使用同一操作目录。正文、处理结果、草稿和检索快照分别在所属事务中保存。
+Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。Runtime 装配类型化完整操作，CLI、程序内 SDK、本地宿主、HTTP、MCP 和 gRPC 使用同一操作目录。正文、处理结果、草稿和检索快照分别在所属事务中保存。
 
-Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、版本、Concept 与采用；按一致读事务提供类型化 CorpusView，清单导入也调用同一个 Wave 构建能力。内容字节和精确选区继续由 Artifact/TextView 提供。
+Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、版本、Concept、Work 与采用，按一致读事务捕获材料目录和本次知识视图；清单导入也调用同一个 Wave 构建能力。内容字节和精确选区由 Artifact/TextView 提供，共同材料读取负责领域身份、结构和正式关系。
 
 ## 调用方向
 
 ```text
-进程内 SDK / CLI / 本地宿主
+进程内 SDK / CLI / 本地宿主 / HTTP / MCP / gRPC
   ↓
-完整应用操作：配置、生成、媒体解释、向量、Wave、认知文稿/采用/查询
+完整应用操作：配置、生成、媒体解释、向量、Wave、文稿、Work、查询/读取/跟随/整理
   ├─ 内容接纳/读取/结果采用 → ArtifactStore、ResultStore → CAS、Database
   ├─ 语言阶段 → 当前调用的任务合同与 Prompt → ModelExecutor → 连接与凭据 → 网关
   ├─ 确定性准备 → MediaPreparer → Pillow、PDFium、FFmpeg
@@ -33,6 +33,10 @@ Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、�
 
 Journal 的事务保存核心负责正文和来源；完整 RecordOperations 用例在同一 WriteTx 中组织修订、草稿采用及反馈关联。提交后由维护 owner 执行或启动标注与刷新。NamespaceRef 表示稳定域身份，见[维护架构](design/cognition/maintenance-architecture.md)。
 
+认知查询绑定自然语言、NousQL 条件、正式材料与阶段情境，形成 QueryIntent。WaveProgram 编译及执行拥有观测共享、候选联合与校准、排序和独立局部定位。any/all 与情境分支在候选和排名阶段组合，最终按原问题定位并使用整次交付预算。认知层不另行计算检索分数，也不根据已经交付的片段重排材料。
+
+EvidenceDelivery 固定实际交付的材料、原文与精确范围。Steward 消费已保存证据，按用途生成独立的 Markdown 阅读稿；query/read/follow 与后续研究由外部 Agent 组织。阅读稿进入草稿和正式文稿时，由写作 owner 读取共同材料关系并采用。
+
 ## 状态所有权
 
 | 状态 | 所有者 |
@@ -41,16 +45,21 @@ Journal 的事务保存核心负责正文和来源；完整 RecordOperations 用
 | 配置修改的绑定与资源采用 | ConfigurationOperations，调用相应 owner |
 | 不可变字节及 owner/slot 引用 | ContentStore |
 | 原件、派生物与实际处理输入输出 | ArtifactStore、ResultStore |
+| 领域材料读取、结构字段 schema 与结果的正式材料来源 | 共同材料 owner，按正式引用类型登记领域读取者 |
 | 原件、离散选择、slot、role 和已确认类型 | SelectedInputs 与内容 owner；路线从原选择规划实际表示 |
 | 当前调用的语言任务与完成结果 | models.generation；领域任务解释结果，多阶段由 MediaAnalysis 组织 |
 | 模型请求、尝试、流与响应 | ModelExecutor，协议适配由成熟依赖承担 |
+| 候选模型排序与按声明尺度评价 | models evaluation，复用模型连接、期限和尝试策略 |
 | 模板内容与输入输出合同 | PromptCatalog 与具体任务定义 |
 | 向量空间、已采用向量及输入映射 | Embedding owner |
 | Wave 集合、不可变投影单元、组件清单和活动快照 | Wave owner；当前视图资格由认知用例决定 |
 | 冻结矩阵、索引和单次查询观测 | Native，均为可重建计算资产 |
+| 查询程序、候选/校准/排名及局部定位 | Wave，Native 持有数值值；Python 组织模型节点和正式内容读取 |
 | Note/Journal 正文版本与来源 | cognition 文稿 owner，共享有限版本保存机制 |
 | 正式 Concept 与标注绑定 | cognition 各负责操作，固定意义/正文版本 |
 | 当前知识视图与反馈 | cognition，复用 Wave 发布与检索；Native 不写认知 |
+| Work 完整修订、有效决定、依据与实际使用 | cognition work；情境选择固定本次实际使用的工作修订 |
+| 精确检索交付与阅读稿 | retrieval 与 Steward 分别采用完成成果，共用 ResultStore 和材料来源 |
 | 当前运行期后台操作 | Execution 持有普通 Task 及有界终态；维护请求由认知 owner 解释 |
 | 标注与刷新业务 | cognition maintenance，前台和后台共用完整操作 |
 | 实例日志与遥测出口 | Runtime 的 LoggingSession/Observability；根操作绑定临时上下文 |
@@ -60,7 +69,9 @@ Journal 的事务保存核心负责正文和来源；完整 RecordOperations 用
 
 耗时解码、模型调用、索引构建与 CAS 发布在短写事务外。完整用例开启 WriteTx，同一成果及其引用、正文及其来源、标注采用或快照及其关系分别原子提交；认知调用者在快照发布事务中决定是否提升当前指针。
 
-已保存的提案和写作成果可独立读取、采用或重新组装草稿。结果保存所选材料、实际输入、具名输出、领域上下文和坐标映射；草稿保存完整正文、精确基准及来源。Native 只接收已冻结的数组和快照，不打开业务 SQLite，也不从 Python 回调逐条加载数据。
+已保存的提案和写作成果可独立读取、采用或重新组装草稿。任务解释器通过 InterpretedOutputs 交付命名输出、选区和已知映射；结果采用保留这些事实及正式材料来源。草稿保存完整正文、精确基准及来源。Native 只接收已冻结的数组和快照，不打开业务 SQLite，也不从 Python 回调逐条加载数据。
+
+普通查询默认返回内存值。显式保存、Steward 和后续使用需要正式证据时，先采用 EvidenceDelivery，并在同一事务保留需要的快照引用；之后的整理失败或取消保留完成引用。局部 key 属于该交付，读取不依赖全局可变的最近查询。
 
 认知捕获决定本次组资格和正式上下文；Wave 依据各文档的真实计算输入复用投影单元，共享来源图在本次组装中合并。快照持有组上下文和单元成员，单元持有文档计算资料。Native 行号在 Wave 接缝一次转换为类型化候选、排名依据和交付片段，认知查询继续绑定正式修订，入口负责呈现。
 
@@ -76,7 +87,7 @@ Execution 控制接纳、根操作、截止时间和真实 Task／worker 寿命�
 
 ## 开发边界
 
-现有 VCP 数值模块与 DTSC 保留。Wave 共享不可变投影单元，以同源清单绑定索引与映射；资产由借用、成员引用和明确清理管理。仍需全量构建的 Native 组件按真实依赖重算。分词保持开发者的独立实验。WorkContext—Wave—Steward—实际使用—情境反馈为后续主线；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 见[后续计划](plans/cognitive-use-next.md)。
+现有 VCP 数值模块与 DTSC 保留。Wave 共享不可变投影单元，以同源清单绑定索引与映射；资产由借用、成员引用和明确清理管理。局部词项和向量以实际原文单元构建，布局改变形成新的计算输入；程序及读出参数改变不重建未变的内容资产。仍需全量构建的 Native 组件按真实依赖重算。分词保持开发者的独立实验。任意历史知情视图、Social/Ego/Dream/Episode 见[后续计划](plans/cognitive-use-next.md)。
 
 现行代码可以按真实用途重新组织。没有外部兼容承诺的接口直接迁移，旧路径和专属支撑随替换删除。临时样本和诊断留在 temp，网关补丁与独立语音工具保持独立。
 

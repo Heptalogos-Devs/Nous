@@ -7,7 +7,6 @@ import typer
 
 from nous.application.contracts import EventEnvelope, TextDelta
 from nous.application.inputs import FileInput, InputProvider
-from nous.cognition.retrieval.contracts import Mode
 from nous.cognition.writing.contracts import (
     AdoptDraft,
     DraftFromResult,
@@ -33,7 +32,7 @@ from nous.content.contracts import ContentSelection, ExternalInput
 from nous.presentation import translate
 
 from .cognition import after_write, emit_record, journal_cli, note_cli, source_requests
-from .context import application_call, emit_content_view, language_for, options
+from .context import application_call, emit, emit_content_view, language_for, options
 from .groups import cli
 from .input_files import body_binding, json_binding
 
@@ -43,7 +42,7 @@ journal_cli.add_typer(draft_cli, name="draft")
 
 def emit_outcome(ctx: typer.Context, result: WritingOutcome) -> None:
     if options(ctx).json_mode:
-        typer.echo(result.model_dump_json())
+        emit(ctx, result.model_dump(mode="json"))
         if result.record is not None and result.record.issues:
             raise typer.Exit(3)
         return
@@ -92,7 +91,6 @@ def journalize(
     namespace: str | None = None,
     stream: bool = False,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -118,7 +116,7 @@ def journalize(
                 viewpoint=viewpoint,
                 adoption="save" if save else "draft",
                 stream=stream,
-                after=after_write(refresh, refresh_mode, background, inline, annotate),
+                after=after_write(refresh, background, inline, annotate),
             ),
             inputs=inputs,
             observer=observer if stream else None,
@@ -141,7 +139,7 @@ def draft_read(
         ctx, READ_DRAFT, ReadDraft(draft=ref, namespace=namespace, sources=sources)
     )
     if options(ctx).json_mode:
-        typer.echo(result.model_dump_json())
+        emit(ctx, result.model_dump(mode="json"))
         return
     typer.echo(result.ref.identifier)
     typer.echo(
@@ -184,7 +182,10 @@ def draft_revise(
         ReviseDraft(draft=ref, namespace=namespace, markdown=body, sources=changes),
         inputs=inputs,
     )
-    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.ref.identifier)
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.ref.identifier)
 
 
 @draft_cli.command("adopt")
@@ -195,7 +196,6 @@ def draft_adopt(
     title: str | None = None,
     fork: bool = False,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -208,7 +208,7 @@ def draft_adopt(
             namespace=namespace,
             title=title,
             fork=fork,
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
     )
     emit_record(ctx, result)
@@ -231,7 +231,6 @@ def propose_edit(
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     save: bool = False,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -270,7 +269,7 @@ def propose_edit(
             feedback_mappings=mappings,
             change_kind=intent,
             adoption="save" if save else "draft",
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
         inputs=inputs,
     )
@@ -289,7 +288,6 @@ def rewrite(
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     save: bool = False,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -305,7 +303,7 @@ def rewrite(
             change_kind=intent,
             sources=source_requests(source, current_basis, inspiration),
             adoption="save" if save else "draft",
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
     )
     emit_outcome(ctx, result)
@@ -324,7 +322,6 @@ def reflect(
     viewpoint: str | None = None,
     save: bool = False,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -341,7 +338,7 @@ def reflect(
             author=author,
             viewpoint=viewpoint,
             adoption="save" if save else "draft",
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
     )
     emit_outcome(ctx, result)

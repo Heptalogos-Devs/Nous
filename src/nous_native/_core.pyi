@@ -71,7 +71,7 @@ class Associations:
         group_root_indices: Array[np.uint64],
     ) -> None: ...
 
-class CandidatePool:
+class CandidateSet:
     def __init__(self, value_json: str) -> None: ...
     @property
     def value_json(self) -> str: ...
@@ -112,33 +112,33 @@ class NativeSnapshot:
         ghost_vectors: Array[np.float32] | None = None,
         cancel: CancellationToken | None = None,
     ) -> QueryObservation: ...
-    def search(
+    def execute_program(
         self,
         *,
-        mode: str,
+        name: str,
+        program_json: str,
         text: str = "",
-        vector: Array[np.float32] | None = None,
+        raw_vector: Array[np.float32] | None = None,
+        contextual_vector: Array[np.float32] | None = None,
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
-        candidate_pool: CandidatePool | None = None,
+        candidate_set: CandidateSet | None = None,
         cancel: CancellationToken | None = None,
     ) -> NativeQueryResult: ...
-    def recall(
+    def execute_expression(
         self,
-        observation: QueryObservation,
         *,
+        name: str,
+        program_json: str,
+        expression_json: str,
+        text: str = "",
+        original_vector: Array[np.float32] | None = None,
+        raw_vectors: Array[np.float32] | None = None,
+        contextual_vectors: Array[np.float32] | None = None,
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
-        cancel: CancellationToken | None = None,
-    ) -> CandidatePool: ...
-    def readout(
-        self,
-        observation: QueryObservation,
-        candidate_pool: CandidatePool,
-        *,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
+        ghost_vectors: Array[np.float32] | None = None,
         cancel: CancellationToken | None = None,
     ) -> NativeQueryResult: ...
     def think(
@@ -196,6 +196,7 @@ class ContextResult:
     @property
     def diagnostics_json(self) -> str: ...
 
+def context_masses(metadata_json: str, options_json: str = "{}") -> str: ...
 def aggregate_context(
     raw_query: Array[np.float32] | None,
     context_vectors: Array[np.float32],

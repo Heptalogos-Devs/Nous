@@ -17,22 +17,20 @@ NativeEngine(settings: EngineSettings)
 NativeSnapshot
   identity, capabilities, statistics
   observe(signals: QuerySignals, options: ObservationOptions, cancel) -> QueryObservation
-  recall(observation, options, allowed_rows, cancel) -> CandidatePool
-  search(query: NativeQuery, options: QueryOptions, cancel) -> NativeQueryResult
-  readout(observation, candidates: CandidatePool, options, cancel) -> NativeQueryResult
+  execute_program(program, signals, allowed_rows, options, cancel) -> NativeQueryResult
   think(observation, stages: ThinkingStages, options, cancel) -> ThinkingResult
   neighborhood(node_rows, options, cancel) -> NeighborhoodResult
 ```
 
-search 是一般消费者入口，内部根据 mode 组织 observe/candidate/readout，最多计算一次同次观测；需要同时 Thinking 时同一 search 请求带 stages，并在返回前复用该 observation。高级进程内调用可以单独 observe/readout/think，它们消费同一个类型化观测，不重新构建图。
+程序执行器按已编译的算子图取得观测、候选、校准和排名，在同一快照借用中复用阶段结果。Thinking 使用实际观测；高级调用可单独取得观测和路线。程序与端口见 [Wave 程序](program.md)。
 
 函数返回真实结果或类型化错误，不返回带 success=true 的空实现。lexical 不需要模型或向量；dense 需要对应向量；VCP 需要几何/概念/图能力；空种子是算法允许的输入，不当作异常，但 capability 缺失不能伪装成已经运行 VCP。
 
 ## 输入形状
 
-FrozenAssets 见资产专题。QuerySignals 包含 raw_query[D]、effective_query[D] 或 context 矩阵、core_rows[K]、ghost_vectors[G,D] 与 ghost 描述、实际 query_text。大数组分别传入，metadata 不嵌入 JSON 向量。纯 lexical 查询的向量字段可以缺省；需要向量的模式必须提供与空间一致的实际向量，不能以零向量补齐。
+FrozenAssets 见资产专题。QuerySignals 包含 raw_query[D]、effective_query[D] 或 context 矩阵、core_rows[K]、ghost_vectors[G,D] 与 ghost 描述、实际 query_text。大数组分别传入，metadata 不嵌入 JSON 向量。纯词项程序的向量字段可以缺省；需要向量的程序使用与空间一致的实际向量。
 
-CandidatePool 保留 candidate row、各通道得分/名次/来源位。ThinkingStages 保存 stage name、candidate_rows 和 top_k，不使用物理日记目录。所有行号属于 snapshot；QueryObservation 同时绑定 snapshot/space/算法配置，跨快照使用报 `wave.observation_mismatch`。
+CandidateSet 保留 candidate row、各通道得分与名次；CalibratedPool 保留该候选总体、观测和校准参照。ThinkingStages 保存 stage name、candidate_rows 和 top_k。所有行号属于 snapshot；QueryObservation 同时绑定 snapshot/space/算法配置，跨快照使用报 `wave.observation_mismatch`。
 
 Python 侧只提供少量输入值类，实际 C-contiguous NumPy 数组通过 rust-numpy 传递。无需一个拥有几十个可选数组参数的 build 函数；可以用四个职责明确的 bundle：Candidates、Concepts、SourceFacts、Associations。bundle 只是数据值，无服务依赖。
 
@@ -62,13 +60,15 @@ Tantivy 为正文和标题建立独立字段，标题仅由文稿级候选承载
 
 ## 真实核心和完整接缝
 
-具体接口、CandidatePool、统一候选规划、空图、长序列、Thinking 记录及构建/open 的分工见 [检索核心](engine.md)。这些行为在 retrieval crate 实现，PyO3 不持另一套 query/engine 业务。
+具体接口、候选规划、空图、长序列、Thinking 记录及构建/open 的分工见 [检索核心](engine.md)。这些行为在 retrieval crate 实现，PyO3 不持另一套 query/engine 业务。
 
-build 显式关闭构建期 writer 并释放 reader 的映射，最后原子写入完成清单并返回 BuiltSnapshot；Wave 打开同一稳定目录校验。组件目录无需移动，查询借用结束后释放 Native 资源。readout 必须接收外部 CandidatePool，不自行再召回。think 接收显式 options，不用绑定层默认值覆盖请求。已有向量的 Python 完整查询使用带空间身份的 VectorRef。
+build 显式关闭构建期 writer 并释放 reader 的映射，最后原子写入完成清单并返回 BuiltSnapshot；Wave 打开同一稳定目录校验。readout 接收程序传入的候选值，不自行再召回。已有向量的 Python 完整查询使用带空间身份的 VectorRef。
+
+冻结快照打开已提交的 Tantivy reader，不创建索引或取得 writer 锁；构建和增量更新只在各自的 staging 目录取得 writer。多个读者可以同时打开并查询同一已发布组件。
 
 核心的 Engine 持有有界 Rayon 池、关闭状态与实际工作锁；Snapshot/冻结资产由 retrieval 持有。PyO3 的 Engine/Snapshot 只借用核心对象并 detach。打开可传取消令牌，完整性摘要读取按块检查取消；Wave 对读者提供范围化借用并持有有界缓存。
 
-CandidatePool 保存快照身份、有序候选与各 lane 的原始分/名次，以及完整授权召回池产生的 BM25 参照、联合选择校准。普通 recall 完成一次校准和并集选择；固定外部池使用相同校准公式但保留明确给出的集合。readout 消费已准备的池，不再调用 select_superset 或索引。
+CandidateSet 保存快照身份、有序候选与各 lane 的原始分/名次。显式校准产生 CalibratedPool，并保存授权总体产生的 BM25 参照和联合选择；RiverMemo 消费该池，不再调用 select_superset 或索引。
 
 
 ## 增量构建与旧代借用

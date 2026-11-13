@@ -21,7 +21,16 @@ if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot
 
 Capability = Literal[
-    "text", "image", "audio", "video", "stream", "structured_output", "tools", "embedding"
+    "text",
+    "image",
+    "audio",
+    "video",
+    "stream",
+    "structured_output",
+    "tools",
+    "embedding",
+    "rerank",
+    "evaluate",
 ]
 
 
@@ -177,8 +186,8 @@ class Fallback(ConfigModel):
 class TaskAssignment(ConfigModel):
     model: ResourceId
     prompt: str | None = Field(default=None, min_length=1)
-    operation: Literal["generation", "transcription"] = "generation"
-    output_mode: Literal["text", "native", "tool"] = "text"
+    operation: Literal["generation", "transcription", "rerank"] = "generation"
+    output_mode: Literal["text", "prompted", "native", "tool"] = "text"
     preset: ResourceId | None = None
     fallback: ConfigSequence[Fallback] = Field(default_factory=tuple)
     budget: Budget = Field(default_factory=Budget)
@@ -258,6 +267,15 @@ class ModelExecutionConfig(ConfigModel):
         ge=0,
         description="Retries for structured output.",
         scopes=("instance", "namespace", "task", "call"),
+    )
+
+
+class EvaluationConfig(ConfigModel):
+    max_candidates: int = setting(
+        64, ge=1, le=1000, description="Maximum candidates in one model assessment."
+    )
+    max_characters: int = setting(
+        120000, ge=1, description="Maximum candidate characters in one assessment."
     )
 
 

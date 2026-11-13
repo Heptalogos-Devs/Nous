@@ -18,8 +18,6 @@ from nous.application.inputs import FileInput
 from nous.cognition.annotation.contracts import AnnotateRecord
 from nous.cognition.annotation.operations import ANNOTATE_RECORD
 from nous.cognition.contracts import RecordRevisionRef
-from nous.cognition.retrieval.contracts import CognitiveQuery, QueryResult
-from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import (
     AddNote,
     AdoptDraft,
@@ -37,6 +35,9 @@ from nous.content.citations import parse_citations
 from nous.content.contracts import ExternalInput, InlineText, ReadResult, SourceSelection
 from nous.content.operations import READ_RESULT
 from nous.runtime.bootstrap import open_instance
+from nous.wave.contracts import WaveQuery, WaveSearchResult
+from nous.wave.operations import WAVE_QUERY
+from nous.wave.program import resolve_program
 
 AFTER = AfterWrite(annotation="skip")
 
@@ -64,9 +65,7 @@ class DraftCase(BaseModel):
 class QueryCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question: str
-    modes: list[Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]] = [
-        "hybrid"
-    ]
+    programs: list[str] = Field(default_factory=lambda: ["hybrid"])
     top_k: int = 8
 
 
@@ -107,9 +106,9 @@ class ExperimentState(BaseModel):
 
 class SearchResult(BaseModel):
     question: str
-    mode: Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
+    program: str
     top_k: int = 8
-    result: QueryResult | None = None
+    result: WaveSearchResult | None = None
     error: str | None = None
 
 
@@ -176,16 +175,16 @@ def write_drafts(output: Path, drafts: list[SavedDraft]) -> None:
 def write_queries(output: Path, results: list[SearchResult]) -> None:
     sections = ["# 检索结果\n"]
     for entry in results:
-        sections.append(f"## {entry.question} · {entry.mode}\n")
+        sections.append(f"## {entry.question} · {entry.program}\n")
         if entry.result is None:
             sections.append(f"查询失败：{entry.error}\n")
             continue
         for group in entry.result.groups:
-            passage = group.passages[0]
+            passage = group.passages[0].text if group.passages else ""
             sections.append(
-                f"{group.rank}. **{group.title or '未命名'}** "
-                f"`{group.context.revision_ref.identifier}`\n\n"
-                f"   {passage.delivery.text}\n"
+                f"{group.rank}. **{group.group.title or '未命名'}** "
+                f"`{group.group.key}`\n\n"
+                f"   {passage}\n"
             )
     (output / "queries.md").write_text("\n".join(sections), encoding="utf-8")
 
@@ -373,7 +372,7 @@ async def run(args: argparse.Namespace) -> None:
                 return (
                     not args.contains
                     or any(text.casefold() in entry.question.casefold() for text in args.contains)
-                ) and (not args.mode or entry.mode in args.mode)
+                ) and (not args.program or entry.program in args.program)
 
             if args.retry_failed:
                 results = TypeAdapter(list[SearchResult]).validate_json(
@@ -388,9 +387,12 @@ async def run(args: argparse.Namespace) -> None:
                 results = []
                 pending = []
                 for case in plan.query:
-                    for mode in case.modes:
+                    for program in case.programs:
                         entry = SearchResult(
-                            question=case.question, mode=mode, top_k=case.top_k, error="尚未执行"
+                            question=case.question,
+                            program=program,
+                            top_k=case.top_k,
+                            error="尚未执行",
                         )
                         if not selected(entry):
                             continue
@@ -403,7 +405,13 @@ async def run(args: argparse.Namespace) -> None:
             failures = 0
             limited = False
             for index, entry in pending:
-                if limited and entry.mode != "lexical":
+                if (
+                    limited
+                    and "vectors"
+                    in resolve_program(
+                        runtime.configuration.snapshot.values.wave, entry.program
+                    ).requirements
+                ):
                     results[index] = entry.model_copy(
                         update={"result": None, "error": "上游限流，本次未执行"}
                     )
@@ -412,23 +420,28 @@ async def run(args: argparse.Namespace) -> None:
                     write_queries(args.output, results)
                     continue
                 try:
+                    options = await runtime.cognitive_retrieval.resolve_options(
+                        args.namespace, entry.program, None, None
+                    )
+                    _, snapshot, _ = await runtime.cognitive_retrieval.current_view(options)
                     answer = await runtime.app.call(
-                        QUERY,
-                        CognitiveQuery(
-                            namespace=args.namespace,
+                        WAVE_QUERY,
+                        WaveQuery(
+                            snapshot=snapshot.ref.identifier,
                             text=entry.question,
-                            mode=entry.mode,
+                            program=entry.program,
+                            grouping="document",
                             top_k=entry.top_k,
                         ),
                     )
                     results[index] = entry.model_copy(update={"result": answer, "error": None})
-                    print(f"查询完成 {entry.mode}: {entry.question}", flush=True)
+                    print(f"查询完成 {entry.program}: {entry.question}", flush=True)
                 except Exception as error:
                     failures += 1
                     limited = limited or rate_limited(error)
                     description = describe_error(error)
                     results[index] = entry.model_copy(update={"result": None, "error": description})
-                    print(f"查询失败 {entry.mode}: {entry.question}: {description}", flush=True)
+                    print(f"查询失败 {entry.program}: {entry.question}: {description}", flush=True)
                 save_json(path, [result.model_dump(mode="json") for result in results])
                 write_queries(args.output, results)
             if failures:
@@ -458,10 +471,9 @@ def main() -> None:
         help="Only questions containing this text; repeat for alternatives",
     )
     query.add_argument(
-        "--mode",
+        "--program",
         action="append",
-        choices=("auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"),
-        help="Only this mode from the plan; repeat for alternatives",
+        help="Only this configured program from the plan; repeat for alternatives",
     )
     asyncio.run(run(parser.parse_args()))
 

@@ -2,7 +2,7 @@
 
 ## 正式入口
 
-`note`、`journal`、`journalize`、`concept`、`query`、`read`、`feedback` 是长期保留的产品命令，调用共同 cognition 操作。`tools` 继续提供模型/媒体/内容/Wave 管理与实验能力。两者共享基础实现，低层工具不拥有另一个日记系统。
+`note`、`journal`、`journalize`、`concept`、`query`、`read`、`follow`、`arrange`、`work`、`feedback` 是长期保留的产品命令，调用共同 cognition 操作。`tools` 继续提供模型/媒体/内容/Wave 管理与实验能力。两者共享基础实现，低层工具不拥有另一个日记系统。
 
 全部命令使用当前 `--instance` / `--profile`、`--json`、`--language` 和错误出口。可读实例 profile 见 [实例选择](instance-selection.md)；状态和未命名标题统一经 presentation 本地化，不持久保存中英双语标签。`--namespace` 可覆盖默认域。正文通过 `--text`、`--file` 或 stdin 的明确单一来源读取；三者冲突时报参数错误。短引用使用实际返回的完整标识符，命令行传入时保留引号。
 
@@ -42,13 +42,54 @@ nous journal archive "jrn(...)@3"
 
 ## 查询与精确读取
 
-`query` 使用当前 namespace 视图并按需刷新；`--mode lexical` 不调用模型；`--snapshot "wav(...)"` 固定旧视图。命中显示标题、最佳原文片段、精确 revision、简短来源和必要时间。`--explain` 展开实际通道/分数/概念路径；高级原始值留给 JSON，不把全部 Native diagnostics 默认倾倒。
+`query` 使用当前 Namespace 视图并按需刷新，返回分组材料及精确原文。配置决定使用的 Wave 程序；开发比较通过 `tools wave` 指定程序。需要在其他进程继续读取某次交付时使用 `--save`，返回的结果引用和 E 键一起标识片段。
 
-`nous read "jrn(...)"` 表示当前；`nous read "jrn(...)@N"` 和命中精确引用保持固定。`--blocks B2,B3` 使用对应版本 TextView；不同版本的块键不得串用。旧版本读取显示“当前另有 @M”，不替换正文。
+也可以先将普通查询的 JSON 结果保存在文件中，决定使用后保存同一交付：
 
-`nous feedback record "<精确引用>"` 可评价当时的正文；`--selection` 接收精确选区 JSON。`--query-result` 接收查询结果文件，`--passage` 选择实际交付的组与片段。明确更正通过 journal patch/replace/revise 并关联 --feedback；意见列表与处理结果由 feedback read/list/resolve 提供。
+```sh
+nous --json query "取消任务后如何释放资源？" > query.json
+nous save-evidence query.json
+```
 
-`journal refresh` 刷新当前域配置 profile；`--mode lexical` 显式刷新词项。保存时 `--refresh` 接续当前 profile 刷新，`--refresh-mode lexical` 明确只构建词项视图；`--annotate` 请求标注。`--background` 在正文提交后启动本进程工作并显示 operation ID，默认等待维护结果。后台工作和宿主操作见[宿主与运行期操作](jobs-and-host.md)。维护失败时保留已保存正文。
+命令返回结果引用，供后续读取、反馈和工作记录使用。
+
+```sh
+nous query "取消任务后如何释放资源？" --save
+nous read "res(实际结果引用)" --part E1
+nous follow "jrn(实际文稿引用)@2" --relation current_basis
+nous query "这些决定现在仍适用吗？" --work "work(实际工作引用)"
+nous arrange "res(实际结果引用)" --purpose "列出结论及适用条件"
+```
+
+`--steward optional` 请求有来源的阅读整理，整理不可用时保留已保存的原文和问题；`--steward required` 要求完成整理。整理结果和原文证据分别保存。用 `--budget 1000 --budget-unit characters` 或 `--budget 3000 --budget-unit bytes` 指定原文预算；`--explain` 展开诊断。已找回的材料会保留在结果目录中；预算不足或未选出正文时，结果显示原因并提供阅读材料的入口。工作使用记录可引用本次 E 片段，也可引用随后阅读的正式来源选区。
+
+通过 `--work` 提供的目标、焦点、有效决定和活动依据默认参与召回及原文定位。需要调整自动情境的阶段时，可重复指定 `--context-stage retrieval`、`--context-stage localization` 或 `--context-stage evaluation`。
+
+JSON 输出可用全局 `--select` 选择实际字段，支持重复指定标准 JSON Pointer。指针与值组成返回对象；不指定时返回完整 JSON。比如读取已保存的 E 片段正文：
+
+```shell
+nous --json --select /selections/0/body_text read 'res(实际交付引用)' --part E1
+```
+
+`read` 接受正式材料引用及其精确修订；`--blocks B2,B3` 读取同一材料版本中的指定块，`--sources` 展开所保存的来源。`read "res(...)" --part E1` 的键只属于指定交付。查询时用 `--prior "res(...)"` 引入先前交付，增加 `--anchored` 则在先前快照中查询；也可通过 `--snapshot` 指定快照。
+
+## 持续工作与反馈
+
+`work create` 创建目标，`work read` 读取当前或精确修订。结构化状态使用 JSON，说明正文使用 Markdown。修改时以精确修订或 `--expected` 指定基准，冲突保留当前修订。
+
+```sh
+nous work create "资源关闭研究" "整理取消和关闭的依据"
+nous work read "work(实际工作引用)"
+nous work revise "work(实际工作引用)@1" ./work-state.json --body ./work.md
+nous work set-active "work(实际工作引用)@2" ./selections.json
+nous work record-use "work(实际工作引用)@3" "res(实际结果引用)" ./used-selections.json "形成关闭顺序的决定"
+nous work uses "work(实际工作引用)"
+nous feedback record --evidence "res(实际结果引用)" --passage E1 --category retrieval --value positive
+```
+
+`selections.json` 和 `used-selections.json` 是 `MaterialSelection` 数组；工作使用记录保存实际采用的正式材料选区，也可记录查询后继续读取的来源。查询反馈的 E 键指向这次交付的片段。`feedback record "jrn(...)@2"` 评价精确文稿，`--selection` 接收选区 JSON。反馈列表及处理结果由 `feedback read/list/resolve` 提供。
+
+`journal refresh` 使用实例当前配置刷新视图；保存时 `--refresh` 请求刷新，`--annotate` 请求标注。`--background` 在正文提交后启动本运行期工作，默认等待维护结果。后台工作见[宿主与运行期操作](jobs-and-host.md)。
 
 ## 失败、流与 JSON
 

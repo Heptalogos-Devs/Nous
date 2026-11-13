@@ -9,18 +9,25 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, Valid
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ContentSelection, SourceSelection
+from nous.content.selections import subtract_selection
+from nous.content.text import TextView
 
 from .contracts import (
     CandidateHit,
     CandidateRef,
     ChannelScore,
     DeliveredText,
+    DeliveryBudget,
+    DeliveryStatus,
     GroupDescriptor,
     GroupHit,
     PassageDelivery,
+    ProgramRunFacts,
     RankEvidence,
+    ScoreValue,
     SearchCoverage,
     SnapshotRef,
+    WaveBranchCoverage,
     WaveQuery,
     WaveSearchResult,
 )
@@ -74,6 +81,7 @@ class _NativePassage(_NativeValue):
     reason: Literal["body_match", "local_score", "title_preview", "preview"]
     lexical_evidence: _LexicalEvidence = Field(default_factory=_LexicalEvidence)
     evidence_row: int | None = None
+    scores: dict[str, float | None] = Field(default_factory=dict)
 
 
 class _NativeGroup(_NativeValue):
@@ -86,7 +94,7 @@ class _NativeGroup(_NativeValue):
 class _NativeReadout(_NativeValue):
     """Native row identities and score fields terminate at the Wave query seam."""
 
-    mode: str
+    program: str
     score_kind: str
     used_lanes: tuple[str, ...]
     skipped_lanes: tuple[dict[str, JsonValue], ...]
@@ -95,9 +103,43 @@ class _NativeReadout(_NativeValue):
     grouping: Literal["candidate", "document"]
     rank_scope: str
     coverage: SearchCoverage
+    branch_coverage: tuple[WaveBranchCoverage, ...] = ()
     algorithm_versions: dict[str, str]
     thinking: dict[str, JsonValue] | None
     diagnostics: dict[str, JsonValue] | None
+
+
+class PassageProposal(_NativeValue):
+    candidate: CandidateRef
+    scored_ranges: tuple[ContentSelection, ...]
+    fragments: tuple[ContentSelection, ...]
+    support_context: tuple[ContentSelection, ...] = ()
+    shared_context: tuple[ContentSelection, ...] = ()
+    reason: Literal["body_match", "local_score", "title_preview", "preview"]
+    matched_fields: tuple[Literal["body", "title"], ...] = ()
+    evidence: RankEvidence | None = None
+    scores: tuple[ScoreValue, ...] = ()
+    assessment: dict[str, JsonValue] | None = None
+
+
+class LocatedGroup(_NativeValue):
+    group: GroupDescriptor
+    rank: int
+    basis: RankEvidence
+    passages: tuple[PassageProposal, ...]
+    delivery_status: DeliveryStatus = "not_selected"
+
+
+class LocatedHit(_NativeValue):
+    basis: RankEvidence
+    passage: PassageProposal
+
+
+class LocatedResult(_NativeValue):
+    result: WaveSearchResult
+    groups: tuple[LocatedGroup, ...]
+    hits: tuple[LocatedHit, ...]
+    views: dict[str, TextView]
 
 
 class WaveDelivery:
@@ -107,13 +149,14 @@ class WaveDelivery:
         self.artifacts = artifacts
         self.instance_id = instance_id
 
-    async def materialize(
+    async def locate(
         self,
         request: WaveQuery,
         row: SnapshotRow,
         result: nous_native.NativeQueryResult,
         query_summary: dict[str, object],
-    ) -> WaveSearchResult:
+        program_run: ProgramRunFacts | None = None,
+    ) -> LocatedResult:
         mapping = row["mapping"]
         candidates = mapping["candidates"]
         concepts = mapping["concepts"]
@@ -196,108 +239,122 @@ class WaveDelivery:
                 details=TypeAdapter(dict[str, JsonValue]).validate_python(explanation),
             )
 
-        async def passage(raw: _NativePassage) -> PassageDelivery:
-            index = raw.row
-            candidate = candidates[index]
-            selection = ContentSelection.model_validate(candidate["content"])
-            fields = raw.lexical_evidence.matched_fields
-            body_range = raw.lexical_evidence.body_range
-            reason = raw.reason
-            selected: list[ContentSelection] = []
-            if body_range:
-                represented = ContentSelection.model_validate(candidate["retrieval_content"])
-                represented = (await self.artifacts.normalize_selections((represented,)))[0]
-                start = represented.selection.start_byte
-                assert start is not None
-                location = ContentSelection(
-                    artifact=represented.artifact,
-                    selection=SourceSelection(
-                        start_byte=start + body_range[0], end_byte=start + body_range[1]
+        if values.grouping == "document":
+            raw_parts = [part for group in values.groups for part in group.passages]
+        else:
+            raw_parts = [
+                _NativePassage(
+                    row=index,
+                    reason="local_score",
+                    lexical_evidence=hit.lexical_evidence,
+                    evidence_row=index,
+                )
+                for index, hit in raw_hits.items()
+            ]
+        selections = tuple(
+            ContentSelection.model_validate(candidates[part.row]["content"]) for part in raw_parts
+        )
+        normalized = await self.artifacts.normalize_selections(selections)
+        artifacts = {content.artifact.id: content.artifact for content in normalized}
+        views = await self.artifacts.text_views(
+            tuple(ContentSelection(artifact=ref) for ref in artifacts.values())
+        )
+        text_views = dict(zip(artifacts, views, strict=True))
+
+        def closure_ranges() -> list[tuple[ContentSelection, ...]]:
+            ranges: list[tuple[ContentSelection, ...]] = []
+            for content in normalized:
+                closure = text_views[content.artifact.id].sentence_closure(content)
+                start, end = content.selection.start_byte, content.selection.end_byte
+                closed_start, closed_end = closure.selection.start_byte, closure.selection.end_byte
+                if start is None or end is None or closed_start is None or closed_end is None:
+                    raise NousError(
+                        "wave.invalid_native_result", "Passage text lacks exact byte coordinates"
+                    )
+                context: list[ContentSelection] = []
+                if closed_start < start:
+                    context.append(
+                        ContentSelection(
+                            artifact=content.artifact,
+                            selection=SourceSelection(start_byte=closed_start, end_byte=start),
+                        )
+                    )
+                if end < closed_end:
+                    context.append(
+                        ContentSelection(
+                            artifact=content.artifact,
+                            selection=SourceSelection(start_byte=end, end_byte=closed_end),
+                        )
+                    )
+                covered = [content, *context]
+                for structural in text_views[content.artifact.id].structural_context(content):
+                    remaining = subtract_selection(structural, covered)
+                    context.extend(remaining)
+                    covered.extend(remaining)
+                ranges.append(tuple(context))
+            return ranges
+
+        contexts = await self.artifacts.content.execution.blocking(closure_ranges)
+        delivered: list[PassageProposal] = []
+        for raw, content, ranges in zip(raw_parts, normalized, contexts, strict=True):
+            candidate = candidates[raw.row]
+            delivered.append(
+                PassageProposal(
+                    candidate=CandidateRef(snapshot=row["identifier"], key=candidate["key"]),
+                    scored_ranges=(content,),
+                    fragments=(content,),
+                    support_context=ranges,
+                    reason=raw.reason,
+                    matched_fields=raw.lexical_evidence.matched_fields,
+                    evidence=ranking(raw_hits[raw.evidence_row])
+                    if raw.evidence_row is not None
+                    else None,
+                    scores=tuple(
+                        ScoreValue(
+                            name=name,
+                            value=score,
+                            scale=(
+                                "reciprocal_rank"
+                                if name in {"local_rrf", "rrf_reference", "context_lexical"}
+                                else "rrf_theoretical_reference"
+                                if name == "local_relevance"
+                                else "rank"
+                                if name in {"lexical_rank", "semantic_rank"}
+                                else "weight"
+                                if name in {"lexical_weight", "semantic_weight"}
+                                else name
+                            ),
+                            producer="passages.locate",
+                            based_on=(
+                                tuple(
+                                    signal
+                                    for signal in (
+                                        "lexical_rank",
+                                        "lexical_weight",
+                                        "semantic_rank",
+                                        "semantic_weight",
+                                        "context_lexical",
+                                    )
+                                    if raw.scores.get(signal) is not None
+                                )
+                                if name == "local_rrf"
+                                else ("local_rrf", "rrf_reference")
+                                if name == "local_relevance"
+                                else ()
+                            ),
+                        )
+                        for name, score in raw.scores.items()
+                        if score is not None
                     ),
                 )
-                try:
-                    origins = await self.artifacts.map_origins(location, selection.artifact)
-                except NousError as error:
-                    if error.code != "content.origin_unmapped":
-                        raise
-                    origins = ()
-                previous_precision = None
-                for item in origins:
-                    current = item.origin
-                    if (
-                        selected
-                        and previous_precision == item.precision == "identity"
-                        and selected[-1].artifact == current.artifact
-                        and selected[-1].selection.start_byte is not None
-                        and selected[-1].selection.end_byte is not None
-                        and current.selection.start_byte is not None
-                        and current.selection.start_byte >= selected[-1].selection.start_byte
-                        and current.selection.start_byte <= selected[-1].selection.end_byte
-                        and current.selection.end_byte is not None
-                    ):
-                        previous = selected[-1]
-                        selected[-1] = ContentSelection(
-                            artifact=previous.artifact,
-                            selection=SourceSelection(
-                                start_byte=previous.selection.start_byte,
-                                end_byte=max(
-                                    previous.selection.end_byte or 0, current.selection.end_byte
-                                ),
-                            ),
-                        )
-                    else:
-                        selected.append(current)
-                    previous_precision = item.precision
-                if not selected:
-                    reason = "title_preview" if "title" in fields else "preview"
-            if not selected:
-                whole = (await self.artifacts.normalize_selections((selection,)))[0]
-                if reason == "local_score":
-                    selected = [whole]
-                else:
-                    text = await self.artifacts.read_selection(whole)
-                    start = whole.selection.start_byte
-                    assert start is not None
-                    selected = [
-                        ContentSelection(
-                            artifact=whole.artifact,
-                            selection=SourceSelection(
-                                start_byte=start, end_byte=start + len(text[:500].encode("utf-8"))
-                            ),
-                        )
-                    ]
-            read = await self.artifacts.read_selections(selected)
-            evidence_row = raw.evidence_row
-            return PassageDelivery(
-                candidate=CandidateRef(snapshot=row["identifier"], key=candidate["key"]),
-                fragments=tuple(
-                    DeliveredText(content=value.content, text=value.text) for value in read
-                ),
-                reason=reason,
-                matched_fields=fields,
-                evidence=ranking(raw_hits[evidence_row]) if evidence_row is not None else None,
             )
-
-        hits: list[CandidateHit] = []
+        deliveries = iter(delivered)
+        hits: list[LocatedHit] = []
         if values.grouping != "document":
-            for index, hit in raw_hits.items():
-                lexical = hit.lexical_evidence
-                fields = lexical.matched_fields
-                reason = (
-                    "body_match"
-                    if lexical.body_range is not None
-                    else "title_preview"
-                    if "title" in fields
-                    else "local_score"
-                    if candidates[index]["local"]
-                    else "preview"
-                )
-                delivered = await passage(
-                    _NativePassage(
-                        row=index, reason=reason, lexical_evidence=lexical, evidence_row=index
-                    )
-                )
-                hits.append(CandidateHit(basis=ranking(hit), passage=delivered))
+            hits = [
+                LocatedHit(basis=ranking(hit), passage=next(deliveries))
+                for hit in raw_hits.values()
+            ]
         thinking = values.thinking
         if isinstance(thinking, dict):
             thinking = cast(dict[str, object], thinking)
@@ -335,37 +392,40 @@ class WaveDelivery:
                                     "Thinking route references an unknown concept",
                                 )
                             route[output_field] = concepts[concept_id - 1]["key"]
-        search_groups: list[GroupHit] = []
+        search_groups: list[LocatedGroup] = []
         for group in values.groups:
             descriptor = GroupDescriptor.model_validate(mapping["groups"][group.group_key])
-            passages: list[PassageDelivery] = []
+            passages: list[PassageProposal] = []
             seen: set[ContentSelection] = set()
-            for part in group.passages:
-                delivered = await passage(part)
-                fragments: list[DeliveredText] = []
-                for fragment in delivered.fragments:
-                    if fragment.content not in seen:
-                        seen.add(fragment.content)
+            for _part in group.passages:
+                part_delivery = next(deliveries)
+                fragments: list[ContentSelection] = []
+                for fragment in part_delivery.fragments:
+                    if fragment not in seen:
+                        seen.add(fragment)
                         fragments.append(fragment)
                 if fragments:
-                    passages.append(delivered.model_copy(update={"fragments": tuple(fragments)}))
-            group_hit = GroupHit(
+                    passages.append(
+                        part_delivery.model_copy(update={"fragments": tuple(fragments)})
+                    )
+            group_hit = LocatedGroup(
                 group=descriptor,
                 rank=group.group_rank,
                 basis=ranking(raw_hits[group.rank_basis_row]),
                 passages=tuple(passages),
             )
             search_groups.append(group_hit)
-        return WaveSearchResult(
+        template = WaveSearchResult(
             snapshot=SnapshotRef(
                 instance_id=self.instance_id, id=row["id"], identifier=row["identifier"]
             ),
-            mode=values.mode,
+            program=values.program,
+            program_run=program_run,
             score_kind=values.score_kind,
             used_lanes=values.used_lanes,
             skipped_lanes=values.skipped_lanes,
-            hits=tuple(hits),
-            groups=tuple(search_groups),
+            hits=(),
+            groups=(),
             grouping=values.grouping,
             rank_scope=values.rank_scope,
             context_summary=TypeAdapter(dict[str, JsonValue]).validate_python(query_summary),
@@ -376,6 +436,205 @@ class WaveDelivery:
                 "candidate_filter": request.candidate_filter is not None,
             },
             coverage=values.coverage,
+            branch_coverage=values.branch_coverage,
             thinking=TypeAdapter(dict[str, JsonValue] | None).validate_python(thinking),
             diagnostics=values.diagnostics if request.include_trace else None,
         )
+        return LocatedResult(
+            result=template, groups=tuple(search_groups), hits=tuple(hits), views=text_views
+        )
+
+    async def read(self, result: LocatedResult) -> WaveSearchResult:
+        """Read only the ranges selected for final evidence delivery."""
+        proposals = (
+            [part for group in result.groups for part in group.passages]
+            if result.groups
+            else [hit.passage for hit in result.hits]
+        )
+        refs = tuple(ref for part in proposals for ref in (*part.fragments, *part.support_context))
+        values = iter(await self.artifacts.read_selections(refs) if refs else ())
+
+        def deliver(part: PassageProposal) -> PassageDelivery:
+            fragments = tuple(
+                DeliveredText(content=item.content, text=item.text)
+                for item in (next(values) for _ in part.fragments)
+            )
+            support = tuple(
+                DeliveredText(content=item.content, text=item.text)
+                for item in (next(values) for _ in part.support_context)
+            )
+            return PassageDelivery(
+                candidate=part.candidate,
+                scored_ranges=part.scored_ranges,
+                fragments=fragments,
+                support_context=support,
+                shared_context=part.shared_context,
+                reason=part.reason,
+                matched_fields=part.matched_fields,
+                evidence=part.evidence,
+                scores=part.scores,
+                assessment=part.assessment,
+            )
+
+        groups = tuple(
+            GroupHit(
+                group=group.group,
+                rank=group.rank,
+                basis=group.basis,
+                passages=tuple(deliver(part) for part in group.passages),
+                delivery_status=group.delivery_status,
+            )
+            for group in result.groups
+        )
+        hits = tuple(
+            CandidateHit(basis=hit.basis, passage=deliver(hit.passage)) for hit in result.hits
+        )
+        return result.result.model_copy(update={"groups": groups, "hits": hits})
+
+
+def select_passages(
+    result: LocatedResult,
+    passages_per_group: int,
+    budget: DeliveryBudget | None,
+) -> LocatedResult:
+    """Choose source ranges and count their union without reading delivery text."""
+    if budget is not None and budget.unit == "tokens":
+        raise NousError("wave.capability_unavailable", "A tokenizer is required for token budgets")
+    unit = budget.unit if budget is not None else "characters"
+    maximum = budget.amount if budget is not None else None
+    groups, hits = list(result.groups), list(result.hits)
+    available = [
+        (group_index, passage_index, part)
+        for group_index, group in enumerate(groups)
+        for passage_index, part in enumerate(group.passages)
+    ]
+    if not available:
+        available = [(index, 0, hit.passage) for index, hit in enumerate(hits)]
+    selected: dict[tuple[int, int], PassageProposal] = {}
+    covered: list[ContentSelection] = []
+    lengths: dict[ContentSelection, int] = {}
+    counts: dict[int, int] = {}
+    used = 0
+
+    def incremental(part: PassageProposal) -> PassageProposal | None:
+        temporary = list(covered)
+        fragments: list[ContentSelection] = []
+        for content in part.fragments:
+            remaining = subtract_selection(content, temporary)
+            fragments.extend(remaining)
+            temporary.extend(remaining)
+        if not fragments:
+            return None
+        support: list[ContentSelection] = []
+        for content in part.support_context:
+            remaining = subtract_selection(content, temporary)
+            support.extend(remaining)
+            temporary.extend(remaining)
+        return part.model_copy(
+            update={
+                "fragments": tuple(fragments),
+                "support_context": tuple(support),
+            }
+        )
+
+    def length(part: PassageProposal) -> int:
+        total = 0
+        for content in (*part.fragments, *part.support_context):
+            if content not in lengths:
+                view = result.views[content.artifact.id]
+                start, end = view.selection_bounds(content)
+                data = view.raw[start - view.byte_offset : end - view.byte_offset]
+                lengths[content] = len(data) if unit == "bytes" else len(data.decode("utf-8"))
+            total += lengths[content]
+        return total
+
+    def priority(part: PassageProposal) -> tuple[int, float, float] | None:
+        model_rank = next(
+            (value.value for value in part.scores if value.name == "model_rank"), None
+        )
+        relevance = next(
+            (value.value for value in part.scores if value.name == "local_relevance"), 1.0
+        )
+        if model_rank is None and relevance <= 0.0:
+            return None
+        return int(model_rank is None), model_rank or 0.0, -relevance
+
+    ranked = sorted(
+        (
+            (score, group_index, passage_index, part)
+            for group_index, passage_index, part in available
+            if (score := priority(part)) is not None
+        ),
+        key=lambda value: value[:3],
+    )
+    while ranked:
+        chosen: tuple[int, int, int, int, PassageProposal, PassageProposal] | None = None
+        for index, (_, group_index, passage_index, part) in enumerate(ranked):
+            if counts.get(group_index, 0) >= passages_per_group:
+                continue
+            item = incremental(part)
+            if item is None:
+                continue
+            cost = length(item)
+            if maximum is not None and used + cost > maximum:
+                continue
+            chosen = index, group_index, passage_index, cost, item, part
+            break
+        if chosen is None:
+            break
+        index, group_index, passage_index, cost, item, original = chosen
+        shared: list[ContentSelection] = []
+        for content in (*original.fragments, *original.support_context):
+            shared.extend(
+                subtract_selection(content, (*item.fragments, *item.support_context, *shared))
+            )
+        item = item.model_copy(update={"shared_context": tuple(shared)})
+        selected[(group_index, passage_index)] = item
+        used += cost
+        counts[group_index] = counts.get(group_index, 0) + 1
+        covered.extend((*item.fragments, *item.support_context))
+        ranked.pop(index)
+    if groups:
+        delivered_groups: list[LocatedGroup] = []
+        for group_index, group in enumerate(groups):
+            passages = tuple(
+                selected[(group_index, index)]
+                for index in range(len(group.passages))
+                if (group_index, index) in selected
+            )
+            if passages:
+                status = "selected"
+            elif not group.passages:
+                status = "no_candidates"
+            else:
+                eligible = [part for part in group.passages if priority(part) is not None]
+                remaining = [item for part in eligible if (item := incremental(part)) is not None]
+                if not eligible:
+                    status = "not_selected"
+                elif not remaining:
+                    status = "overlap"
+                elif maximum is not None and all(
+                    used + length(item) > maximum for item in remaining
+                ):
+                    status = "budget_exhausted"
+                else:
+                    status = "not_selected"
+            delivered_groups.append(
+                group.model_copy(update={"passages": passages, "delivery_status": status})
+            )
+        groups = delivered_groups
+    else:
+        hits = [
+            hit.model_copy(update={"passage": selected[(index, 0)]})
+            for index, hit in enumerate(hits)
+            if (index, 0) in selected
+        ]
+    summary = dict(result.result.context_summary)
+    summary[f"delivered_{unit}"] = used
+    return result.model_copy(
+        update={
+            "groups": tuple(groups),
+            "hits": tuple(hits),
+            "result": result.result.model_copy(update={"context_summary": summary}),
+        }
+    )

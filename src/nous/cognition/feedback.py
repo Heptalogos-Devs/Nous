@@ -3,22 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import sqlalchemy as sa
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.engine import RowMapping
 
 from nous.application.contracts import CallContext, define_operation
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier
 from nous.common.operations import record_completed
-from nous.content.contracts import ContentSelection, ExternalInput
+from nous.content.contracts import ContentSelection, ExternalInput, ResultOutputRef, ResultRef
+from nous.content.results import ResultStore
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 from nous.temporal.values import Clock
-from nous.wave.contracts import CandidateRef, CognitionOwner, RankEvidence
+from nous.wave.contracts import CandidateRef, RankEvidence, SnapshotRef
 from nous.wave.operations import WaveOperations
 
 from . import feedback_schema, schema
@@ -32,11 +35,13 @@ from .contracts import (
     RecordRevisionRef,
     RevisionSelection,
 )
+from .material_contracts import MaterialSelection
 from .retrieval.contracts import (
-    CognitiveGroupContext,
-    QueryContext,
-    QueryOperationContext,
-    QueryResult,
+    BoundQueryControls,
+    EvidenceDelivery,
+    QueryControls,
+    QueryIntent,
+    UsedContext,
 )
 from .scope import NamespaceOperations
 
@@ -51,8 +56,11 @@ ResolutionAction = Literal["acknowledged", "not_applied", "applied"]
 class QueryFeedback(CognitiveValue):
     """Freeze the query and the ranking basis for the selected delivery."""
 
-    context: QueryContext
-    operation_context: QueryOperationContext
+    intent: QueryIntent
+    snapshot: SnapshotRef
+    snapshot_available: bool = True
+    evidence: ResultRef | None = None
+    passage_key: str | None = None
     group_rank: int | None = None
     basis: RankEvidence | None = None
     candidate: CandidateRef | None = None
@@ -61,7 +69,7 @@ class QueryFeedback(CognitiveValue):
 class FeedbackTarget(CognitiveValue):
     kind: Literal["record", "query"]
     revision: RecordRevisionRef | None = None
-    selection: ContentSelection | RevisionSelection | None = None
+    selection: ContentSelection | RevisionSelection | MaterialSelection | None = None
     query: QueryFeedback | None = None
 
 
@@ -88,9 +96,9 @@ class FeedbackView(CognitiveValue):
 
 
 class QueryFeedbackRequest(CognitiveValue):
-    result: QueryResult | ExternalInput
+    evidence: str | ResultRef
     category: Category
-    target: tuple[int, int] | RevisionSelection | None = None
+    passage_key: str | None = None
     value: Value | None = None
     comment: str | None = None
     author: str | None = None
@@ -161,6 +169,74 @@ RESOLVE_FEEDBACK = define_operation(
 )
 
 
+async def upgrade_query_feedback_in(tx: WriteTx) -> None:
+    """Retain existing feedback while adopting the current query-intent shape."""
+    rows = (
+        (
+            await tx.connection.execute(
+                sa.select(feedback_schema.feedback.c.id, feedback_schema.feedback.c.target)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for row in rows:
+        target = TypeAdapter(dict[str, JsonValue]).validate_python(row["target"])
+        query = target.get("query")
+        if not isinstance(query, dict) or "context" not in query:
+            continue
+        context = TypeAdapter(dict[str, JsonValue]).validate_python(query["context"])
+        snapshot = SnapshotRef.model_validate(context["snapshot_ref"])
+        selections: list[UsedContext] = []
+        for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+            context.get("selected_context", [])
+        ):
+            content = item.get("content")
+            source = None
+            if content:
+                part = ContentSelection.model_validate(content)
+                source = MaterialSelection(material=part.artifact, selections=(part,))
+            selections.append(
+                UsedContext.model_validate(
+                    {
+                        "key": item["key"],
+                        "source": source,
+                        "text": item.get("text"),
+                        "role": item["role"],
+                        "stage": item.get("stage", "retrieval"),
+                        "parent_key": item.get("parent_key") or item["key"],
+                        "contribution": item.get("contribution"),
+                    }
+                )
+            )
+        intent = QueryIntent.model_validate(
+            dict(
+                original_text=context["request_text"],
+                constraints=BoundQueryControls(
+                    controls=QueryControls.model_validate({"filters": context.get("filters")}),
+                    namespace=NamespaceRef(
+                        instance_id=snapshot.instance_id, id=str(context["namespace_id"])
+                    ),
+                ),
+                context=tuple(selections),
+            )
+        )
+        target["query"] = QueryFeedback.model_validate(
+            dict(
+                intent=intent,
+                snapshot=snapshot,
+                group_rank=query.get("group_rank"),
+                basis=query.get("basis"),
+                candidate=query.get("candidate"),
+            )
+        ).model_dump(mode="json")
+        await tx.connection.execute(
+            sa.update(feedback_schema.feedback)
+            .where(feedback_schema.feedback.c.id == row["id"])
+            .values(target=target)
+        )
+
+
 class FeedbackOperations:
     """Record opinions about exact revisions or delivered query results.
 
@@ -175,12 +251,19 @@ class FeedbackOperations:
         scope: NamespaceOperations,
         reader: RecordReader,
         wave: WaveOperations,
+        results: ResultStore,
         clock: Clock,
         *,
         namespace_id: str | None = None,
     ) -> None:
         self.database, self.execution, self.scope = database, execution, scope
-        self.reader, self.wave, self.clock, self.namespace_id = reader, wave, clock, namespace_id
+        self.reader, self.wave, self.results, self.clock, self.namespace_id = (
+            reader,
+            wave,
+            results,
+            clock,
+            namespace_id,
+        )
 
     def _ref(self, view: FeedbackView) -> FeedbackRef:
         return FeedbackRef(
@@ -369,204 +452,84 @@ class FeedbackOperations:
             await call.saved(ref)
             return result
 
-    async def _record_query(
-        self,
-        result: QueryResult,
-        category: Category,
-        *,
-        target: tuple[int, int] | RevisionSelection | None = None,
-        value: Value | None = None,
-        comment: str | None = None,
-        author: str | None = None,
-        namespace: str | None = None,
-    ) -> FeedbackView:
-        """Record an opinion on a query or one of its delivered selections.
-
-        The query context, snapshot and every delivered candidate are checked against
-        the selected namespace. ``target`` must be one of the actual deliveries; omit
-        it for feedback about the query as a whole.
-
-        Returns:
-            The committed feedback and its frozen query context.
-
-        Raises:
-            NousError: ``cognition.namespace_mismatch`` for a query, snapshot, or
-                delivery from another namespace; ``cognition.query_context_mismatch``
-                if the context differs from the snapshot; or
-                ``cognition.selection_mismatch`` if a selection was not delivered or
-                differs from its snapshot candidate.
-        """
+    async def record_query(self, request: QueryFeedbackRequest, call: CallContext) -> FeedbackView:
+        """Record feedback about a saved query or one actually delivered passage."""
         async with self.execution.operation("feedback.record_query"):
-            async with self.database.read() as tx:
-                ns = await self._namespace_in(tx, namespace or result.context.namespace_id)
-            context = result.context
-            if context.namespace_id != ns.id or result.namespace.id != ns.id:
+            result = await self.results.get(request.evidence)
+            if result.operation != "retrieval.query":
                 raise NousError(
-                    "cognition.namespace_mismatch", "Query belongs to another namespace"
+                    "cognition.invalid_evidence", "Result is not a query evidence delivery"
                 )
-            snapshot = await self.wave.describe(context.snapshot_ref)
-            if (
-                not isinstance(snapshot.owner, CognitionOwner)
-                or snapshot.owner.namespace_id != ns.id
-            ):
-                raise NousError(
-                    "cognition.namespace_mismatch", "Snapshot belongs to another namespace"
+            artifact = await self.results.resolve_output(
+                ResultOutputRef(result=result.ref, output="evidence")
+            )
+            delivery = EvidenceDelivery.model_validate_json(
+                await self.reader.artifacts.read_text(artifact)
+            )
+            namespace = await self.scope.resolve_for(
+                request.namespace, delivery.intent.constraints.namespace
+            )
+            passage = None
+            group = None
+            selection = None
+            revision = None
+            if request.passage_key is not None:
+                matches = [item for item in delivery.passages if item.key == request.passage_key]
+                if len(matches) != 1:
+                    raise NousError(
+                        "cognition.selection_mismatch", "Evidence key is not in this delivery"
+                    )
+                passage = matches[0]
+                group = next(
+                    (item for item in delivery.materials if passage.key in item.passage_keys), None
                 )
-            if (
-                context.captured_generation != snapshot.captured_generation
-                or context.profile_signature != snapshot.profile_signature
-                or context.space_signature != snapshot.space_signature
-            ):
-                raise NousError(
-                    "cognition.query_context_mismatch", "Query context differs from snapshot"
-                )
-            selected = None
-            selected_group = None
-            if isinstance(target, tuple):
-                group_index, passage_index = target
-                if group_index < 0 or passage_index < 0:
-                    raise NousError("input.invalid_feedback", "Passage indexes must be nonnegative")
+                selected = passage.selections
+                if isinstance(passage.material, RecordRevisionRef):
+                    revision = passage.material
+                    selection = RevisionSelection(revision=revision, selections=selected)
+                else:
+                    selection = MaterialSelection(material=passage.material, selections=selected)
+            async with AsyncExitStack() as stack:
                 try:
-                    selected_group = result.groups[group_index]
-                    selected = selected_group.passages[passage_index]
-                except IndexError as error:
-                    raise NousError(
-                        "input.invalid_feedback", "Passage index is out of range"
-                    ) from error
-            elif target is not None:
-                found = [
-                    (group, passage)
-                    for group in result.groups
-                    for passage in group.passages
-                    if passage.selection == target
-                ]
-                if len(found) != 1:
-                    raise NousError(
-                        "cognition.selection_mismatch", "Selection is not a unique delivery"
+                    await stack.enter_async_context(
+                        self.wave.snapshots.hold_reference(delivery.snapshot)
                     )
-                selected_group, selected = found[0]
-            async with self.wave.snapshots.hold_reference(snapshot.ref):
-                keys = list(
-                    dict.fromkeys(
-                        [group.basis.candidate.key for group in result.groups]
-                        + [
-                            passage.delivery.candidate.key
-                            for group in result.groups
-                            for passage in group.passages
-                        ]
-                    )
-                )
-                descriptors = await self.wave.describe_candidates(snapshot.ref, keys)
-                candidates = {item.ref.key: item for item in descriptors}
-                groups = await self.wave.describe_groups(
-                    snapshot.ref, [group.group_key for group in result.groups]
-                )
-                for group in result.groups:
-                    group_descriptor = groups.get(group.group_key)
-                    if (
-                        group_descriptor is None
-                        or CognitiveGroupContext.model_validate(group_descriptor.context)
-                        != group.context
-                        or group_descriptor.title != group.title
-                        or group.basis.candidate.snapshot != snapshot.ref.identifier
-                        or candidates[group.basis.candidate.key].group_key != group.group_key
-                    ):
-                        raise NousError(
-                            "cognition.selection_mismatch", "Group differs from snapshot"
-                        )
-                    for passage in group.passages:
-                        delivery = passage.delivery
-                        candidate = candidates[delivery.candidate.key]
-                        if (
-                            delivery.candidate.snapshot != snapshot.ref.identifier
-                            or candidate.group_key != group.group_key
-                            or passage.selection.revision != group.context.revision_ref
-                            or passage.selection.selections != delivery.selections
-                            or (
-                                delivery.evidence is not None
-                                and delivery.evidence.candidate != delivery.candidate
-                            )
-                        ):
-                            raise NousError(
-                                "cognition.selection_mismatch", "Passage differs from snapshot"
-                            )
-                        ranges = await self.reader.artifacts.normalize_selections(
-                            (candidate.content, *passage.selection.selections)
-                        )
-                        base, *parts = ranges
-                        if any(
-                            part.artifact != base.artifact
-                            or part.selection.start_byte is None
-                            or part.selection.end_byte is None
-                            or base.selection.start_byte is None
-                            or base.selection.end_byte is None
-                            or part.selection.start_byte < base.selection.start_byte
-                            or part.selection.end_byte > base.selection.end_byte
-                            for part in parts
-                        ):
-                            raise NousError(
-                                "cognition.selection_mismatch", "Passage exceeds its candidate"
-                            )
-                        actual = await self.reader.artifacts.read_selections(parts)
-                        if any(
-                            value.text != fragment.text
-                            for value, fragment in zip(actual, delivery.fragments, strict=True)
-                        ):
-                            raise NousError(
-                                "cognition.selection_mismatch",
-                                "Passage text differs from its selection",
-                            )
+                    snapshot_available = True
+                except NousError as error:
+                    if error.code != "wave.snapshot_not_found":
+                        raise
+                    snapshot_available = False
                 async with self.database.write() as tx:
+                    ns = await self._namespace_in(tx, namespace.id)
                     saved = await self._insert_in(
                         tx,
                         ns.id,
                         FeedbackTarget(
                             kind="query",
+                            revision=revision,
+                            selection=selection,
                             query=QueryFeedback(
-                                context=result.context,
-                                operation_context=result.operation_context,
-                                group_rank=selected_group.rank if selected_group else None,
-                                basis=selected_group.basis if selected_group else None,
-                                candidate=selected.delivery.candidate if selected else None,
+                                intent=delivery.intent,
+                                snapshot=delivery.snapshot,
+                                snapshot_available=snapshot_available,
+                                evidence=result.ref,
+                                passage_key=request.passage_key,
+                                group_rank=group.rank if group else None,
+                                basis=group.basis if group else None,
+                                candidate=passage.candidate if passage else None,
                             ),
-                            revision=selected.selection.revision if selected else None,
-                            selection=selected.selection if selected else None,
                         ),
-                        category,
-                        value,
-                        comment,
-                        author,
+                        request.category,
+                        request.value,
+                        request.comment,
+                        request.author,
                     )
-                    await self.wave.retain_in(
-                        tx, snapshot.ref, owner_kind="feedback", owner_id=saved.id
-                    )
-            record_completed(self._ref(saved))
+                    if snapshot_available:
+                        await self.wave.retain_in(
+                            tx, delivery.snapshot, owner_kind="feedback", owner_id=saved.id
+                        )
+            await call.saved(self._ref(saved))
             return saved
-
-    async def record_query(self, request: QueryFeedbackRequest, call: CallContext) -> FeedbackView:
-        result = request.result
-        if isinstance(result, ExternalInput):
-            selected = await call.inputs.read_text(
-                result.key, result.selection, call.settings.values.content.text_read_max_bytes
-            )
-            result = QueryResult.model_validate_json(selected.data)
-        namespace = await self.scope.resolve_for(
-            request.namespace,
-            NamespaceRef(
-                instance_id=result.context.snapshot_ref.instance_id, id=result.context.namespace_id
-            ),
-        )
-        saved = await self._record_query(
-            result,
-            request.category,
-            target=request.target,
-            value=request.value,
-            comment=request.comment,
-            author=request.author,
-            namespace=namespace.id,
-        )
-        await call.saved(self._ref(saved))
-        return saved
 
     async def read(self, request: ReadFeedback, call: CallContext) -> FeedbackView:
         """Read feedback by ID or identifier, including its resolution if present."""

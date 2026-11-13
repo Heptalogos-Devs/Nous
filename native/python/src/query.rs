@@ -6,11 +6,11 @@ use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntyped
 use serde_json::Value;
 use std::collections::BTreeSet;
 #[pyclass(frozen, module = "nous_native._core")]
-pub struct CandidatePool {
-    inner: nous_retrieval::query::CandidatePool,
+pub struct CandidateSet {
+    inner: nous_retrieval::query::CandidateSet,
 }
 #[pymethods]
-impl CandidatePool {
+impl CandidateSet {
     #[new]
     fn new(value_json: &str) -> PyResult<Self> {
         Ok(Self {
@@ -113,12 +113,12 @@ impl NativeSnapshot {
     }
     #[getter]
     pub(crate) fn capabilities(&self) -> Vec<&'static str> {
-        let mut result = vec!["lexical"];
+        let mut result = vec!["text"];
         if self.inner.inner.ann.is_some() {
-            result.extend(["dense", "hybrid"])
+            result.push("vectors")
         }
         if self.inner.inner.assets.is_some() {
-            result.extend(["tagmemo", "rivermemo", "dtsc", "thinking"])
+            result.extend(["vcp", "thinking"])
         }
         result
     }
@@ -146,87 +146,82 @@ impl NativeSnapshot {
                 .map(|inner| QueryObservation { inner })
         })
     }
-    #[pyo3(signature=(*,mode,text="",vector=None,allowed_rows=None,options_json="{}",ghost_vectors=None,candidate_pool=None,cancel=None))]
+    #[pyo3(signature=(*,name,program_json,text="",raw_vector=None,contextual_vector=None,allowed_rows=None,options_json="{}",ghost_vectors=None,candidate_set=None,cancel=None))]
     #[allow(clippy::too_many_arguments)]
-    fn search(
+    fn execute_program(
         &self,
         py: Python<'_>,
-        mode: &str,
+        name: &str,
+        program_json: &str,
         text: &str,
-        vector: Option<PyReadonlyArray1<'_, f32>>,
+        raw_vector: Option<PyReadonlyArray1<'_, f32>>,
+        contextual_vector: Option<PyReadonlyArray1<'_, f32>>,
         allowed_rows: Option<PyReadonlyArray1<'_, u64>>,
         options_json: &str,
         ghost_vectors: Option<PyReadonlyArray2<'_, f32>>,
-        candidate_pool: Option<PyRef<'_, CandidatePool>>,
+        candidate_set: Option<PyRef<'_, CandidateSet>>,
         cancel: Option<PyRef<'_, CancellationToken>>,
     ) -> PyResult<NativeQueryResult> {
-        let candidate_pool = candidate_pool.as_deref();
-        let vector = array(vector)?;
+        let raw = array(raw_vector)?;
+        let contextual = array(contextual_vector)?;
         let allowed = allowed(allowed_rows, self.inner.inner.candidates.keys.len())?;
-        let o = options(options_json)?;
+        let options = options(options_json)?;
         let ghosts = ghosts(ghost_vectors)?;
         let token = cancel.map(|v| v.clone()).unwrap_or_default();
+        let candidate_set = candidate_set.as_deref();
         self.execute(py, &token, || {
             self.inner
-                .ranked(
-                    mode,
+                .execute_program(
+                    name,
+                    program_json,
                     text,
-                    vector.as_deref(),
+                    raw.as_deref(),
+                    contextual.as_deref(),
                     &allowed,
-                    o,
+                    options,
                     ghosts,
-                    None,
-                    candidate_pool.as_ref().map(|p| &p.inner),
+                    candidate_set.map(|pool| &pool.inner),
                     &token.inner,
                 )
                 .map(|inner| NativeQueryResult { inner })
         })
     }
-    #[pyo3(signature=(observation,*,allowed_rows=None,options_json="{}",cancel=None))]
-    fn recall(
+    #[pyo3(signature=(*,name,program_json,expression_json,text="",original_vector=None,raw_vectors=None,contextual_vectors=None,allowed_rows=None,options_json="{}",ghost_vectors=None,cancel=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn execute_expression(
         &self,
         py: Python<'_>,
-        observation: PyRef<'_, QueryObservation>,
+        name: &str,
+        program_json: &str,
+        expression_json: &str,
+        text: &str,
+        original_vector: Option<PyReadonlyArray1<'_, f32>>,
+        raw_vectors: Option<PyReadonlyArray2<'_, f32>>,
+        contextual_vectors: Option<PyReadonlyArray2<'_, f32>>,
         allowed_rows: Option<PyReadonlyArray1<'_, u64>>,
         options_json: &str,
-        cancel: Option<PyRef<'_, CancellationToken>>,
-    ) -> PyResult<CandidatePool> {
-        let allowed = allowed(allowed_rows, self.inner.inner.candidates.keys.len())?;
-        let o = options(options_json)?;
-        let token = cancel.map(|v| v.clone()).unwrap_or_default();
-        let observation = &*observation;
-        self.execute(py, &token, || {
-            self.inner
-                .recall(&observation.inner, &allowed, &o, &token.inner)
-                .map(|inner| CandidatePool { inner })
-        })
-    }
-    #[pyo3(signature=(observation,candidate_pool,*,allowed_rows=None,options_json="{}",cancel=None))]
-    fn readout(
-        &self,
-        py: Python<'_>,
-        observation: PyRef<'_, QueryObservation>,
-        candidate_pool: PyRef<'_, CandidatePool>,
-        allowed_rows: Option<PyReadonlyArray1<'_, u64>>,
-        options_json: &str,
+        ghost_vectors: Option<PyReadonlyArray2<'_, f32>>,
         cancel: Option<PyRef<'_, CancellationToken>>,
     ) -> PyResult<NativeQueryResult> {
+        let original = array(original_vector)?;
+        let raw = ghosts(raw_vectors)?;
+        let contextual = ghosts(contextual_vectors)?;
         let allowed = allowed(allowed_rows, self.inner.inner.candidates.keys.len())?;
-        let o = options(options_json)?;
-        let token = cancel.map(|v| v.clone()).unwrap_or_default();
-        let observation = &*observation;
-        let candidate_pool = &*candidate_pool;
+        let ghosts = ghosts(ghost_vectors)?;
+        let token = cancel.map(|value| value.clone()).unwrap_or_default();
         self.execute(py, &token, || {
             self.inner
-                .ranked(
-                    "rivermemo",
-                    &observation.inner.text,
-                    None,
+                .execute_expression(
+                    name,
+                    program_json,
+                    expression_json,
+                    text,
+                    original.as_deref(),
+                    &raw,
+                    &contextual,
                     &allowed,
-                    o,
-                    vec![],
-                    Some(&observation.inner),
-                    Some(&candidate_pool.inner),
+                    options_json,
+                    ghosts,
                     &token.inner,
                 )
                 .map(|inner| NativeQueryResult { inner })

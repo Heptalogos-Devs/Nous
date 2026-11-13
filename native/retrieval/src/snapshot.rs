@@ -182,7 +182,6 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
         None
     };
     let lexical = RetrievalIndex::open(path.join("lexical"))?;
-    lexical.close()?;
     let timings: Value = serde_json::from_slice(&std::fs::read(path.join("timings.json"))?)?;
     let geometry=math.as_ref().map(|m|json!({"algorithm_version":m.geometry["algorithm_version"],"signature":m.geometry["signature"],"tag_count":m.geometry["tag_count"],"computed_count":m.geometry["computed_count"]}));
     let dimension = input.candidates.vectors.as_ref().map(|v| v.cols);

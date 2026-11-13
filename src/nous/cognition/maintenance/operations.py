@@ -94,7 +94,6 @@ class MaintenanceOperations:
                 namespace=commit.namespace.ref,
                 annotation=annotate,
                 refresh=refresh,
-                mode=policy.mode,
                 require_recall=policy.annotation == "default",
                 execution=policy.execution,
             ),
@@ -166,9 +165,7 @@ class MaintenanceOperations:
                 await call.events.emit(Notice(issue=issue))
         if request.refresh:
             try:
-                result = await self.retrieval.refresh(
-                    target.record_ref.namespace_id, mode=request.mode
-                )
+                result = await self.retrieval.refresh(target.record_ref.namespace_id)
                 if result.captured_generation is None:
                     raise NousError(
                         "cognition.invalid_snapshot", "Published snapshot has no generation"

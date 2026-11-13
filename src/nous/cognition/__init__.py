@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .contracts import NamespaceRef as NamespaceRef
     from .contracts import RevisionSelection as RevisionSelection
-    from .retrieval.contracts import CognitiveQuery as CognitiveQuery
+    from .retrieval.contracts import QueryRequest as QueryRequest
     from .writing.contracts import AfterWrite as AfterWrite
     from .writing.contracts import RecordOutcome as RecordOutcome
     from .writing.contracts import SourceChanges as SourceChanges
     from .writing.contracts import SourceChoice as SourceChoice
 __all__ = [
     "AfterWrite",
-    "CognitiveQuery",
+    "QueryRequest",
     "NamespaceRef",
     "RecordOutcome",
     "RevisionSelection",
@@ -26,10 +26,10 @@ def __getattr__(name: str) -> object:
         from . import contracts
 
         return getattr(contracts, name)
-    if name == "CognitiveQuery":
-        from .retrieval.contracts import CognitiveQuery
+    if name == "QueryRequest":
+        from .retrieval.contracts import QueryRequest
 
-        return CognitiveQuery
+        return QueryRequest
     if name in {"AfterWrite", "RecordOutcome", "SourceChanges", "SourceChoice"}:
         from .writing import contracts
 

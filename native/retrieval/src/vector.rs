@@ -10,6 +10,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::Path,
+    sync::RwLock,
 };
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
@@ -92,6 +93,7 @@ struct Manifest {
 pub struct VectorGeneration {
     frozen: FrozenMetadata,
     candidates: Index,
+    candidate_effort: RwLock<usize>,
     tags: Index,
 }
 
@@ -104,9 +106,11 @@ impl VectorGeneration {
         let frozen = snapshot_metadata(&snapshot)?;
         let candidates = build_index(snapshot.identity.dimension, &snapshot.candidates, cancelled)?;
         let tags = build_index(snapshot.identity.dimension, &snapshot.tags, cancelled)?;
+        let candidate_effort = RwLock::new(candidates.expansion_search());
         Ok(Self {
             frozen,
             candidates,
+            candidate_effort,
             tags,
         })
     }
@@ -142,7 +146,34 @@ impl VectorGeneration {
         vector: &[f32],
         limit: usize,
         allowed: Option<&BTreeSet<i64>>,
+        search_effort: usize,
     ) -> Result<Vec<VectorMatch>> {
+        ensure!(
+            (1..=1_000_000).contains(&search_effort),
+            "Invalid ANN search effort"
+        );
+        let current = self
+            .candidate_effort
+            .read()
+            .map_err(|_| anyhow::anyhow!("ANN search effort lock poisoned"))?;
+        if *current == search_effort {
+            return self.search_lane(
+                &self.candidates,
+                &self.frozen.candidates,
+                vector,
+                limit,
+                allowed,
+            );
+        }
+        drop(current);
+        let mut current = self
+            .candidate_effort
+            .write()
+            .map_err(|_| anyhow::anyhow!("ANN search effort lock poisoned"))?;
+        if *current != search_effort {
+            self.candidates.change_expansion_search(search_effort);
+            *current = search_effort;
+        }
         self.search_lane(
             &self.candidates,
             &self.frozen.candidates,

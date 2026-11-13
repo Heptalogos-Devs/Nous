@@ -15,7 +15,7 @@ from nous.cognition.maintenance.contracts import (
     MaintenanceNotStarted,
     MaintenanceStarted,
 )
-from nous.cognition.retrieval.contracts import CognitiveQuery, RefreshRetrieval
+from nous.cognition.retrieval.contracts import QueryRequest, RefreshRetrieval
 from nous.cognition.retrieval.operations import QUERY, REFRESH
 from nous.cognition.writing.contracts import AfterWrite, CreateJournal, ListRecords, ReadRecord
 from nous.cognition.writing.operations import CREATE_JOURNAL, LIST_RECORDS, READ_RECORD
@@ -32,9 +32,7 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
     async def scenario() -> None:
         instance = tmp_path / "instance"
         await initialize_instance(instance, environment={})
-        background = AfterWrite(
-            annotation="skip", refresh="run", mode="lexical", execution="background"
-        )
+        background = AfterWrite(annotation="skip", refresh="run", execution="background")
         async with open_instance(instance, environment={}) as runtime:
             with pytest.raises(NousError) as unavailable:
                 await runtime.app.call(
@@ -47,17 +45,16 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
                 CREATE_JOURNAL,
                 CreateJournal(
                     body=InlineText(text="saved despite annotation failure"),
-                    after=AfterWrite(annotation="run", refresh="run", mode="lexical"),
+                    after=AfterWrite(annotation="run", refresh="run"),
                 ),
             )
             assert isinstance(saved.maintenance, MaintenanceCompleted)
             assert saved.maintenance.annotation.state == "failed"
             assert saved.maintenance.refresh.state == "published"
-            found = await runtime.app.call(
-                QUERY, CognitiveQuery(text="annotation failure", mode="lexical")
-            )
+            found = await runtime.app.call(QUERY, QueryRequest(text="annotation failure"))
             assert any(
-                group.context.revision_ref == saved.commit.revision_ref for group in found.groups
+                group.material.ref == saved.commit.revision_ref
+                for group in found.evidence.materials
             )
 
         entered, release = asyncio.Event(), asyncio.Event()
@@ -118,7 +115,7 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
             assert (
                 await runtime.app.call(READ_RECORD, ReadRecord(target=pending.commit.revision_ref))
             ).body == "saved before interruption"
-            refreshed = await runtime.app.call(REFRESH, RefreshRetrieval(mode="lexical"))
+            refreshed = await runtime.app.call(REFRESH, RefreshRetrieval())
             assert refreshed.current
 
         log_entries = [
@@ -140,11 +137,10 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
             assert (
                 await runtime.app.call(READ_RECORD, ReadRecord(target=pending.commit.revision_ref))
             ).body == "saved before interruption"
-            found = await runtime.app.call(
-                QUERY, CognitiveQuery(text="saved before interruption", mode="lexical")
-            )
+            found = await runtime.app.call(QUERY, QueryRequest(text="saved before interruption"))
             assert any(
-                group.context.revision_ref == pending.commit.revision_ref for group in found.groups
+                group.material.ref == pending.commit.revision_ref
+                for group in found.evidence.materials
             )
             database_path = (
                 runtime.paths.data / runtime.configuration.snapshot.values.database.filename

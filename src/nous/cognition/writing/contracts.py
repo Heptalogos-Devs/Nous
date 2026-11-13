@@ -30,6 +30,8 @@ from ..contracts import (
     TitleSource,
 )
 from ..maintenance.contracts import MaintenanceOutcome
+from ..material_contracts import MaterialSelection, MaterialSource
+from ..work.refs import WorkRevisionRef
 
 WritingIntent = Literal["new", "edit", "rewrite", "reflection"]
 
@@ -96,16 +98,7 @@ class AfterWrite(CognitiveValue):
 
     annotation: Literal["default", "skip", "run"] = "default"
     refresh: Literal["defer", "run"] = "defer"
-    mode: Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] | None = (
-        None
-    )
     execution: Literal["wait", "background"] = "wait"
-
-    @model_validator(mode="after")
-    def mode_requires_refresh(self) -> AfterWrite:
-        if self.mode is not None and self.refresh != "run":
-            raise ValueError("A retrieval mode requires refresh=run")
-        return self
 
 
 DEFAULT_AFTER_WRITE = AfterWrite()
@@ -117,6 +110,8 @@ class SourceChoice(CognitiveValue):
         | RecordRef
         | RecordRevisionRef
         | RevisionSelection
+        | MaterialSelection
+        | WorkRevisionRef
         | ContentSelection
         | ResultOutputRef
         | SourceTarget
@@ -258,6 +253,7 @@ class WritingProductContext(CognitiveValue):
     namespace_ref: NamespaceRef
     intent: WritingIntent
     selected_sources: tuple[SourceBinding, ...]
+    material_sources: tuple[MaterialSource, ...] = ()
     base_revision: RecordRevisionRef | None = None
     citation_context: CitationContext = Field(default_factory=CitationContext)
     selected_edit_ranges: tuple[ContentSelection, ...] = ()
@@ -357,6 +353,10 @@ type WriteDraft = Annotated[
 
 class DraftFromResult(CognitiveValue):
     result: ResultRef | str
+    output: str | None = None
+    namespace: NamespaceSelector = None
+    sources: tuple[SourceBinding, ...] | None = None
+    title: str | None = None
 
 
 class ReadDraft(CognitiveValue):

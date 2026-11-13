@@ -72,7 +72,7 @@ class SourceResolver:
 
 RevisionRef 和 RevisionSelection 表示正式依赖；裸 ContentSelection 只表达内容，不能作为 current_basis。更新依据后通过新 revision 完成复核，精确旧版仍可阅读。
 
-来源范围和依赖范围不能无意扩大：不连续片段不转为 min/max 的连续区间；表示的原始页/时段也不能替换成整份媒体。字段在 input planning → actual_inputs → DraftContext → adoption → CorpusCapture → QueryResult 的每一步都有原样或明确变换后的消费者。
+来源范围和依赖范围不能无意扩大：不连续片段不转为 min/max 的连续区间；表示的原始页/时段也不能替换成整份媒体。字段在输入规划、实际输入、草稿、采用、材料捕获和证据交付之间保留原样或明确的坐标变换。
 
 ## 来源独立性
 

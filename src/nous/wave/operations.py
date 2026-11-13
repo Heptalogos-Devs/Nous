@@ -7,18 +7,28 @@ import json
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from time import perf_counter
+from typing import TYPE_CHECKING
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
-from nous.application.contracts import CallContext, define_operation
+from nous.application.contracts import CallContext, EventDeliveryError, define_operation
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
-from nous.common.operations import record_completed
+from nous.common.operations import OperationIssue, record_completed, report_outcome
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ContentSelection, ExternalInput
 from nous.content.results import ResultStore
+from nous.content.selections import ordered_selections
 from nous.media.preparation import MediaPreparer
 from nous.models.embeddings import resolved_space
+from nous.models.evaluation import EvaluationOperations
+from nous.models.evaluation_contracts import (
+    CandidateEvaluation,
+    EvaluationCandidate,
+    EvaluationOutcome,
+    EvaluationTask,
+    RankRequest,
+)
 from nous.models.vector_contracts import VectorRef
 from nous.observability.instrumentation import get_logger
 from nous.runtime.execution import ExecutionManager
@@ -30,13 +40,15 @@ from .contracts import (
     BuiltProduct,
     CandidateDescriptor,
     CandidateFilter,
-    CandidatePool,
     CandidateRef,
+    CandidateSet,
     ContextFragment,
     CorpusView,
+    DeliveryBudget,
     GroupDescriptor,
     ResolvedBuildProfile,
     ReusableDocument,
+    ScoreValue,
     SnapshotDescriptor,
     SnapshotRef,
     ThinkingStage,
@@ -54,10 +66,22 @@ from .contracts import (
     WaveSegmentResult,
     WaveSnapshotRequest,
 )
-from .delivery import WaveDelivery
+from .delivery import (
+    LocatedGroup,
+    LocatedHit,
+    LocatedResult,
+    PassageProposal,
+    WaveDelivery,
+    select_passages,
+)
+from .program import CompiledProgram, EvaluationParameters, native_segment
 from .query import WaveQueries, require_bound_query
+from .reading import describe_neighborhood, neighborhood_rows, read_candidate
 from .serialization import encode_json
 from .snapshots import WaveSnapshots, build_profile, view_profile
+
+if TYPE_CHECKING:
+    import nous_native
 
 WAVE_BUILD = define_operation(
     "wave.build",
@@ -116,6 +140,7 @@ class WaveOperations:
         results: ResultStore,
         embedding: EmbeddingOperations,
         preparer: MediaPreparer,
+        evaluator: EvaluationOperations | None = None,
     ) -> None:
         self.execution, self.database = execution, database
         self.snapshots = WaveSnapshots(
@@ -123,6 +148,7 @@ class WaveOperations:
         )
         self.queries = WaveQueries(execution, artifacts, embedding, time, instance_id)
         self.delivery = WaveDelivery(artifacts, instance_id)
+        self.evaluator = evaluator
 
     def close(self) -> None:
         self.snapshots.close()
@@ -148,6 +174,21 @@ class WaveOperations:
         """Read frozen ownership and identity without loading candidates or Native."""
         async with self.execution.operation("wave.describe"):
             return await self.snapshots.describe(ref)
+
+    async def group_candidates(
+        self, ref: str | SnapshotRef
+    ) -> dict[str, tuple[GroupDescriptor, tuple[str, ...]]]:
+        """Read group identities and their candidate keys from one frozen mapping."""
+        async with self.execution.operation("wave.group_candidates"):
+            async with self.snapshots.pin(ref) as row:
+                mapping = row["mapping"]
+                result: dict[str, list[str]] = {key: [] for key in mapping["groups"]}
+                for candidate in mapping["candidates"]:
+                    result[candidate["group_key"]].append(candidate["key"])
+                return {
+                    key: (GroupDescriptor.model_validate(mapping["groups"][key]), tuple(keys))
+                    for key, keys in result.items()
+                }
 
     async def describe_candidates(
         self, ref: str | SnapshotRef, keys: Sequence[str]
@@ -303,7 +344,7 @@ class WaveOperations:
         values = request.model_dump(mode="python")
         adapters = {
             "vector": TypeAdapter(VectorRef),
-            "candidate_pool": TypeAdapter(CandidatePool),
+            "candidate_set": TypeAdapter(CandidateSet),
             "context": TypeAdapter(tuple[ContextFragment, ...]),
             "candidate_filter": TypeAdapter(CandidateFilter),
             "thinking_stages": TypeAdapter(tuple[ThinkingStage, ...]),
@@ -315,7 +356,7 @@ class WaveOperations:
                     value.key, value.selection, call.settings.values.content.text_read_max_bytes
                 )
                 values[field] = adapter.validate_json(selected.data)
-        return await self.query(WaveQuery.model_validate(values))
+        return await self.query(WaveQuery.model_validate(values), call=call)
 
     async def handle_read(self, request: WaveRead, call: CallContext) -> WaveReadResult:
         return await self.read(request.snapshot, request.candidate, sources=request.sources)
@@ -336,7 +377,9 @@ class WaveOperations:
             fragments = TypeAdapter(tuple[ContextFragment, ...]).validate_json(selected.data)
         return await self.segment(request.snapshot, fragments)
 
-    async def query(self, request: WaveQuery) -> WaveSearchResult:
+    async def query(
+        self, request: WaveQuery, *, call: CallContext | None = None
+    ) -> WaveSearchResult:
         """Query the request's resolved snapshot and materialize source-aware hits.
 
         Returns:
@@ -349,45 +392,365 @@ class WaveOperations:
         require_bound_query(request)
         async with self.execution.operation("wave.query"):
             async with self.snapshots.borrow(request.snapshot) as (row, snapshot, token):
-                plan = await self.queries.prepare(request, row)
-                result = await self.snapshots.compute(
-                    lambda: snapshot.search(
-                        mode=plan.mode,
+                plan = await self.queries.prepare(request, row, snapshot.capabilities)
+                locator, native_plan = native_segment(plan.program)
+
+                def compute() -> nous_native.NativeQueryResult:
+                    if plan.expression is None:
+                        return snapshot.execute_program(
+                            name=plan.program.name,
+                            program_json=encode_json(native_plan),
+                            text=plan.text,
+                            raw_vector=plan.raw_vector,
+                            contextual_vector=plan.contextual_vector,
+                            ghost_vectors=plan.ghosts,
+                            allowed_rows=plan.allowed,
+                            options_json=encode_json(plan.options),
+                            candidate_set=plan.candidate_set,
+                            cancel=token,
+                        )
+                    return snapshot.execute_expression(
+                        name=plan.program.name,
+                        program_json=encode_json(native_plan),
+                        expression_json=encode_json(plan.expression),
                         text=plan.text,
-                        vector=plan.vector,
+                        original_vector=plan.raw_vector,
+                        raw_vectors=plan.branch_raw_vectors,
+                        contextual_vectors=plan.branch_contextual_vectors,
                         ghost_vectors=plan.ghosts,
                         allowed_rows=plan.allowed,
                         options_json=encode_json(plan.options),
-                        candidate_pool=plan.pool,
                         cancel=token,
+                    )
+
+                result = await self.snapshots.compute(compute, token)
+                output = await self.delivery.locate(
+                    request, row, result, plan.summary, plan.program_run
+                )
+            output = await self._finish_query(plan.program, locator, request, output, call)
+            get_logger(__name__).info(
+                "wave.query.completed",
+                extra={
+                    "snapshot": row["identifier"],
+                    "program": plan.program.name,
+                    "returned": len(output.groups or output.hits),
+                    "lanes": output.used_lanes,
+                },
+            )
+            return copy.deepcopy(output)
+
+    async def _evaluate_passages(
+        self,
+        result: LocatedResult,
+        request: WaveQuery,
+        parameters: EvaluationParameters,
+        call: CallContext | None,
+    ) -> LocatedResult:
+        passages = (
+            [part for group in result.groups for part in group.passages]
+            if result.groups
+            else [hit.passage for hit in result.hits]
+        )
+        if not passages:
+            return result
+        try:
+            if self.evaluator is None or call is None:
+                raise NousError(
+                    "model.capability_missing",
+                    "Passage evaluation requires an application call and evaluator",
+                )
+            evaluation_context = result.result.context_summary.get("evaluation_context", [])
+            selected_context = (
+                "\n\n".join(item for item in evaluation_context if isinstance(item, str))
+                if isinstance(evaluation_context, list)
+                else ""
+            )
+            settings = call.settings.values.evaluation
+
+            def cost(part: PassageProposal) -> int:
+                size = len(selected_context)
+                for content in (*part.fragments, *part.support_context):
+                    view = result.views[content.artifact.id]
+                    start, end = view.selection_bounds(content)
+                    size += len(
+                        view.raw[start - view.byte_offset : end - view.byte_offset].decode("utf-8")
+                    )
+                return size
+
+            def relevance(item: tuple[int, PassageProposal]) -> tuple[float, int]:
+                index, part = item
+                score = next(
+                    (value.value for value in part.scores if value.name == "local_relevance"), 0.0
+                )
+                return -score, index
+
+            chosen: list[tuple[int, PassageProposal]] = []
+            used = 0
+            for index, part in sorted(enumerate(passages), key=relevance):
+                size = cost(part)
+                if len(chosen) >= settings.max_candidates or used + size > settings.max_characters:
+                    continue
+                chosen.append((index, part))
+                used += size
+            if not chosen:
+                raise NousError(
+                    "model.input_limit", "No localized passage fits the evaluator budget"
+                )
+            ordered = [
+                ordered_selections((*part.fragments, *part.support_context)) for _, part in chosen
+            ]
+            references = tuple(content for selections in ordered for content in selections)
+            readings = iter(await self.delivery.artifacts.read_selections(references))
+            inputs: list[EvaluationCandidate] = []
+            for (index, _part), selections in zip(chosen, ordered, strict=True):
+                pieces: list[str] = []
+                previous: ContentSelection | None = None
+                for content in selections:
+                    if previous is not None and (
+                        previous.artifact != content.artifact
+                        or previous.selection.end_byte != content.selection.start_byte
+                    ):
+                        pieces.append("…")
+                    pieces.append(next(readings).text)
+                    previous = content
+                inputs.append(
+                    EvaluationCandidate(
+                        key=f"p{index}", text="".join(pieces), context=selected_context or None
+                    )
+                )
+            candidates = tuple(inputs)
+            task = parameters.task or (
+                "rank-passages" if parameters.method == "rank" else "evaluate-passages"
+            )
+            if parameters.method == "rank":
+                outcome = await self.evaluator.rank(
+                    RankRequest(question=request.text, candidates=candidates, task=task), call
+                )
+            else:
+                outcome = await self.evaluator.evaluate(
+                    EvaluationTask(
+                        question=request.text,
+                        candidates=candidates,
+                        rubric=parameters.rubric,
+                        purpose=parameters.purpose,
+                        task=task,
+                        scale=parameters.scale,
                     ),
-                    token,
+                    call,
                 )
-                output = await self.delivery.materialize(request, row, result, plan.summary)
-                get_logger(__name__).info(
-                    "wave.query.completed",
-                    extra={
-                        "snapshot": row["identifier"],
-                        "mode": plan.mode,
-                        "returned": len(output.groups or output.hits),
-                        "lanes": output.used_lanes,
-                    },
+            observed = [item.key for item in outcome.items]
+            if len(observed) != len(set(observed)) or not set(observed).issubset(
+                {item.key for item in candidates}
+            ):
+                raise NousError(
+                    "model.invalid_output", "Evaluation returned unknown or repeated passage keys"
                 )
-                return copy.deepcopy(output)
+            assessments: dict[str, tuple[int | None, dict[str, JsonValue]]] = {}
+            if isinstance(outcome, EvaluationOutcome) and (
+                not parameters.scale.labels or parameters.category_order
+            ):
+
+                def evaluation_order(item: CandidateEvaluation) -> float:
+                    if isinstance(item.value, str):
+                        return float(parameters.category_order.index(item.value))
+                    return -item.value if parameters.numeric_order == "higher" else item.value
+
+                previous_value: float | None = None
+                rank = 0
+                for index, item in enumerate(sorted(outcome.items, key=evaluation_order), start=1):
+                    value = evaluation_order(item)
+                    if previous_value is None or value != previous_value:
+                        rank = index
+                        previous_value = value
+                    assessments[item.key] = (rank, item.model_dump(mode="json"))
+            elif isinstance(outcome, EvaluationOutcome):
+                assessments = {
+                    item.key: (None, item.model_dump(mode="json")) for item in outcome.items
+                }
+            else:
+                assessments = {
+                    item.key: (rank, item.model_dump(mode="json"))
+                    for rank, item in enumerate(outcome.items, start=1)
+                }
+
+            def add_assessment(index: int, passage: PassageProposal) -> PassageProposal:
+                assessed = assessments.get(f"p{index}")
+                if assessed is None:
+                    return passage
+                rank, assessment = assessed
+                numeric = assessment.get("score", assessment.get("value"))
+                scores = passage.scores
+                if isinstance(numeric, int | float) and not isinstance(numeric, bool):
+                    scores = (
+                        *scores,
+                        ScoreValue(
+                            name="model_relevance",
+                            value=float(numeric),
+                            scale=str(assessment.get("scale", "model")),
+                            producer="passages.evaluate",
+                        ),
+                    )
+                if rank is not None:
+                    scores = (
+                        *scores,
+                        ScoreValue(
+                            name="model_rank",
+                            value=float(rank),
+                            scale="rank",
+                            producer="passages.evaluate",
+                            based_on=("assessment",),
+                        ),
+                    )
+                return passage.model_copy(update={"assessment": assessment, "scores": scores})
+
+            index = 0
+            groups: list[LocatedGroup] = []
+            for group in result.groups:
+                updated: list[PassageProposal] = []
+                for part in group.passages:
+                    updated.append(add_assessment(index, part))
+                    index += 1
+                groups.append(group.model_copy(update={"passages": tuple(updated)}))
+            hits: list[LocatedHit] = []
+            for hit in result.hits:
+                hits.append(hit.model_copy(update={"passage": add_assessment(index, hit.passage)}))
+                index += 1
+            summary = dict(result.result.context_summary)
+            summary["evaluation"] = {
+                "method": parameters.method,
+                "numeric_order": parameters.numeric_order,
+                "category_order": list(parameters.category_order),
+                "task": task,
+                "producer": outcome.producer.model_dump(mode="json"),
+                "usage": outcome.usage,
+                "actual_input": outcome.actual_input.model_dump(mode="json"),
+                "batches": [batch.model_dump(mode="json") for batch in outcome.batches],
+                "items": [item.model_dump(mode="json") for item in outcome.items],
+                "candidates": [
+                    {
+                        "key": f"p{index}",
+                        "candidate": part.candidate.model_dump(mode="json"),
+                        "scored_ranges": [
+                            value.model_dump(mode="json") for value in part.scored_ranges
+                        ],
+                        "support_context": [
+                            value.model_dump(mode="json") for value in part.support_context
+                        ],
+                    }
+                    for index, part in chosen
+                ],
+                "evaluated": len(outcome.items),
+                "offered": len(passages),
+            }
+            return result.model_copy(
+                update={
+                    "groups": tuple(groups),
+                    "hits": tuple(hits),
+                    "result": result.result.model_copy(update={"context_summary": summary}),
+                }
+            )
+        except EventDeliveryError, TimeoutError:
+            raise
+        except Exception as error:
+            if parameters.policy == "required":
+                raise
+            issue = OperationIssue(
+                stage="passages.evaluate",
+                code=error.code if isinstance(error, NousError) else "model.evaluation_failed",
+                message=str(error),
+                details=dict(error.details) if isinstance(error, NousError) else {},
+                retryable=error.retryable if isinstance(error, NousError) else False,
+            )
+            report_outcome("partial", issues=(issue,))
+            return result.model_copy(
+                update={
+                    "result": result.result.model_copy(
+                        update={"issues": (*result.result.issues, issue.to_dict())}
+                    )
+                }
+            )
+
+    async def _finish_query(
+        self,
+        program: CompiledProgram,
+        locator: str,
+        request: WaveQuery,
+        localized: LocatedResult,
+        call: CallContext | None,
+    ) -> WaveSearchResult:
+        values: dict[tuple[str, str], LocatedResult | WaveSearchResult] = {
+            (locator, "passages"): localized
+        }
+        for node in program.nodes:
+            if node.operator not in {"passages.evaluate", "passages.select", "delivery.read"}:
+                continue
+            input_port = {
+                "passages.evaluate": "passages",
+                "passages.select": "passages",
+                "delivery.read": "selected",
+            }[node.operator]
+            ref = node.inputs[input_port]
+            if isinstance(ref, tuple) or (ref.node, ref.port) not in values:
+                raise NousError(
+                    "wave.invalid_program",
+                    "Delivery input is unavailable",
+                    details={"node": node.id, "port": input_port},
+                )
+            value = values[(ref.node, ref.port)]
+            if not isinstance(value, LocatedResult):
+                raise NousError(
+                    "wave.invalid_program",
+                    "Delivery stage requires localized ranges",
+                    details={"node": node.id},
+                )
+            if node.operator == "passages.evaluate":
+                output: LocatedResult | WaveSearchResult = await self._evaluate_passages(
+                    value, request, EvaluationParameters.model_validate(node.parameters), call
+                )
+                output_port = "passages"
+            elif node.operator == "passages.select":
+                configured = node.parameters.get("budget")
+                budget = request.delivery_budget or (
+                    DeliveryBudget.model_validate(configured) if configured is not None else None
+                )
+                output = select_passages(value, request.passages_per_group, budget)
+                output_port = "selected"
+            else:
+                output = await self.delivery.read(value)
+                output_port = "evidence"
+            values[(node.id, output_port)] = output
+        output_ref = program.outputs["evidence"]
+        try:
+            final = values[(output_ref.node, output_ref.port)]
+        except KeyError as error:
+            raise NousError("wave.invalid_program", "Program did not produce evidence") from error
+        if not isinstance(final, WaveSearchResult):
+            raise NousError("wave.invalid_program", "Program evidence was not read")
+        return final
 
     async def read(self, ref: str, candidate_key: str, *, sources: bool = False) -> WaveReadResult:
         async with self.execution.operation("wave.read"):
             async with self.snapshots.pin(ref) as row:
-                return copy.deepcopy(await self.queries.read(row, candidate_key, sources=sources))
+                return copy.deepcopy(
+                    await read_candidate(
+                        row,
+                        candidate_key,
+                        self.delivery.artifacts,
+                        self.delivery.instance_id,
+                        sources=sources,
+                    )
+                )
 
     async def neighborhood(self, ref: str, concepts: Sequence[str]) -> WaveNeighborhoodResult:
         async with self.execution.operation("wave.neighborhood"):
             async with self.snapshots.borrow(ref) as (row, snapshot, token):
-                rows = self.queries.neighborhood_rows(row, concepts)
+                rows = neighborhood_rows(row, concepts)
                 result = await self.snapshots.compute(
                     lambda: snapshot.neighborhood(rows, cancel=token), token
                 )
-                return copy.deepcopy(self.queries.neighborhood(row, concepts, result))
+                return copy.deepcopy(
+                    describe_neighborhood(row, concepts, result, self.delivery.instance_id)
+                )
 
     async def segment(self, ref: str, fragments: Sequence[ContextFragment]) -> WaveSegmentResult:
         async with self.execution.operation("wave.segment") as context:
