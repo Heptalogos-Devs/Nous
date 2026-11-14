@@ -54,11 +54,17 @@ fn incremental_update_and_delete_preserve_borrowed_generation() -> Result<()> {
     assert_eq!(borrowed.candidate_source_key(2), Some("b"));
     assert_eq!(updated.candidate_source_key(2), Some("c"));
     assert_eq!(updated.candidate_source_key(3), Some("d"));
-    let result = updated.search_candidates(&[0., 0., 1.], 1, None)?;
+    let result = updated.search_candidates(&[0., 0., 1.], 1, None, 32)?;
     assert_eq!(result[0].id, 2);
-    assert_eq!(borrowed.search_candidates(&[0., 1., 0.], 1, None)?[0].id, 2);
+    assert_eq!(
+        borrowed.search_candidates(&[0., 1., 0.], 1, None, 32)?[0].id,
+        2
+    );
     let reopened = VectorGeneration::open(&new_path, &newer)?;
-    assert_eq!(reopened.search_candidates(&[0., 0., 1.], 1, None)?[0].id, 2);
+    assert_eq!(
+        reopened.search_candidates(&[0., 0., 1.], 1, None, 32)?[0].id,
+        2
+    );
     assert_eq!(
         VectorGeneration::open(&old_path, &old)?.candidate_source_key(2),
         Some("b")
@@ -96,6 +102,55 @@ fn mass_deletion_rebuilds_lane_and_reopens_without_changing_old_generation() -> 
     assert_eq!(
         VectorGeneration::open(&old_path, &old)?.candidate_count(),
         520
+    );
+    Ok(())
+}
+
+#[test]
+fn different_search_efforts_can_share_a_frozen_generation() -> Result<()> {
+    let temporary_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../temp");
+    std::fs::create_dir_all(&temporary_root)?;
+    let root = tempfile::tempdir_in(temporary_root)?;
+    let source = snapshot(
+        "parallel",
+        &[
+            ("a", [1., 0., 0.]),
+            ("b", [0., 1., 0.]),
+            ("c", [0., 0., 1.]),
+        ],
+    );
+    let path = root.path().join("generation");
+    let generation = VectorGeneration::create(&path, source.clone(), None)?;
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| -> Result<()> {
+        let workers = [([1., 0., 0.], 1, 8), ([0., 1., 0.], 2, 128)]
+            .into_iter()
+            .map(|(query, expected, effort)| {
+                let generation = &generation;
+                let barrier = &barrier;
+                scope.spawn(move || -> Result<()> {
+                    barrier.wait();
+                    for _ in 0..40 {
+                        assert_eq!(
+                            generation.search_candidates(&query, 1, None, effort)?[0].id,
+                            expected
+                        );
+                    }
+                    Ok(())
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker
+                .join()
+                .map_err(|_| anyhow::anyhow!("ANN search thread panicked"))??;
+        }
+        Ok(())
+    })?;
+    let reopened = VectorGeneration::open(&path, &source)?;
+    assert_eq!(
+        reopened.search_candidates(&[0., 0., 1.], 1, None, 64)?[0].id,
+        3
     );
     Ok(())
 }

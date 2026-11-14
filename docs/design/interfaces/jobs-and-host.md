@@ -45,7 +45,7 @@ async def application(locator):
 nous runtime run
 nous operations list
 nous operations describe records.create_journal
-nous journal create --file ./notes.md --annotate --background --refresh-mode lexical
+nous journal create --file ./notes.md --annotate --background --refresh
 nous runtime operations list
 nous runtime operations read <操作标识>
 nous runtime operations wait <操作标识>
@@ -61,3 +61,27 @@ nous runtime operations cancel <操作标识>
 客户端在请求作用域内声明外部输入并交付文件或流；相对路径由客户端解释，宿主分配的暂存位置不成为正式来源名称。请求期限覆盖容量等待、输入准备、传输及业务执行。运行期等待和取消使用独立的连接容量。客户端断开时宿主取消该调用并等待其资源退出；宿主关闭后清除本次输入暂存。内容导出由客户端向目标目录写入临时文件并在完成后交付，已保存的 Artifact 独立保留。
 
 SDK 的文件输入使用有界文件读取进程。取消只终止相关读取，关闭时等待全部受控进程和阻塞工作实际退出。日志和正式结果保持实例关联，不接管宿主进程的 root logging。
+
+## HTTP、MCP 与 gRPC
+
+`runtime run` 同时启动实例配置中明确启用的监听器。每个监听器配置地址、端口和 `credentials` 中的凭据引用；默认均未启用，地址默认为本机回环。端口设为 0 时由系统分配，启动后显示实际地址。
+
+```toml
+[credentials.agent-access]
+kind = "env"
+name = "NOUS_AGENT_ACCESS_TOKEN"
+
+[transports.http]
+enabled = true
+host = "127.0.0.1"
+port = 0
+credential_ref = "agent-access"
+```
+
+`transports.mcp` 和 `transports.grpc` 使用同一配置形状。非回环地址需同时设置 `tls_certfile` 与 `tls_keyfile`；相对路径以实例目录为基准。客户端提供 Bearer 凭据；配置只保存引用，凭据值由环境或受管理文件提供。
+
+HTTP 提供 `/operations`、`/operations/{name}`、`/calls`、`/calls/stream` 和内容上传下载。MCP 以可发现工具提供面向 Agent 的完整应用操作和内容交付。gRPC 的 `nous.transport.Application` 提供描述、调用、事件流及内容流操作。三者使用同一 Application 请求、结果、事件与错误合同；取消和期限传递到当前调用。宿主退出前停止接入并等待正在使用的资源退出。
+
+程序内宿主可在 `open_instance(..., allow_background=True)` 作用域中使用 `serve_configured_transports(runtime, locator)`，或分别借用传输的 `serve_http`、`serve_mcp`、`serve_grpc` 上下文管理器。
+
+具体路径、消息和内容流格式见[远程协议](remote-protocols.md)。

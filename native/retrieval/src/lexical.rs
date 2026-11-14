@@ -86,16 +86,29 @@ struct Inner {
 }
 
 impl RetrievalIndex {
-    /// Open the committed projection and its coverage from the same Tantivy metadata commit.
+    /// Open a committed projection for reading without acquiring a writer lock.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_index(path.as_ref(), false)
+    }
+
+    /// Open a staging projection for construction or incremental updates.
+    pub fn open_for_update(path: impl AsRef<Path>) -> Result<Self> {
         std::fs::create_dir_all(path.as_ref())?;
+        Self::open_index(path.as_ref(), true)
+    }
+
+    fn open_index(path: &Path, writable: bool) -> Result<Self> {
         let expected = schema();
         #[cfg(windows)]
-        let directory = windows_directory::WindowsDirectory::open(path.as_ref())?;
+        let directory = windows_directory::WindowsDirectory::open(path)?;
         #[cfg(not(windows))]
-        let directory = tantivy::directory::MmapDirectory::open(path.as_ref())?;
-        let index = Index::open_or_create(directory, expected.clone())
-            .context("cannot open or create lexical index")?;
+        let directory = tantivy::directory::MmapDirectory::open(path)?;
+        let index = if writable {
+            Index::open_or_create(directory, expected.clone())
+                .context("cannot open or create staging lexical index")?
+        } else {
+            Index::open(directory).context("cannot open committed lexical index")?
+        };
         ensure!(
             index.schema() == expected,
             "lexical schema changed; rebuild the projection"
@@ -114,12 +127,19 @@ impl RetrievalIndex {
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
-        let mut writer: IndexWriter = index.writer_with_num_threads(1, WRITER_BYTES)?;
+        let mut writer = if writable {
+            Some(index.writer_with_num_threads(1, WRITER_BYTES)?)
+        } else {
+            None
+        };
         let payload: CommitPayload = match index.load_metas()?.payload {
             Some(payload) => {
                 serde_json::from_str(&payload).context("invalid lexical coverage metadata")?
             }
             None => {
+                let writer = writer
+                    .as_mut()
+                    .context("committed lexical metadata is missing")?;
                 let payload = CommitPayload {
                     through_commit_seq: 0,
                     generation: uuid::Uuid::new_v4().to_string(),
@@ -131,7 +151,7 @@ impl RetrievalIndex {
                 payload
             }
         };
-        let live_stats = live::LiveStats::load(path.as_ref())?.map(Arc::new);
+        let live_stats = live::LiveStats::load(path)?.map(Arc::new);
         if let Some(stats) = &live_stats {
             ensure!(
                 stats.count() as u64 == reader.searcher().num_docs(),
@@ -147,7 +167,7 @@ impl RetrievalIndex {
             inner: Arc::new(Inner {
                 index,
                 reader,
-                writer: Mutex::new(Some(writer)),
+                writer: Mutex::new(writer),
                 fields,
                 coverage: RwLock::new(coverage),
                 live_stats,

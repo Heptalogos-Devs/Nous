@@ -83,6 +83,18 @@ source_targets = sa.Table(
     ),
 )
 
+source_materials = sa.Table(
+    "revision_source_materials",
+    metadata,
+    sa.Column("revision_id", sa.String, primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("material", sa.JSON, nullable=False),
+    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
+    sa.ForeignKeyConstraint(
+        ["revision_id", "key"], ["revision_sources.revision_id", "revision_sources.key"]
+    ),
+)
+
 journal_drafts = sa.Table(
     "journal_drafts",
     metadata,

@@ -1,5 +1,7 @@
 """Written Note/Journal owner: immutable bodies, exact sources and short transactions."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 from collections.abc import Sequence
@@ -20,6 +22,7 @@ from nous.content.contracts import (
     InputGroup,
     InputPart,
     ResultFacts,
+    ResultOutputRef,
     SelectedInputs,
     SelectedSource,
     UserProducer,
@@ -37,11 +40,13 @@ from ..contracts import (
     SourceBinding,
     TitleSource,
 )
+from ..material_contracts import MaterialSource
 from ..scope import NamespaceOperations
 from .contracts import CommittedRecord
 from .reading import RecordReader, RecordRow, RevisionRow, Target
 
 if TYPE_CHECKING:
+    from ..materials import Materials
     from ..sources import SourceResolver
 
 
@@ -54,6 +59,7 @@ class AdoptionValues(TypedDict):
     times: CognitiveTimes
     origin_result_id: str
     body_artifact: ArtifactRef | None
+    material_sources: Sequence[MaterialSource]
 
 
 class RevisionValues(TypedDict):
@@ -89,6 +95,7 @@ class PreparedRevision:
     previous: RevisionRow
     namespace: Namespace
     bindings: tuple[SourceBinding, ...]
+    material_sources: tuple[MaterialSource, ...]
     values: RevisionValues
     times: CognitiveTimes
     changed: bool
@@ -110,9 +117,11 @@ class WrittenRecords:
         results: ResultStore,
         reader: RecordReader,
         sources: SourceResolver,
+        materials: Materials,
     ):
         self.database, self.artifacts, self.time = database, artifacts, time
         self.scope, self.results, self.reader, self.sources = scope, results, reader, sources
+        self.materials = materials
 
     @staticmethod
     def resolve_title(
@@ -154,6 +163,37 @@ class WrittenRecords:
         """Validate source artifacts and exact owner revisions in the caller's read view."""
         await self.sources.validate_in(tx, namespace.ref, sources)
 
+    async def validate_material_sources_in(
+        self,
+        tx: ReadTx,
+        namespace: Namespace,
+        bindings: Sequence[SourceBinding],
+        materials: Sequence[MaterialSource],
+    ) -> tuple[MaterialSource, ...]:
+        """Validate the material identity attached to each adopted source key."""
+        by_key = {binding.key: binding for binding in bindings}
+        if len({item.key for item in materials}) != len(materials):
+            raise NousError("input.duplicate_source", "Material source keys must be unique")
+        normalized: dict[str, MaterialSource] = {}
+        for item in materials:
+            binding = by_key.get(item.key)
+            if (
+                binding is None
+                or binding.selections != item.selections
+                or (binding.owner_revision is not None and binding.owner_revision != item.material)
+            ):
+                raise NousError(
+                    "cognition.source_mismatch", "Material identity differs from its source binding"
+                )
+            normalized[item.key] = item.model_copy(
+                update={"kind": binding.usage, "name": binding.name}
+            )
+        ordered = tuple(
+            normalized[binding.key] for binding in bindings if binding.key in normalized
+        )
+        await self.materials.validate_sources_in(tx, ordered, namespace=namespace.ref)
+        return ordered
+
     async def prepare_times(self, times: CognitiveTimes | None) -> CognitiveTimes:
         """Set the recorded time and validate cognitive time coordinates."""
         now = parse_explicit_time(self.time.clock.utc_now().isoformat())
@@ -184,6 +224,7 @@ class WrittenRecords:
         recall: bool = True,
         origin_result_id: str | None = None,
         body_artifact: ArtifactRef | None = None,
+        material_sources: Sequence[MaterialSource] = (),
     ) -> CommittedRecord:
         """Create a record and initial revision in the caller's write transaction.
 
@@ -193,6 +234,9 @@ class WrittenRecords:
         ns = await self.scope.get_in(tx, namespace)
         resolved_title, title_source = self.resolve_title(title, self.validate_body(body, sources))
         await self.validate_sources_in(tx, ns, sources)
+        formal_materials = await self.validate_material_sources_in(
+            tx, ns, sources, material_sources
+        )
         object_id, revision_id = str(uuid4()), str(uuid4())
         identifier = await insert_identifier(
             tx,
@@ -233,6 +277,7 @@ class WrittenRecords:
             change_kind="create",
             reason=None,
             origin_result_id=origin_result_id,
+            material_sources=formal_materials,
             body_artifact=body_artifact,
             committed_generation=ns.content_generation + int(recall),
         )
@@ -273,9 +318,15 @@ class WrittenRecords:
                 str(value)
                 for value in (
                     await tx.connection.scalars(
-                        sa.select(content_schema.outputs.c.artifact_id).where(
+                        sa.select(content_schema.outputs.c.artifact_id)
+                        .select_from(content_schema.outputs.join(content_schema.artifacts))
+                        .where(
                             content_schema.outputs.c.result_id == origin_result_id,
-                            content_schema.outputs.c.name == "output",
+                            content_schema.outputs.c.role != "diagnostic",
+                            sa.or_(
+                                content_schema.outputs.c.name == "output",
+                                content_schema.artifacts.c.media_type == "text/markdown",
+                            ),
                         )
                     )
                 ).all()
@@ -319,6 +370,7 @@ class WrittenRecords:
         change_kind: str,
         reason: str | None,
         origin_result_id: str | None,
+        material_sources: Sequence[MaterialSource],
         body_artifact: ArtifactRef | None = None,
         committed_generation: int,
         write_key: str | None = None,
@@ -396,7 +448,13 @@ class WrittenRecords:
             "body_artifact_id": artifact.ref.id,
             "source_signature": hashlib.sha256(
                 json.dumps(
-                    [source.model_dump(mode="json") for source in sources],
+                    {
+                        "bindings": [source.model_dump(mode="json") for source in sources],
+                        "materials": {
+                            item.key: item.material.model_dump(mode="json")
+                            for item in material_sources
+                        },
+                    },
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -438,6 +496,21 @@ class WrittenRecords:
                         "selection": selection.selection.model_dump(mode="json"),
                     }
                     for ordinal, selection in enumerate(source.selections)
+                ],
+            )
+        if material_sources:
+            await tx.connection.execute(
+                schema.source_materials.insert(),
+                [
+                    {
+                        "revision_id": revision_id,
+                        "key": item.key,
+                        "material": item.material.model_dump(mode="json"),
+                        "source_result_id": item.material.result.id
+                        if isinstance(item.material, ResultOutputRef)
+                        else None,
+                    }
+                    for item in material_sources
                 ],
             )
         return revision
@@ -558,19 +631,39 @@ class WrittenRecords:
         author: str | None = None,
         viewpoint: str | None = None,
         sources: Sequence[SourceBinding] | None = None,
+        material_sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
     ) -> PreparedRevision:
         """Resolve and compare a proposed revision in the caller's consistent view."""
         row, old, ns = await self.resolve_expected_in(
             tx, target, expected_revision, namespace, body
         )
-        bindings = (
-            await self.reader.sources_in(tx, old["id"]) if sources is None else tuple(sources)
-        )
+        previous_bindings = await self.reader.sources_in(tx, old["id"])
+        previous_materials = (
+            await self.reader.material_sources_many_in(
+                tx, (old["id"],), sources={old["id"]: previous_bindings}
+            )
+        )[old["id"]]
+        bindings = previous_bindings if sources is None else tuple(sources)
+        if material_sources is None:
+            old_by_key = {item.key: item for item in previous_bindings}
+            selected = tuple(
+                item
+                for item in previous_materials
+                if any(
+                    binding.key == item.key
+                    and binding.selections == item.selections
+                    and binding.owner_revision == old_by_key[item.key].owner_revision
+                    for binding in bindings
+                )
+            )
+        else:
+            selected = tuple(material_sources)
         resolved_title, title_source = self.resolve_title(
             title, self.validate_body(body, bindings), old
         )
         await self.validate_sources_in(tx, ns, bindings)
+        formal_materials = await self.validate_material_sources_in(tx, ns, bindings, selected)
         values: RevisionValues = {
             "title": resolved_title,
             "title_source": title_source,
@@ -594,10 +687,13 @@ class WrittenRecords:
                 values["viewpoint"],
             )
             == (old["title"], old["title_source"], old["purpose"], old["author"], old["viewpoint"])
-            and bindings == await self.reader.sources_in(tx, old["id"])
+            and bindings == previous_bindings
+            and formal_materials == previous_materials
             and equal_times
         )
-        return PreparedRevision(row, old, ns, bindings, values, effective_times, not unchanged)
+        return PreparedRevision(
+            row, old, ns, bindings, formal_materials, values, effective_times, not unchanged
+        )
 
     async def append_in(
         self,
@@ -613,6 +709,7 @@ class WrittenRecords:
         author: str | None = None,
         viewpoint: str | None = None,
         sources: Sequence[SourceBinding] | None = None,
+        material_sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
         change_kind: str = "edit",
         reason: str | None = None,
@@ -640,6 +737,7 @@ class WrittenRecords:
             author=author,
             viewpoint=viewpoint,
             sources=sources,
+            material_sources=material_sources,
             times=times,
         )
         row, old, ns = prepared.row, prepared.previous, prepared.namespace
@@ -662,6 +760,7 @@ class WrittenRecords:
             **prepared.values,
             times=effective_times,
             sources=prepared.bindings,
+            material_sources=prepared.material_sources,
             change_kind=change_kind,
             reason=reason,
             origin_result_id=origin_result_id,

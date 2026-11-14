@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from nous.configuration.metadata import ConfigSequence
 from nous.content.contracts import ArtifactRef, ContentSelection, ExternalInput, SourceSelection
 from nous.models.vector_contracts import SpaceDefinition, VectorRef
 from nous.temporal.values import CognitiveTimes, Interval
@@ -16,6 +17,23 @@ from nous.temporal.values import CognitiveTimes, Interval
 
 class WaveValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PortRef(WaveValue):
+    node: str = Field(min_length=1)
+    port: str = Field(min_length=1)
+
+
+class ProgramNode(WaveValue):
+    id: str = Field(min_length=1)
+    operator: str = Field(min_length=1)
+    inputs: dict[str, PortRef | ConfigSequence[PortRef]] = Field(default_factory=dict)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class WaveProgram(WaveValue):
+    nodes: ConfigSequence[ProgramNode]
+    outputs: dict[str, PortRef]
 
 
 class ManualOwner(WaveValue):
@@ -90,9 +108,22 @@ class DeliveredText(WaveValue):
     text: str
 
 
+class ScoreValue(WaveValue):
+    name: str
+    value: float = Field(allow_inf_nan=False)
+    scale: str
+    producer: str
+    based_on: tuple[str, ...] = ()
+
+
 class PassageDelivery(WaveValue):
     candidate: CandidateRef
+    scored_ranges: tuple[ContentSelection, ...] = Field(min_length=1)
     fragments: tuple[DeliveredText, ...] = Field(min_length=1)
+    support_context: tuple[DeliveredText, ...] = ()
+    shared_context: tuple[ContentSelection, ...] = ()
+    scores: tuple[ScoreValue, ...] = ()
+    assessment: dict[str, JsonValue] | None = None
     reason: Literal["body_match", "local_score", "title_preview", "preview"]
     matched_fields: tuple[Literal["body", "title"], ...] = ()
     evidence: RankEvidence | None = None
@@ -106,11 +137,22 @@ class PassageDelivery(WaveValue):
         return tuple(fragment.content for fragment in self.fragments)
 
 
+type DeliveryStatus = Literal[
+    "selected", "budget_exhausted", "overlap", "no_candidates", "not_selected"
+]
+
+
+class DeliveryBudget(WaveValue):
+    amount: int = Field(ge=1)
+    unit: Literal["characters", "bytes", "tokens"] = "characters"
+
+
 class GroupHit(WaveValue):
     group: GroupDescriptor
     rank: int = Field(ge=1)
     basis: RankEvidence
     passages: tuple[PassageDelivery, ...]
+    delivery_status: DeliveryStatus = "not_selected"
 
 
 class LaneCoverage(WaveValue):
@@ -133,15 +175,20 @@ class SearchCoverage(WaveValue):
     lane_limit_unit: Literal["groups", "candidates"]
     group_scan_limit: int
     passages_per_group: int
-    candidates: int
+    candidates: int | None
     total_candidates: int
     max_union_candidates: int
     top_k: int
-    offered_candidates: int
-    ranked_candidates: int
-    unique_candidates: int
+    offered_candidates: int | None
+    ranked_candidates: int | None
+    unique_candidates: int | None
     candidate_limit_reached: bool
     top_k_truncated: bool
+
+
+class WaveBranchCoverage(WaveValue):
+    name: str
+    coverage: SearchCoverage
 
 
 class CandidateHit(WaveValue):
@@ -149,11 +196,30 @@ class CandidateHit(WaveValue):
     passage: PassageDelivery
 
 
+class ProgramRunFacts(WaveValue):
+    """The effective program and bounded settings for this particular query."""
+
+    name: str
+    signature: str
+    definition_signature: str
+    requested_program: str | None
+    selection: Literal["explicit", "default", "fallback", "exploration"]
+    requirements: tuple[str, ...]
+    nodes: tuple[ProgramNode, ...]
+    outputs: dict[str, JsonValue]
+    options: dict[str, JsonValue]
+    budget: DeliveryBudget | None
+    space_id: str | None
+    space_signature: str | None
+    space_definition: SpaceDefinition | None
+
+
 class WaveSearchResult(WaveValue):
     """A complete Wave readout with ranking and delivered content kept distinct."""
 
     snapshot: SnapshotRef
-    mode: str
+    program: str
+    program_run: ProgramRunFacts | None = None
     score_kind: str
     used_lanes: tuple[str, ...]
     skipped_lanes: tuple[dict[str, JsonValue], ...]
@@ -166,8 +232,10 @@ class WaveSearchResult(WaveValue):
     algorithm_versions: dict[str, str]
     scope: dict[str, JsonValue]
     coverage: SearchCoverage
+    branch_coverage: tuple[WaveBranchCoverage, ...] = ()
     thinking: dict[str, JsonValue] | None = None
     diagnostics: dict[str, JsonValue] | None = None
+    issues: tuple[dict[str, JsonValue], ...] = ()
 
 
 class DocumentInput(WaveValue):
@@ -654,10 +722,16 @@ class ContextContent(WaveValue):
 class ContextFragment(WaveValue):
     key: str = Field(min_length=1)
     role: str = Field(min_length=1)
+    stage: str = "retrieval"
+    parent_key: str | None = None
     sequence: int
     text: str | None = None
     content: ContextContent | None = None
     weight: float = Field(default=1, ge=0, allow_inf_nan=False)
+    relevance: float = Field(default=1, ge=0, le=1, allow_inf_nan=False)
+    validity: float = Field(default=1, ge=0, le=1, allow_inf_nan=False)
+    distance: float = Field(default=0, ge=0, allow_inf_nan=False)
+    half_life: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     time: CognitiveTimes | None = None
 
     @model_validator(mode="after")
@@ -670,6 +744,9 @@ class ContextFragment(WaveValue):
 class SelectedContext(WaveValue):
     key: str
     role: str
+    stage: str = "retrieval"
+    parent_key: str | None = None
+    contribution: float = 0.0
     sequence: int
     weight: float
     decayed_weight: float
@@ -699,6 +776,28 @@ class CandidateFilter(WaveValue):
     include_unknown: bool = False
 
 
+class WaveExpression(WaveValue):
+    """A bound retrieval term or a Boolean combination of terms."""
+
+    kind: Literal["term", "any", "all"]
+    text: str = ""
+    candidate_filter: CandidateFilter | None = None
+    core_concepts: tuple[str, ...] = ()
+    prefer: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
+    limit: int | None = Field(default=None, ge=1)
+    sort: str | None = None
+    children: tuple[WaveExpression, ...] = ()
+
+    @model_validator(mode="after")
+    def valid_tree(self) -> WaveExpression:
+        if self.kind == "term" and self.children:
+            raise ValueError("a Wave term cannot have children")
+        if self.kind != "term" and not self.children:
+            raise ValueError("a Wave combination requires children")
+        return self
+
+
 class ThinkingStage(WaveValue):
     name: str = Field(min_length=1)
     candidates: tuple[str, ...]
@@ -710,20 +809,20 @@ class CandidateLane(WaveValue):
     rank: int = Field(ge=1)
 
 
-class CandidatePoolEntry(WaveValue):
+class CandidateSetEntry(WaveValue):
     candidate: str
     lanes: dict[str, CandidateLane] = Field(default_factory=dict)
 
 
-class CandidatePool(WaveValue):
+class CandidateSet(WaveValue):
     rank_scope: Literal["candidate_lane", "grouped_lane"] = "candidate_lane"
     snapshot: str
-    entries: tuple[CandidatePoolEntry, ...]
+    entries: tuple[CandidateSetEntry, ...]
 
     @model_validator(mode="after")
-    def unique_candidates(self) -> CandidatePool:
+    def unique_candidates(self) -> CandidateSet:
         if len({item.candidate for item in self.entries}) != len(self.entries):
-            raise ValueError("candidate pool contains duplicate keys")
+            raise ValueError("candidate set contains duplicate keys")
         return self
 
 
@@ -732,20 +831,31 @@ class WaveQuery(WaveValue):
     passages_per_group: int = Field(default=1, ge=1, le=10000)
     snapshot: str
     text: str = ""
+    aspects: tuple[str, ...] = ()
+    expression: WaveExpression | None = None
     vector: VectorRef | ExternalInput | None = None
-    candidate_pool: CandidatePool | ExternalInput | None = None
+    candidate_set: CandidateSet | ExternalInput | None = None
     context: tuple[ContextFragment, ...] | ExternalInput = ()
     core_concepts: tuple[str, ...] = ()
     cues: tuple[QueryCue, ...] = ()
     candidate_filter: CandidateFilter | ExternalInput | None = None
+    prefer: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
+    sort: str | None = None
+    explore: bool = False
     top_k: int | None = Field(default=None, ge=1)
-    mode: Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] | None = None
+    delivery_budget: DeliveryBudget | None = None
+    program: str | None = None
     include_trace: bool = False
     include_counterevidence: bool | None = None
     thinking_stages: tuple[ThinkingStage, ...] | ExternalInput = ()
 
     @model_validator(mode="after")
     def unique_context_keys(self) -> WaveQuery:
+        if any(not value.strip() for value in self.aspects) or len(set(self.aspects)) != len(
+            self.aspects
+        ):
+            raise ValueError("aspects must be nonempty and unique")
         if isinstance(self.context, ExternalInput):
             return self
         keys = [item.key for item in self.context]

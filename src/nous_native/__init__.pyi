@@ -5,10 +5,10 @@ from ._core import (
     CancellationToken as CancellationToken,
 )
 from ._core import (
-    CandidatePool as CandidatePool,
+    Candidates as Candidates,
 )
 from ._core import (
-    Candidates as Candidates,
+    CandidateSet as CandidateSet,
 )
 from ._core import (
     Concepts as Concepts,
@@ -21,9 +21,6 @@ from ._core import (
 )
 from ._core import (
     NativeError as NativeError,
-)
-from ._core import (
-    NativeQueryResult as NativeQueryResult,
 )
 from ._core import (
     NativeSnapshot as NativeSnapshot,
@@ -39,6 +36,9 @@ from ._core import (
 )
 from ._core import (
     aggregate_context as aggregate_context,
+)
+from ._core import (
+    context_masses as context_masses,
 )
 from ._core import (
     defaults_json as defaults_json,

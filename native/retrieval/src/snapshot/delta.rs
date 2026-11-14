@@ -79,7 +79,7 @@ pub(super) fn build_lexical(
         .flatten();
     if let (Some(old), Some(mut stats)) = (source, old_stats) {
         copy_files(&old.path.join("lexical"), path, token)?;
-        let index = RetrievalIndex::open(path)?;
+        let index = RetrievalIndex::open_for_update(path)?;
         let sequence = index
             .coverage()?
             .through_commit_seq
@@ -154,7 +154,7 @@ pub(super) fn build_lexical(
         stats.save(path)?;
         Ok(json!({"incremental": true, "changed": changes.len(), "compacted": compacted}))
     } else {
-        let index = RetrievalIndex::open(path)?;
+        let index = RetrievalIndex::open_for_update(path)?;
         let mut documents = Vec::with_capacity(meta.keys.len());
         for row in 0..meta.keys.len() {
             token.check()?;

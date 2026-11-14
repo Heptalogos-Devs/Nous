@@ -1,6 +1,5 @@
 """Written record commands over the shared typed application operations."""
 
-import json
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -13,7 +12,6 @@ from nous.cognition.contracts import (
     RenameNamespace,
     SelectNamespace,
 )
-from nous.cognition.retrieval.contracts import Mode
 from nous.cognition.scope import (
     CREATE_NAMESPACE,
     LIST_NAMESPACES,
@@ -53,7 +51,7 @@ from nous.common.errors import NousError
 from nous.content.contracts import ExternalInput
 from nous.presentation import translate
 
-from .context import application_call, emit_content_view, language_for, options
+from .context import application_call, emit, emit_content_view, language_for, options
 from .groups import cli
 from .input_files import body_binding, json_binding
 
@@ -68,7 +66,7 @@ cli.add_typer(namespace_cli, name="namespace")
 def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | RecordOutcome) -> None:
     language = language_for(options(ctx))
     if options(ctx).json_mode:
-        typer.echo(result.model_dump_json())
+        emit(ctx, result.model_dump(mode="json"))
     else:
         record = result.commit if isinstance(result, RecordOutcome) else result
         title = record.title or translate(
@@ -110,7 +108,6 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
 
 def after_write(
     refresh: bool,
-    mode: Mode | None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -119,8 +116,7 @@ def after_write(
         raise NousError("input.invalid", "Choose --background or --inline")
     return AfterWrite(
         annotation="run" if annotate else "default",
-        refresh="run" if refresh or mode is not None else "defer",
-        mode=mode,
+        refresh="run" if refresh else "defer",
         execution="background" if background else "wait",
     )
 
@@ -150,14 +146,13 @@ def _create(
     current_basis: list[str] | None = None,
     inspiration: list[str] | None = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
 ) -> RecordOutcome:
     body, inputs = body_binding(text, file)
     sources = source_requests(source, current_basis, inspiration)
-    policy = after_write(refresh, refresh_mode, background, inline, annotate)
+    policy = after_write(refresh, background, inline, annotate)
     if kind == "note":
         return application_call(
             ctx,
@@ -199,7 +194,6 @@ def note_add(
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -218,7 +212,6 @@ def note_add(
             current_basis=current_basis,
             inspiration=inspiration,
             refresh=refresh,
-            refresh_mode=refresh_mode,
             background=background,
             inline=inline,
             annotate=annotate,
@@ -238,7 +231,6 @@ def journal_create(
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -257,7 +249,6 @@ def journal_create(
             current_basis=current_basis,
             inspiration=inspiration,
             refresh=refresh,
-            refresh_mode=refresh_mode,
             background=background,
             inline=inline,
             annotate=annotate,
@@ -265,7 +256,6 @@ def journal_create(
     )
 
 
-@cli.command("read")
 def read_record(
     ctx: typer.Context,
     ref: str,
@@ -306,7 +296,6 @@ def revise_record(
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -339,7 +328,7 @@ def revise_record(
             feedback_mappings=mappings,
             sources=source_requests(source, current_basis, inspiration),
             source_changes=changes,
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
         inputs=inputs,
     )
@@ -360,7 +349,6 @@ def patch_record(
     feedback: Annotated[list[str] | None, typer.Option("--feedback")] = None,
     feedback_mappings: Annotated[Path | None, typer.Option("--feedback-mappings")] = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -387,7 +375,7 @@ def patch_record(
             change_kind=intent,
             feedback_refs=tuple(feedback or ()),
             feedback_mappings=mappings,
-            after=after_write(refresh, refresh_mode, background, inline, annotate),
+            after=after_write(refresh, background, inline, annotate),
         ),
         inputs=inputs,
     )
@@ -400,7 +388,10 @@ def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None
     result = application_call(
         ctx, DIFF_RECORDS, DiffRecords(left=left, right=right, namespace=namespace)
     )
-    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.unified)
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.unified)
 
 
 @journal_cli.command("edit")
@@ -410,7 +401,6 @@ def edit_record(
     ref: Annotated[str | None, typer.Argument()] = None,
     namespace: str | None = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
@@ -425,13 +415,11 @@ def edit_record(
 
     selected = options(ctx)
     settings = Configuration(selected.locator.config_file).snapshot.values
-    policy = after_write(refresh, refresh_mode, background, inline, annotate)
+    policy = after_write(refresh, background, inline, annotate)
     kind = ctx.parent.info_name if ctx.parent else ""
     if resume is not None:
         session = EditSession.resume(resume, resume.read_bytes(), settings.instance.id, kind or "")
-        if (
-            refresh or refresh_mode or background or inline or annotate
-        ) and policy != session.after:
+        if (refresh or background or inline or annotate) and policy != session.after:
             raise NousError(
                 "input.edit_session_mismatch", "The edit session has different maintenance options"
             )
@@ -500,11 +488,7 @@ def edit_record(
 def history(ctx: typer.Context, ref: str, namespace: str | None = None) -> None:
     result = application_call(ctx, HISTORY_RECORD, ReadRecord(target=ref, namespace=namespace))
     if options(ctx).json_mode:
-        typer.echo(
-            json.dumps(
-                {"revisions": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
-            )
-        )
+        emit(ctx, {"revisions": [item.model_dump(mode="json") for item in result]})
     else:
         for item in result:
             typer.echo(
@@ -520,11 +504,10 @@ def _membership(
     expected: str | None = None,
     enabled: bool | None = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
 ) -> RecordOutcome:
-    after = after_write(refresh, refresh_mode, background, inline)
+    after = after_write(refresh, background, inline)
     if operation == "recall":
         return application_call(
             ctx,
@@ -551,7 +534,6 @@ def archive(
     namespace: str | None = None,
     expected: str | None = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
 ) -> None:
@@ -564,7 +546,6 @@ def archive(
             "archive",
             expected,
             refresh=refresh,
-            refresh_mode=refresh_mode,
             background=background,
             inline=inline,
         ),
@@ -579,7 +560,6 @@ def restore(
     namespace: str | None = None,
     expected: str | None = None,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
 ) -> None:
@@ -592,7 +572,6 @@ def restore(
             "restore",
             expected,
             refresh=refresh,
-            refresh_mode=refresh_mode,
             background=background,
             inline=inline,
         ),
@@ -607,7 +586,6 @@ def remember(
     expected: str | None = None,
     enabled: bool = True,
     refresh: bool = False,
-    refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
 ) -> None:
@@ -621,7 +599,6 @@ def remember(
             expected,
             enabled,
             refresh=refresh,
-            refresh_mode=refresh_mode,
             background=background,
             inline=inline,
         ),
@@ -644,11 +621,7 @@ def list_records(
         ListRecords(namespace=namespace, kind=kind, archived=archived, offset=offset, limit=limit),
     )
     if options(ctx).json_mode:
-        typer.echo(
-            json.dumps(
-                {"records": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
-            )
-        )
+        emit(ctx, {"records": [item.model_dump(mode="json") for item in result]})
     else:
         for item in result:
             typer.echo(f"{item.revision_ref.identifier}  {item.title or ''}")
@@ -657,19 +630,19 @@ def list_records(
 @namespace_cli.command("create")
 def namespace_create(ctx: typer.Context, name: str) -> None:
     result = application_call(ctx, CREATE_NAMESPACE, CreateNamespace(name=name))
-    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.name)
 
 
 @namespace_cli.command("list")
 def namespace_list(ctx: typer.Context) -> None:
     result = application_call(ctx, LIST_NAMESPACES, ListNamespaces())
-    typer.echo(
-        json.dumps(
-            {"namespaces": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
-        )
-        if options(ctx).json_mode
-        else "\n".join(item.name for item in result)
-    )
+    if options(ctx).json_mode:
+        emit(ctx, {"namespaces": [item.model_dump(mode="json") for item in result]})
+    else:
+        typer.echo("\n".join(item.name for item in result))
 
 
 @namespace_cli.command("rename")
@@ -677,10 +650,16 @@ def namespace_rename(ctx: typer.Context, namespace: str, name: str) -> None:
     result = application_call(
         ctx, RENAME_NAMESPACE, RenameNamespace(namespace=namespace, name=name)
     )
-    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.name)
 
 
 @namespace_cli.command("select")
 def namespace_select(ctx: typer.Context, namespace: str) -> None:
     result = application_call(ctx, SELECT_NAMESPACE, SelectNamespace(namespace=namespace))
-    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.name)
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.name)

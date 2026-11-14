@@ -1,21 +1,24 @@
 """CLI call selection, terminal output, and request context."""
 
 import asyncio
+import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import typer
+from pydantic import JsonValue
 
-from nous.application.contracts import EventObserver, OperationDefinition
+from nous.application.contracts import EventEnvelope, EventObserver, OperationDefinition, Saved
 from nous.application.inputs import InputProvider
 from nous.common.errors import NousError
-from nous.common.operations import exception_context
+from nous.common.operations import add_error_context, exception_context, reference_value
 from nous.configuration import Configuration
 from nous.content.contracts import ContentReadView
 from nous.presentation import format_status, select_language, translate
+from nous.presentation.json_selection import select_json
 from nous.runtime.instance import InstanceLocator
 
 if TYPE_CHECKING:
@@ -29,6 +32,8 @@ class Options:
     json_mode: bool = False
     language: str | None = None
     debug: bool = False
+    select: tuple[str, ...] = ()
+    completed_refs: list[dict[str, JsonValue]] = field(default_factory=list, compare=False)
 
 
 current_options: ContextVar[Options | None] = ContextVar("local_cli_options", default=None)
@@ -73,6 +78,23 @@ def application_call[Q, R](
     from nous.runtime.bootstrap import open_instance
 
     from .local_control import request_call
+
+    selected = options(ctx)
+    downstream = observer
+    if selected.select:
+
+        async def capture(event: EventEnvelope) -> None:
+            if isinstance(event.event, Saved):
+                for ref in event.event.refs:
+                    value = reference_value(ref)
+                    if value not in selected.completed_refs:
+                        selected.completed_refs.append(value)
+            if downstream is not None:
+                outcome = downstream(event)
+                if inspect.isawaitable(outcome):
+                    await outcome
+
+        observer = capture
 
     response = request_call(
         options(ctx).locator,
@@ -155,10 +177,17 @@ def language_for(selected: Options | None) -> str:
 
 
 def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
-    if options(ctx).json_mode:
-        typer.echo(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    selected = options(ctx)
+    if selected.json_mode:
+        try:
+            output = select_json(value, selected.select)
+        except NousError as error:
+            if selected.completed_refs:
+                add_error_context(error, {"completed_refs": selected.completed_refs})
+            raise
+        typer.echo(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
     else:
-        typer.echo(format_status(value, language_for(options(ctx))))
+        typer.echo(format_status(value, language_for(selected)))
 
 
 def emit_content_view(view: ContentReadView) -> None:

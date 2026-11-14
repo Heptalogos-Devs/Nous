@@ -1,6 +1,7 @@
 //! Group and materialize ranked candidates with evidence and coverage.
 use super::*;
 
+#[derive(Clone)]
 pub(super) struct RankedCandidates {
     pub hits: Vec<Value>,
     pub channel_scores: BTreeMap<u64, BTreeMap<String, f64>>,
@@ -8,7 +9,7 @@ pub(super) struct RankedCandidates {
     pub offered_candidates: usize,
     pub diagnostics: Value,
     pub thinking: Value,
-    pub score_kind: &'static str,
+    pub score_kind: String,
     pub wormhole_rrf_active: bool,
     pub used_lanes: Vec<String>,
     pub skipped: Vec<Value>,
@@ -20,14 +21,14 @@ pub(super) struct RankedCandidates {
 impl Snapshot {
     pub(super) fn deliver(
         &self,
-        mode: &str,
+        program: &str,
         text: &str,
         allowed: &BTreeSet<u64>,
         o: &Options,
-        provided_pool: Option<&CandidatePool>,
+        provided_pool: Option<&CandidateSet>,
         cancel: &CancellationToken,
         ranked: RankedCandidates,
-    ) -> Result<NativeQueryResult> {
+    ) -> Result<Value> {
         let RankedCandidates {
             mut hits,
             channel_scores,
@@ -57,7 +58,7 @@ impl Snapshot {
                 &ordered,
                 &self.inner.candidates.group_rows,
                 readout_max_union_candidates,
-                o.passages_per_group,
+                o.candidates_per_group,
             );
             hits.retain(|hit| selected.contains(&hit["row"].as_u64().unwrap()));
         }
@@ -222,136 +223,12 @@ impl Snapshot {
                 selected.push(hit);
             }
             kept = selected;
-            // A group's rank and its readable location are separate facts. Inspect only
-            // allowed local rows of selected groups; never rerun global recall or VCP.
-            let selected_groups = groups
-                .iter()
-                .filter_map(|group| group["group_row"].as_u64())
-                .collect::<BTreeSet<_>>();
-            let mut local_rows = BTreeMap::<u64, Vec<u64>>::new();
-            for row in allowed {
-                let group = self.inner.candidates.group_rows[*row as usize];
-                if selected_groups.contains(&group) && self.inner.candidates.local[*row as usize] {
-                    let rows = local_rows.entry(group).or_default();
-                    if rows.len() < o.group_scan_limit {
-                        rows.push(*row);
-                    }
-                }
-            }
+            // Ranking fixes the group; localization independently compares its allowed units.
+            let localized =
+                self.locate_groups(text, &groups, allowed, local_vector.as_deref(), o, cancel)?;
             for group in &mut groups {
-                cancel.check()?;
                 let group_row = group["group_row"].as_u64().unwrap();
-                let basis_row = group["rank_basis_row"].as_u64().unwrap();
-                let basis = kept
-                    .iter()
-                    .find(|hit| hit["row"].as_u64() == Some(basis_row))
-                    .unwrap();
-                let evidence = basis["lexical_evidence"].clone();
-                let fields = evidence["matched_fields"].as_array().unwrap();
-                let reason = if !evidence["body_range"].is_null() {
-                    "body_match"
-                } else if fields.iter().any(|field| field.as_str() == Some("title")) {
-                    "title_preview"
-                } else if self.inner.candidates.local[basis_row as usize] {
-                    "local_score"
-                } else {
-                    "preview"
-                };
-                let mut passages = vec![
-                    json!({"row":basis_row,"reason":reason,"lexical_evidence":evidence,"evidence_row":basis_row}),
-                ];
-                if reason == "preview" {
-                    let ranked_local = group["passage_rows"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .filter_map(Value::as_u64)
-                        .find(|row| self.inner.candidates.local[*row as usize]);
-                    if let Some(row) = ranked_local {
-                        let hit = kept
-                            .iter()
-                            .find(|hit| hit["row"].as_u64() == Some(row))
-                            .unwrap();
-                        let lexical = hit["lexical_evidence"].clone();
-                        let selection_reason = if lexical["body_range"].is_null() {
-                            "local_score"
-                        } else {
-                            "body_match"
-                        };
-                        passages[0] = json!({"row":row,"reason":selection_reason,"lexical_evidence":lexical,"evidence_row":row});
-                    }
-                    let mut best: Option<(u64, f64, Value, &str)> = None;
-                    for candidate in local_rows
-                        .get(&group_row)
-                        .into_iter()
-                        .flatten()
-                        .copied()
-                        .filter(|_| ranked_local.is_none())
-                    {
-                        cancel.check()?;
-                        let row = candidate as usize;
-                        let lexical = self.inner.lexical.evidence(
-                            text,
-                            &self.inner.input.candidates.texts[row],
-                            &self.inner.candidates.titles[row],
-                        );
-                        if !lexical["body_range"].is_null() {
-                            best = Some((candidate, 0.0, lexical, "body_match"));
-                            break;
-                        }
-                        if matches!(mode, "dense" | "tagmemo") {
-                            if let (Some(query), Some(vectors)) =
-                                (local_vector.as_ref(), self.inner.candidate_units.as_ref())
-                            {
-                                let score: f64 = vectors[row]
-                                    .iter()
-                                    .zip(query)
-                                    .map(|(a, b)| f64::from(*a) * f64::from(*b))
-                                    .sum();
-                                if best.as_ref().is_none_or(|(_, old, _, _)| score > *old) {
-                                    best = Some((candidate, score, lexical, "local_score"));
-                                }
-                            }
-                        }
-                    }
-                    if let Some((row, _, lexical, selection_reason)) = best {
-                        let ranked = kept.iter().find(|hit| hit["row"].as_u64() == Some(row));
-                        passages[0] = json!({"row":row,"reason":selection_reason,"lexical_evidence":lexical,"evidence_row":ranked.map(|_|row)});
-                    }
-                }
-                for row in group["passage_rows"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter_map(Value::as_u64)
-                {
-                    if passages.len() >= o.passages_per_group {
-                        break;
-                    }
-                    if passages
-                        .iter()
-                        .any(|part| part["row"].as_u64() == Some(row))
-                    {
-                        continue;
-                    }
-                    if reason == "preview" && row == basis_row && passages[0]["row"] != basis_row {
-                        continue;
-                    }
-                    let hit = kept
-                        .iter()
-                        .find(|hit| hit["row"].as_u64() == Some(row))
-                        .unwrap();
-                    let lexical = hit["lexical_evidence"].clone();
-                    let reason = if !lexical["body_range"].is_null() {
-                        "body_match"
-                    } else if self.inner.candidates.local[row as usize] {
-                        "local_score"
-                    } else {
-                        "preview"
-                    };
-                    passages.push(json!({"row":row,"reason":reason,"lexical_evidence":lexical,"evidence_row":row}));
-                }
-                group["passages"] = json!(passages);
+                group["passages"] = json!(localized.get(&group_row).cloned().unwrap_or_default());
                 group.as_object_mut().unwrap().remove("passage_rows");
             }
         } else {
@@ -383,21 +260,14 @@ impl Snapshot {
         } else {
             None
         };
-        let rows = kept.iter().map(|v| v["row"].as_u64().unwrap()).collect();
-        let quality = kept
-            .iter()
-            .map(|v| v["quality_score"].as_f64().unwrap_or(f64::NAN))
-            .collect();
-        let ranking = kept
-            .iter()
-            .map(|v| v["ranking_score"].as_f64().unwrap())
-            .collect();
         let mut reported_lanes = BTreeSet::new();
         used_lanes.retain(|lane| reported_lanes.insert(lane.clone()));
         diagnostics["total_ms"] = json!(started.elapsed().as_secs_f64() * 1000.0);
         diagnostics["max_union_candidates"] = json!(readout_max_union_candidates);
         diagnostics["readout_max_union_candidates"] = json!(readout_max_union_candidates);
         diagnostics["input_scale"] = json!({"allowed_candidates":allowed.len(),"concepts":self.inner.concepts.keys.len(),"max_union_candidates":readout_max_union_candidates});
-        Ok(NativeQueryResult{rows,quality,ranking,result_json:json!({"mode":mode,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"groups":groups,"grouping":o.grouping,"rank_scope":provided_pool.map(|pool|pool.rank_scope.as_str()).unwrap_or(if o.grouping == "document" {"grouped_lane"} else {"candidate_lane"}),"thinking":thinking,"algorithm_versions":{"vcp_upstream":"d5c019ebbac1f317c2938d655d2ce916e41b9164","pipeline":"memo.conservative-topology-v2.2","river":"rivermemo.conservative-topology-v2.2"},"coverage":{"requested_groups":if o.grouping=="document"{Some(o.top_k)}else{None},"returned_groups":groups.len(),"eligible_groups_known":eligible_groups_known,"allowed_groups":allowed.iter().map(|row|self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),"recall_exhausted":recall_exhausted,"truncated":recall_truncated||pool_truncated||top_k_truncated,"reason":coverage_reason,"lanes":lane_coverage,"lane_limit_unit":if o.grouping == "document" {"groups"}else{"candidates"},"group_scan_limit":o.group_scan_limit,"passages_per_group":o.passages_per_group,"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":top_k_truncated},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}).to_string()})
+        Ok(
+            json!({"program":program,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"groups":groups,"grouping":o.grouping,"rank_scope":provided_pool.map(|pool|pool.rank_scope.as_str()).unwrap_or(if o.grouping == "document" {"grouped_lane"} else {"candidate_lane"}),"thinking":thinking,"algorithm_versions":{"vcp_upstream":"d5c019ebbac1f317c2938d655d2ce916e41b9164","pipeline":"memo.conservative-topology-v2.2","river":"rivermemo.conservative-topology-v2.2"},"coverage":{"requested_groups":if o.grouping=="document"{Some(o.top_k)}else{None},"returned_groups":groups.len(),"eligible_groups_known":eligible_groups_known,"allowed_groups":allowed.iter().map(|row|self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),"recall_exhausted":recall_exhausted,"truncated":recall_truncated||pool_truncated||top_k_truncated,"reason":coverage_reason,"lanes":lane_coverage,"lane_limit_unit":if o.grouping == "document" {"groups"}else{"candidates"},"group_scan_limit":o.group_scan_limit,"passages_per_group":o.passages_per_group,"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":top_k_truncated},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}),
+        )
     }
 }

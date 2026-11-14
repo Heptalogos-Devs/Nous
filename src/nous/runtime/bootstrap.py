@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+import sqlalchemy as sa
 import tomlkit
 
 from nous.application.config_operations import OfflineCalls
@@ -37,9 +38,19 @@ from nous.cognition.feedback import (
     RECORD_QUERY_FEEDBACK,
     RESOLVE_FEEDBACK,
     FeedbackOperations,
+    upgrade_query_feedback_in,
 )
+from nous.cognition.feedback_schema import feedback as feedback_table
 from nous.cognition.maintenance.operations import MAINTAIN_RECORD, MaintenanceOperations
-from nous.cognition.retrieval.operations import QUERY, REFRESH, CognitiveRetrieval
+from nous.cognition.materials import (
+    FOLLOW_MATERIAL,
+    READ_MATERIAL,
+    Materials,
+    upgrade_material_source_refs_in,
+)
+from nous.cognition.retrieval.adoption import EvidenceAdoption
+from nous.cognition.retrieval.operations import QUERY, REFRESH, SAVE_EVIDENCE, CognitiveRetrieval
+from nous.cognition.schema import source_materials
 from nous.cognition.scope import (
     CREATE_NAMESPACE,
     LIST_NAMESPACES,
@@ -49,6 +60,19 @@ from nous.cognition.scope import (
 )
 from nous.cognition.scope import initialize_in as initialize_namespaces_in
 from nous.cognition.sources import SourceResolver
+from nous.cognition.steward.operations import ARRANGE, StewardOperations
+from nous.cognition.steward.task import steward_tasks
+from nous.cognition.work import schema as work_schema
+from nous.cognition.work.operations import (
+    CREATE_WORK,
+    LIST_WORK_USES,
+    READ_WORK,
+    RECORD_WORK_USE,
+    REVISE_WORK,
+    SET_ACTIVE_WORK,
+    WorkOperations,
+)
+from nous.cognition.work.reading import WorkReader
 from nous.cognition.writing.drafts import DraftStore
 from nous.cognition.writing.generation import (
     DRAFT_FROM_RESULT,
@@ -80,17 +104,20 @@ from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
 from nous.content.operations import (
     ACCEPT_CONTENT,
+    DELETE_RESULT,
     EXPORT_CONTENT,
     READ_ARTIFACT,
     READ_RESULT,
     READ_SELECTIONS,
     ContentOperations,
 )
-from nous.content.results import ResultStore
+from nous.content.results import ResultStore, upgrade_mapping_origins_in
+from nous.content.schema import mapping_origins, material_sources, named_selections
 from nous.media.analysis import ANALYZE_MEDIA, INSPECT_MEDIA, MediaAnalysis
 from nous.media.preparation import MediaPreparer
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import EmbeddingExecutor
+from nous.models.evaluation import EVALUATE, RANK, EvaluationOperations
 from nous.models.executor import ModelExecutor
 from nous.models.generation import GenerationOperations
 from nous.models.generation.operations import MODEL_DISCOVER, MODEL_PROBE, MODEL_RUN, PROMPT_PREVIEW
@@ -101,7 +128,7 @@ from nous.observability.assembly import LoggingSession, Observability
 from nous.observability.diagnostics import recent_content_preparations, recent_problems
 from nous.observability.instrumentation import get_logger, operation
 from nous.storage.content import ContentStore
-from nous.storage.database import Database
+from nous.storage.database import Database, WriteTx
 from nous.temporal.domains import TimeService, bind_domains, check_domains
 from nous.temporal.values import Clock
 from nous.wave.operations import (
@@ -126,13 +153,56 @@ from .operations import (
     RuntimeOperations,
 )
 from .paths import ResolvedPaths
-from .schema import BUSINESS_METADATA
+from .schema import BUSINESS_METADATA, work_metadata
+
+
+async def _upgrade_additive_tables(database: Database) -> None:
+    """Extend existing instances with work and explicit result relationship tables."""
+    additions = (
+        *work_metadata.tables.values(),
+        named_selections,
+        mapping_origins,
+        material_sources,
+        source_materials,
+        feedback_table,
+    )
+    addition_names = {table.name for table in additions}
+    baseline = sa.MetaData()
+    complete = sa.MetaData()
+    for owner in BUSINESS_METADATA:
+        for table in owner.tables.values():
+            table.to_metadata(complete)
+            if table.name not in addition_names:
+                table.to_metadata(baseline)
+    await database.check_schema((baseline,))
+    async with database.write() as tx:
+        present = await tx.connection.run_sync(
+            lambda connection: set(sa.inspect(connection).get_table_names())
+        )
+        await tx.connection.run_sync(
+            lambda connection: complete.create_all(
+                connection,
+                tables=[complete.tables[table.name] for table in additions],
+                checkfirst=True,
+            )
+        )
+        await upgrade_material_source_refs_in(tx)
+        if work_schema.result_dependencies.name not in present:
+            await WorkOperations.backfill_result_dependencies_in(tx)
+        await upgrade_mapping_origins_in(tx)
+        await upgrade_query_feedback_in(tx)
+    await database.check_schema(BUSINESS_METADATA)
 
 
 def task_catalog() -> TaskCatalog:
     """Compose model tasks with the writing domain's actual task contracts."""
     return TaskCatalog(
-        (*builtin_tasks().definitions.values(), *writing_tasks(), ConceptAnnotationTask())
+        (
+            *builtin_tasks().definitions.values(),
+            *writing_tasks(),
+            *steward_tasks(),
+            ConceptAnnotationTask(),
+        )
     )
 
 
@@ -174,6 +244,7 @@ class Runtime:
     prompts: PromptCatalog
     models: ModelExecutor
     generation: GenerationOperations
+    evaluation: EvaluationOperations
     media: MediaAnalysis
     embeddings: EmbeddingExecutor
     embedding_spaces: EmbeddingSpaceRegistry
@@ -182,6 +253,9 @@ class Runtime:
     namespaces: NamespaceOperations
     written_records: WrittenRecords
     record_reader: RecordReader
+    materials: Materials
+    work: WorkOperations
+    steward: StewardOperations
     drafts: DraftStore
     concepts: ConceptOperations
     annotations: AnnotationOperations
@@ -349,8 +423,10 @@ async def initialize_instance(
                 descriptor.instance_id,
                 create=not existing,
                 database_id=str(binding.database_id),
-                additional_metadata=BUSINESS_METADATA,
+                additional_metadata=() if existing else BUSINESS_METADATA,
             ) as database:
+                if existing:
+                    await _upgrade_additive_tables(database)
                 await bind_domains(database, settings.time.domains)
                 if not existing:
                     async with database.write() as tx:
@@ -465,9 +541,10 @@ async def open_instance(
                         settings.database,
                         descriptor.instance_id,
                         database_id=str(binding.database_id),
-                        additional_metadata=BUSINESS_METADATA,
+                        additional_metadata=(),
                     )
                 )
+                await _upgrade_additive_tables(database)
                 stack.push_async_callback(close_execution)
                 embedding_spaces = EmbeddingSpaceRegistry(database)
                 await check_domains(database, settings.time.domains)
@@ -512,6 +589,7 @@ async def open_instance(
                 models = ModelExecutor(connections, compiler)
                 preparer = MediaPreparer(artifacts, results, execution)
                 generation = GenerationOperations(models, results, execution, preparer)
+                evaluation = EvaluationOperations(generation)
                 media = MediaAnalysis(artifacts, preparer, generation, results, execution)
                 embeddings = EmbeddingExecutor(connections)
                 embedding = EmbeddingOperations(
@@ -533,6 +611,18 @@ async def open_instance(
                 annotations = AnnotationOperations(
                     database, execution, record_reader, concepts, generation
                 )
+                work_reader = WorkReader(database, execution, namespaces, artifacts)
+                materials = Materials(artifacts, results, record_reader, annotations, work_reader)
+                work = WorkOperations(
+                    database,
+                    execution,
+                    namespaces,
+                    artifacts,
+                    results,
+                    materials,
+                    clock,
+                    work_reader,
+                )
                 wave = WaveOperations(
                     database,
                     execution,
@@ -543,16 +633,23 @@ async def open_instance(
                     results,
                     embedding,
                     preparer,
+                    evaluation,
                 )
+                evidence_adoption = EvidenceAdoption(database, artifacts, results, materials, wave)
+                steward = StewardOperations(generation, results, materials, evidence_adoption, wave)
                 cognitive_retrieval = CognitiveRetrieval(
                     database,
                     execution,
                     namespaces,
-                    record_reader,
                     artifacts,
                     results,
                     wave,
                     annotations,
+                    materials,
+                    work,
+                    steward,
+                    time_service,
+                    evidence_adoption=evidence_adoption,
                 )
                 written_records = WrittenRecords(
                     database,
@@ -561,11 +658,12 @@ async def open_instance(
                     namespaces,
                     results,
                     record_reader,
-                    SourceResolver(record_reader, preparer),
+                    SourceResolver(record_reader, preparer, materials),
+                    materials,
                 )
                 drafts = DraftStore(database, execution, written_records, record_reader, results)
                 feedback = FeedbackOperations(
-                    database, execution, namespaces, record_reader, wave, clock
+                    database, execution, namespaces, record_reader, wave, results, clock
                 )
                 maintenance = MaintenanceOperations(
                     database,
@@ -579,7 +677,7 @@ async def open_instance(
                     written_records, record_reader, drafts, feedback, maintenance
                 )
                 writing = WritingOperations(
-                    written_records, record_reader, generation, drafts, records
+                    written_records, record_reader, generation, drafts, records, materials
                 )
                 runtime = Runtime(
                     paths=paths,
@@ -595,6 +693,7 @@ async def open_instance(
                     prompts=prompts,
                     models=models,
                     generation=generation,
+                    evaluation=evaluation,
                     media=media,
                     embeddings=embeddings,
                     embedding_spaces=embedding_spaces,
@@ -603,6 +702,9 @@ async def open_instance(
                     namespaces=namespaces,
                     written_records=written_records,
                     record_reader=record_reader,
+                    materials=materials,
+                    work=work,
+                    steward=steward,
                     drafts=drafts,
                     concepts=concepts,
                     annotations=annotations,
@@ -613,7 +715,11 @@ async def open_instance(
                     writing=writing,
                     state="ready",
                 )
-                content_operations = ContentOperations(results, artifacts)
+
+                async def release_result(tx: WriteTx, result_id: str) -> None:
+                    await wave.release_in(tx, owner_kind="result", owner_id=result_id)
+
+                content_operations = ContentOperations(results, artifacts, release_result)
                 runtime_operations = RuntimeOperations(execution, runtime.check)
                 configuration_calls = OfflineCalls(
                     configuration,
@@ -626,6 +732,7 @@ async def open_instance(
                     BoundOperation(ACCEPT_CONTENT, content_operations.accept),
                     BoundOperation(READ_ARTIFACT, content_operations.read_artifact),
                     BoundOperation(READ_RESULT, content_operations.read_result),
+                    BoundOperation(DELETE_RESULT, content_operations.delete_result),
                     BoundOperation(READ_SELECTIONS, content_operations.read_selections),
                     BoundOperation(EXPORT_CONTENT, content_operations.export_offer),
                     BoundOperation(CHECK_RUNTIME, runtime_operations.check),
@@ -644,7 +751,19 @@ async def open_instance(
                     BoundOperation(READ_ANNOTATION_PROPOSAL, annotations.read_annotation_proposal),
                     BoundOperation(MAINTAIN_RECORD, maintenance.run),
                     BoundOperation(QUERY, cognitive_retrieval.handle_query),
+                    BoundOperation(SAVE_EVIDENCE, cognitive_retrieval.save_evidence),
                     BoundOperation(REFRESH, cognitive_retrieval.handle_refresh),
+                    BoundOperation(READ_MATERIAL, materials.read),
+                    BoundOperation(FOLLOW_MATERIAL, materials.follow_request),
+                    BoundOperation(ARRANGE, steward.arrange),
+                    BoundOperation(CREATE_WORK, work.create),
+                    BoundOperation(READ_WORK, work_reader.read),
+                    BoundOperation(REVISE_WORK, work.revise),
+                    BoundOperation(SET_ACTIVE_WORK, work.set_active),
+                    BoundOperation(RECORD_WORK_USE, work.record_use),
+                    BoundOperation(LIST_WORK_USES, work.list_uses),
+                    BoundOperation(EVALUATE, evaluation.evaluate),
+                    BoundOperation(RANK, evaluation.rank),
                     BoundOperation(RECORD_QUERY_FEEDBACK, feedback.record_query),
                     BoundOperation(RECORD_FEEDBACK, feedback.record),
                     BoundOperation(READ_FEEDBACK, feedback.read),

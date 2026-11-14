@@ -1,6 +1,8 @@
 //! One observation feeds candidate recall, ranked readout and grounded Thinking.
 mod delivery;
+mod localize;
 mod observation;
+mod program;
 mod ranked;
 mod recall;
 use crate::{
@@ -25,13 +27,11 @@ use std::{
 /// An ordered, snapshot-bound pool. Readout never runs recall for this value.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidatePool {
+pub struct CandidateSet {
     #[serde(default = "candidate_rank_scope")]
     pub rank_scope: String,
     pub identity: Value,
     pub entries: Vec<PoolEntry>,
-    #[serde(default)]
-    pub calibration: Option<PreparedPool>,
     #[serde(default)]
     pub offered_candidates: usize,
     #[serde(default)]
@@ -51,18 +51,26 @@ pub struct PoolEntry {
 pub struct LaneScore {
     pub score: f64,
     pub rank: usize,
+    #[serde(default = "one_weight")]
+    pub weight: f64,
+}
+fn one_weight() -> f64 {
+    1.0
 }
 #[derive(Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Options {
     pub grouping: String,
     pub passages_per_group: usize,
+    pub candidates_per_group: usize,
+    pub ann_search_effort: usize,
     pub group_scan_limit: usize,
     #[serde(skip)]
     pub lane_coverage: std::sync::Mutex<BTreeMap<String, crate::grouping::LaneCoverage>>,
     pub query_space_signature: Option<String>,
     pub top_k: usize,
     pub rrf_k: f64,
+    pub preference_weight: f64,
     pub include_trace: bool,
     pub core_rows: Vec<u64>,
     pub ghosts: Vec<Ghost>,
@@ -70,9 +78,31 @@ pub struct Options {
     pub readout: NativeConfig,
     pub dtsc: ReferenceDtscConfig,
     pub thinking_stages: Vec<ThinkingStage>,
+    pub explore: bool,
     pub thinking_min_closure: f64,
     pub dedup_threshold: Option<f64>,
     pub include_counterevidence: bool,
+    pub local_units_per_group: usize,
+    pub localize_signals: Vec<String>,
+    pub localize_rrf_k: f64,
+    pub localize_lexical_weight: f64,
+    pub localize_semantic_weight: f64,
+    pub context_lexical: Vec<ContextLexical>,
+    pub localization_context: Vec<ContextLexical>,
+    pub sort_values: BTreeMap<String, BTreeMap<String, Option<SortTime>>>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SortTime {
+    pub domain: String,
+    pub ticks: i64,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextLexical {
+    pub key: String,
+    pub text: String,
+    pub contribution: f64,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -95,10 +125,13 @@ impl Default for Options {
             query_space_signature: None,
             grouping: "candidate".into(),
             passages_per_group: 1,
+            candidates_per_group: controls.candidates_per_group,
+            ann_search_effort: controls.ann_search_effort,
             group_scan_limit: controls.group_scan_limit,
             lane_coverage: Default::default(),
             top_k: controls.top_k,
             rrf_k: controls.rrf_k,
+            preference_weight: controls.preference_weight,
             include_trace: false,
             core_rows: vec![],
             ghosts: vec![],
@@ -106,9 +139,18 @@ impl Default for Options {
             readout: Default::default(),
             dtsc: Default::default(),
             thinking_stages: vec![],
+            explore: false,
             thinking_min_closure: controls.thinking_min_closure,
             dedup_threshold: None,
             include_counterevidence: true,
+            local_units_per_group: 64,
+            localize_signals: vec!["lexical".into(), "semantic".into()],
+            localize_rrf_k: 60.0,
+            localize_lexical_weight: 1.0,
+            localize_semantic_weight: 1.0,
+            context_lexical: vec![],
+            localization_context: vec![],
+            sort_values: BTreeMap::new(),
         }
     }
 }
@@ -116,7 +158,8 @@ impl Options {
     fn validate_grouping(&self) -> Result<()> {
         ensure!(
             matches!(self.grouping.as_str(), "candidate" | "document")
-                && self.passages_per_group > 0,
+                && self.passages_per_group > 0
+                && (1..=10000).contains(&self.candidates_per_group),
             "Invalid result grouping"
         );
         ensure!(
@@ -137,6 +180,12 @@ impl Options {
         }
     }
 }
+pub struct CalibratedPool {
+    pub candidates: CandidateSet,
+    pub prepared: PreparedPool,
+    pub observation: Arc<PipelineOutput>,
+    pub population: usize,
+}
 pub struct QueryObservation {
     pub output: Arc<PipelineOutput>,
     pub identity: Value,
@@ -144,10 +193,4 @@ pub struct QueryObservation {
     pub core_rows: Vec<u64>,
     pub records_enabled: bool,
     pub diagnostics_json: String,
-}
-pub struct NativeQueryResult {
-    pub rows: Vec<u64>,
-    pub quality: Vec<f64>,
-    pub ranking: Vec<f64>,
-    pub result_json: String,
 }

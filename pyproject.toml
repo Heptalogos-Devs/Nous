@@ -35,6 +35,14 @@ dependencies = [
   "httpx2[socks]>=2.16,<3",
   "openai>=3.42.1,<4",
   "markdown-it-py>=4.2,<5",
+  "lark>=1.2,<2",
+  "mcp>=2,<3",
+  "grpcio>=1.76,<2",
+  "starlette>=0.46,<1",
+  "uvicorn>=0.34,<1",
+  "uniseg>=0.10.1,<1",
+  "jsonpointer>=3.11,<4",
+  "tokenizers>=0.22,<1",
 ]
 
 [project.scripts]

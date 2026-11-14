@@ -1,15 +1,19 @@
 """Read exact written revisions and source bindings for every cognitive operation."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, TypedDict, cast
 
 import sqlalchemy as sa
+from pydantic import TypeAdapter
 
+from nous.cognition.material_contracts import MaterialRef, MaterialSource
 from nous.common.errors import NousError
 from nous.common.identifier import split_revision
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
+    ArtifactRef,
     ContentSelection,
     SourceSelection,
 )
@@ -67,6 +71,21 @@ class RevisionRow(TypedDict):
 
 
 Target = str | RecordRef | RecordRevisionRef
+_MATERIAL_REF = TypeAdapter(MaterialRef)
+
+
+@dataclass(frozen=True)
+class CapturedRevision:
+    """Exact record facts selected together without reading or parsing its body."""
+
+    record: RecordRow
+    revision: RevisionRow
+    head: RevisionRow
+    body: ArtifactRef
+    body_digest: str
+    sources: tuple[SourceBinding, ...]
+    material_sources: tuple[MaterialSource, ...]
+    original_body: ArtifactRef | None
 
 
 class RecordReader:
@@ -173,8 +192,184 @@ class RecordReader:
             record_ref=self._ref(row), revision_id=revision["id"], ordinal=revision["ordinal"]
         )
 
+    async def current_refs_in(
+        self, tx: ReadTx, namespace: NamespaceRef
+    ) -> tuple[RecordRevisionRef, ...]:
+        """List every current revision in the supplied namespace's read view."""
+        selected = await self.namespace_in(tx, namespace)
+        rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.records, schema.revisions)
+                    .join(
+                        schema.revisions, schema.revisions.c.id == schema.records.c.head_revision_id
+                    )
+                    .where(schema.records.c.namespace_id == selected.id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        # SQLAlchemy disambiguates duplicate column names in a joined row, so fetch
+        # each table's values by its column object rather than the rendered name.
+        return tuple(
+            self.revision_ref(
+                cast(RecordRow, {column.name: row[column] for column in schema.records.columns}),
+                cast(
+                    RevisionRow, {column.name: row[column] for column in schema.revisions.columns}
+                ),
+            )
+            for row in rows
+        )
+
+    async def capture_many_in(
+        self, tx: ReadTx, refs: Sequence[RecordRevisionRef]
+    ) -> tuple[CapturedRevision, ...]:
+        """Capture exact revisions, current membership, origins and sources as one view."""
+        if not refs:
+            return ()
+        if any(ref.record_ref.instance_id != self.artifacts.instance_id for ref in refs):
+            raise NousError("cognition.instance_mismatch", "Record belongs to another instance")
+        if self.bound_namespace and any(
+            ref.record_ref.namespace_id != self.bound_namespace.id for ref in refs
+        ):
+            raise NousError("cognition.namespace_mismatch", "Record belongs to another namespace")
+        records: dict[str, RecordRow] = {}
+        revisions: dict[str, RevisionRow] = {}
+        record_ids = list(dict.fromkeys(ref.record_ref.id for ref in refs))
+        for offset in range(0, len(record_ids), 800):
+            rows = (
+                await tx.connection.execute(
+                    sa.select(schema.records).where(
+                        schema.records.c.id.in_(record_ids[offset : offset + 800])
+                    )
+                )
+            ).mappings()
+            records.update({str(row["id"]): cast(RecordRow, dict(row)) for row in rows})
+        revision_ids = list(
+            dict.fromkeys(
+                [ref.revision_id for ref in refs]
+                + [row["head_revision_id"] for row in records.values()]
+            )
+        )
+        for offset in range(0, len(revision_ids), 800):
+            rows = (
+                await tx.connection.execute(
+                    sa.select(schema.revisions).where(
+                        schema.revisions.c.id.in_(revision_ids[offset : offset + 800])
+                    )
+                )
+            ).mappings()
+            revisions.update({str(row["id"]): cast(RevisionRow, dict(row)) for row in rows})
+        for ref in refs:
+            row, revision = records.get(ref.record_ref.id), revisions.get(ref.revision_id)
+            if row is None or revision is None or self.revision_ref(row, revision) != ref:
+                raise NousError(
+                    "cognition.revision_not_found", "Exact record revision does not exist"
+                )
+            if revision["record_id"] != row["id"] or row["head_revision_id"] not in revisions:
+                raise NousError(
+                    "cognition.revision_not_found", "Exact record revision does not exist"
+                )
+        selected_ids = list(dict.fromkeys(ref.revision_id for ref in refs))
+        sources: dict[str, tuple[SourceBinding, ...]] = {}
+        for offset in range(0, len(selected_ids), 800):
+            sources.update(await self.sources_many_in(tx, selected_ids[offset : offset + 800]))
+        materials = await self.material_sources_many_in(tx, selected_ids, sources=sources)
+        origins: dict[str, str] = {}
+        for offset in range(0, len(record_ids), 800):
+            rows = (
+                await tx.connection.execute(
+                    sa.select(
+                        schema.revisions.c.record_id, schema.revisions.c.body_artifact_id
+                    ).where(
+                        schema.revisions.c.record_id.in_(record_ids[offset : offset + 800]),
+                        schema.revisions.c.ordinal == 1,
+                        ~sa.select(1)
+                        .where(schema.sources.c.revision_id == schema.revisions.c.id)
+                        .exists(),
+                    )
+                )
+            ).mappings()
+            origins.update({str(row["record_id"]): str(row["body_artifact_id"]) for row in rows})
+        artifact_ids = list(
+            dict.fromkeys(
+                [revisions[ref.revision_id]["body_artifact_id"] for ref in refs]
+                + list(origins.values())
+            )
+        )
+        artifacts = {
+            value.ref.id: value.ref for value in await self.artifacts.get_many_in(tx, artifact_ids)
+        }
+        body_ids = [revisions[ref.revision_id]["body_artifact_id"] for ref in refs]
+        blobs = await self.artifacts.content.resolve_many_in(tx, body_ids)
+        return tuple(
+            CapturedRevision(
+                record=records[ref.record_ref.id],
+                revision=revisions[ref.revision_id],
+                head=revisions[records[ref.record_ref.id]["head_revision_id"]],
+                body=artifacts[revisions[ref.revision_id]["body_artifact_id"]],
+                body_digest=blob.digest,
+                sources=sources[ref.revision_id],
+                material_sources=materials[ref.revision_id],
+                original_body=artifacts[origins[ref.record_ref.id]]
+                if ref.record_ref.id in origins
+                else None,
+            )
+            for ref, blob in zip(refs, blobs, strict=True)
+        )
+
     async def sources_in(self, tx: ReadTx, revision_id: str) -> tuple[SourceBinding, ...]:
         return (await self.sources_many_in(tx, (revision_id,)))[revision_id]
+
+    async def material_sources_many_in(
+        self,
+        tx: ReadTx,
+        revision_ids: Sequence[str],
+        *,
+        sources: Mapping[str, tuple[SourceBinding, ...]] | None = None,
+    ) -> dict[str, tuple[MaterialSource, ...]]:
+        """Read the material identities explicitly adopted for exact source keys."""
+        bindings = sources if sources is not None else await self.sources_many_in(tx, revision_ids)
+        by_key = {
+            (revision_id, item.key): item
+            for revision_id, values in bindings.items()
+            for item in values
+        }
+        output: dict[str, list[MaterialSource]] = {item: [] for item in revision_ids}
+        identifiers = list(dict.fromkeys(revision_ids))
+        for offset in range(0, len(identifiers), 800):
+            rows = (
+                await tx.connection.execute(
+                    sa.select(schema.source_materials)
+                    .join(
+                        schema.sources,
+                        sa.and_(
+                            schema.source_materials.c.revision_id == schema.sources.c.revision_id,
+                            schema.source_materials.c.key == schema.sources.c.key,
+                        ),
+                    )
+                    .where(
+                        schema.source_materials.c.revision_id.in_(
+                            identifiers[offset : offset + 800]
+                        )
+                    )
+                    .order_by(schema.source_materials.c.revision_id, schema.sources.c.ordinal)
+                )
+            ).mappings()
+            for row in rows:
+                revision_id, key = str(row["revision_id"]), str(row["key"])
+                binding = by_key[(revision_id, key)]
+                output[revision_id].append(
+                    MaterialSource(
+                        key=key,
+                        material=_MATERIAL_REF.validate_python(row["material"]),
+                        selections=binding.selections,
+                        kind=binding.usage,
+                        name=binding.name,
+                    )
+                )
+        return {key: tuple(value) for key, value in output.items()}
 
     async def _source_details(
         self, bindings: Sequence[SourceBinding]

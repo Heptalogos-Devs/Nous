@@ -17,6 +17,7 @@ from nous.content.contracts import (
     ContentSelection,
     ContentValue,
     ExternalInput,
+    ResultOutputRef,
     ResultRef,
     SelectedSource,
     SourceFacts,
@@ -31,14 +32,6 @@ from nous.runtime.execution import ExecutionManager
 from .preparation import MediaPreparer
 
 
-class MediaDescriptionContext(ContentValue):
-    source: ContentSelection
-    question: str
-    instructions: str
-    task: str
-    coverage: dict[str, JsonValue]
-
-
 class AnalyzeMedia(ContentValue):
     source: SourceTarget
     strategy: Literal["description_only", "direct_structured", "describe_then_structure"]
@@ -46,7 +39,7 @@ class AnalyzeMedia(ContentValue):
     instructions: str = ""
     description_task: str | None = None
     structure_task: str | None = None
-    description: ResultRef | str | None = None
+    description: ResultOutputRef | ResultRef | str | None = None
     document_mode: Literal["auto", "text", "visual"] = "auto"
     input_mode: Literal["joint", "independent"] = "joint"
     independent_ranges: tuple[SourceSelection, ...] = ()
@@ -151,30 +144,35 @@ class MediaAnalysis:
                     "structure" if request.strategy == "direct_structured" else "description"
                 )
                 description_ref: ResultRef | None = None
+                description_output: str | None = None
                 if request.description is not None:
-                    saved = await self.results.get(request.description)
-                    data = saved.parameters.get("media_description")
-                    try:
-                        context = MediaDescriptionContext.model_validate(data)
-                    except ValueError as error:
-                        raise NousError(
-                            "media.description_mismatch", "Result is not a media description"
-                        ) from error
-                    if (
-                        context.source != scope.sources[0].selections[0]
-                        or context.question != request.question
-                        or context.instructions != request.instructions
-                    ):
-                        raise NousError(
-                            "media.description_mismatch",
-                            "Description covers a different source, question or instruction",
+                    requested = request.description
+                    saved = await self.results.get(
+                        requested.result if isinstance(requested, ResultOutputRef) else requested
+                    )
+                    candidates = tuple(
+                        item
+                        for item in saved.outputs
+                        if item.representation_kind == "description"
+                        and (
+                            not isinstance(requested, ResultOutputRef)
+                            or item.name == requested.output
                         )
-                    if (
-                        request.description_task is not None
-                        and context.task != request.description_task
-                    ):
+                    )
+                    if len(candidates) != 1:
                         raise NousError(
-                            "media.description_mismatch", "Description uses a different task"
+                            "media.description_mismatch", "Choose one description output"
+                        )
+                    description_output = candidates[0].name
+                    related = tuple(
+                        origin
+                        for mapping in saved.mappings
+                        if mapping.output_name == description_output
+                        for origin in mapping.origins
+                    )
+                    if not any(item.artifact == original.artifact for item in related):
+                        raise NousError(
+                            "media.description_mismatch", "Description refers to another source"
                         )
                     description_ref = saved.ref
                     descriptions.append(saved.ref)
@@ -191,21 +189,6 @@ class MediaAnalysis:
                         ),
                         call,
                     )
-                    context = MediaDescriptionContext(
-                        source=scope.sources[0].selections[0],
-                        question=request.question,
-                        instructions=request.instructions,
-                        task=description_task,
-                        coverage=generated.facts.coverage,
-                    )
-                    facts = generated.facts.model_copy(
-                        update={
-                            "parameters": {
-                                **generated.facts.parameters,
-                                "media_description": context.model_dump(mode="json"),
-                            }
-                        }
-                    )
                     primary = [
                         name for name, value in generated.outputs.items() if value.role == "primary"
                     ]
@@ -219,8 +202,9 @@ class MediaAnalysis:
                         else value
                         for name, value in generated.outputs.items()
                     }
-                    saved = await self.results.adopt(facts=facts, outputs=outputs)
+                    saved = await self.results.adopt(facts=generated.facts, outputs=outputs)
                     description_ref = saved.ref
+                    description_output = primary[0]
                     descriptions.append(saved.ref)
                     await call.saved(saved.ref)
                     if request.strategy == "description_only":
@@ -230,7 +214,9 @@ class MediaAnalysis:
                 failed_stage = "structure"
                 if description_ref is not None:
                     description = await self.results.get(description_ref)
-                    outputs = tuple(item for item in description.outputs if item.role == "primary")
+                    outputs = tuple(
+                        item for item in description.outputs if item.name == description_output
+                    )
                     if len(outputs) != 1:
                         raise NousError(
                             "media.description_mismatch", "Description must have one primary output"

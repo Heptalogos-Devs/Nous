@@ -10,10 +10,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nous.cognition.retrieval.contracts import CognitiveQuery
-from nous.cognition.retrieval.operations import QUERY
-from nous.cognition.writing.contracts import AfterWrite, CreateJournal, ReadRecord
-from nous.cognition.writing.operations import CREATE_JOURNAL, READ_RECORD
+from nous.cognition.material_contracts import ReadMaterial
+from nous.cognition.materials import READ_MATERIAL
+from nous.cognition.retrieval.contracts import QueryRequest, SaveEvidence
+from nous.cognition.retrieval.operations import QUERY, SAVE_EVIDENCE
+from nous.cognition.writing.contracts import AfterWrite, CreateJournal
+from nous.cognition.writing.operations import CREATE_JOURNAL
 from nous.content.contracts import InlineText
 from nous.runtime.bootstrap import Runtime
 from nous.runtime.host import run_host
@@ -29,7 +31,6 @@ async def main(runtime: Runtime, namespace: str, annotate: bool) -> None:
             after=AfterWrite(
                 annotation="run" if annotate else "skip",
                 refresh="run",
-                mode="lexical",
                 execution="background",
             ),
         ),
@@ -41,13 +42,20 @@ async def main(runtime: Runtime, namespace: str, annotate: bool) -> None:
         )
         print("维护结果：", completed.ref.operation_id, completed.status)
     result = await runtime.app.call(
-        QUERY, CognitiveQuery(namespace=namespace, text="取消后何时释放资源？", mode="lexical")
+        QUERY, QueryRequest(namespace=namespace, text="取消后何时释放资源？")
     )
-    for group in result.groups:
+    for group in result.evidence.materials:
         view = await runtime.app.call(
-            READ_RECORD, ReadRecord(target=group.context.revision_ref, sources=True)
+            READ_MATERIAL, ReadMaterial(ref=group.material.ref, sources=True)
         )
-        print(view.revision_ref.identifier, view.body)
+        print(view.material.title, [item.body_text for item in view.selections])
+    if result.evidence.passages:
+        evidence_ref = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=result.evidence))
+        passage = result.evidence.passages[0]
+        view = await runtime.app.call(
+            READ_MATERIAL, ReadMaterial(delivery=evidence_ref, key=passage.key)
+        )
+        print("已保存证据：", evidence_ref.identifier, [item.body_text for item in view.selections])
 
 
 if __name__ == "__main__":

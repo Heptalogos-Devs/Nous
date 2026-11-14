@@ -11,7 +11,7 @@ from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import Artifact, InputGroup, InputPart, OutputContent, SourceSelection
 from nous.media.contracts import MediaPlan, PreparedBatch, PreparedSource
 from nous.models.contracts import ReadingInput
-from nous.models.tasks import TaskDefinition
+from nous.models.tasks import InterpretedOutputs, TaskDefinition, interpreted_outputs
 
 if TYPE_CHECKING:
     from nous.content.artifacts import ArtifactStore
@@ -100,8 +100,8 @@ class ConceptAnnotationTask(TaskDefinition):
         *,
         structured: bool,
         producer: dict[str, JsonValue] | None = None,
-    ) -> dict[str, OutputContent]:
-        outputs = await super().outputs(
+    ) -> InterpretedOutputs:
+        interpreted = await super().outputs(
             value, reading, artifacts, structured=structured, producer=producer
         )
         bodies = {
@@ -122,13 +122,16 @@ class ConceptAnnotationTask(TaskDefinition):
             **proposal.model_dump(),
             body_ref=body,
             parser_profile=view.parser_profile,
-            annotation_revision=hashlib.sha256(outputs["output"].data).hexdigest(),
+            annotation_revision=hashlib.sha256(interpreted.outputs["output"].data).hexdigest(),
             producer=producer or {},
         )
-        return {
-            "output": OutputContent(
-                data=annotation.model_dump_json(indent=2).encode(),
-                media_type="application/json",
-                display_name="annotation.json",
-            )
-        }
+        return interpreted_outputs(
+            {
+                "output": OutputContent(
+                    data=annotation.model_dump_json(indent=2).encode(),
+                    media_type="application/json",
+                    display_name="annotation.json",
+                )
+            },
+            reading,
+        )

@@ -168,16 +168,19 @@ impl Snapshot {
         edges.truncate(limit);
         Ok(json!({"nodes":nodes,"edges":edges,"associations":associations,"truncated":total_edges>limit}).to_string())
     }
-    pub fn validate_pool(&self, pool: &CandidatePool) -> Result<()> {
+    pub fn validate_candidates(&self, candidates: &CandidateSet) -> Result<()> {
         ensure!(
-            matches!(pool.rank_scope.as_str(), "candidate_lane" | "grouped_lane"),
-            "Invalid candidate pool rank_scope"
+            matches!(
+                candidates.rank_scope.as_str(),
+                "candidate_lane" | "grouped_lane"
+            ),
+            "Invalid candidate set rank_scope"
         );
-        if pool.identity != self.inner.input.identity {
+        if candidates.identity != self.inner.input.identity {
             return Err(crate::Failure {
-                code: "wave.candidate_pool_mismatch",
-                message: "Candidate pool belongs to another snapshot".into(),
-                details: json!({"field":"identity","expected":self.inner.input.identity,"actual":pool.identity}),
+                code: "wave.candidate_set_mismatch",
+                message: "Candidate set belongs to another snapshot".into(),
+                details: json!({"field":"identity","expected":self.inner.input.identity,"actual":candidates.identity}),
             }.into());
         }
         let invalid = |field: &str, message: &str, mut details: Value| -> anyhow::Error {
@@ -190,18 +193,18 @@ impl Snapshot {
             .into()
         };
         let mut rows = BTreeSet::new();
-        for entry in &pool.entries {
+        for entry in &candidates.entries {
             if entry.row >= self.inner.candidates.keys.len() as u64 {
                 return Err(invalid(
                     "entries.row",
-                    "Candidate pool row is outside this snapshot",
+                    "Candidate set row is outside this snapshot",
                     json!({"row":entry.row,"candidate_count":self.inner.candidates.keys.len()}),
                 ));
             }
             if !rows.insert(entry.row) {
                 return Err(invalid(
                     "entries.row",
-                    "Candidate pool contains a duplicate row",
+                    "Candidate set contains a duplicate row",
                     json!({"row":entry.row}),
                 ));
             }
@@ -213,7 +216,7 @@ impl Snapshot {
                         json!({"row":entry.row,"lane":name,"rank":lane.rank}),
                     ));
                 }
-                if !lane.score.is_finite() {
+                if !lane.score.is_finite() || !lane.weight.is_finite() || lane.weight < 0.0 {
                     return Err(invalid(
                         "entries.lanes.score",
                         "Candidate lane score must be finite",
@@ -222,91 +225,12 @@ impl Snapshot {
                 }
             }
         }
-        if let Some(calibration) = &pool.calibration {
-            if !calibration.bm25_reference.is_finite() || calibration.bm25_reference < 0.0 {
-                return Err(invalid(
-                    "calibration.bm25_reference",
-                    "BM25 reference must be finite and nonnegative",
-                    json!({"value":calibration.bm25_reference}),
-                ));
-            }
-            let mut selected = BTreeSet::new();
-            let mut ranks = BTreeSet::new();
-            for item in &calibration.selection {
-                let row = (item.id > 0).then(|| (item.id - 1) as u64);
-                if !row.is_some_and(|row| rows.contains(&row)) || !selected.insert(item.id) {
-                    return Err(invalid(
-                        "calibration.selection.id",
-                        "Calibrated selection must identify unique pool rows",
-                        json!({"id":item.id,"row":row}),
-                    ));
-                }
-                if !item.union_score.is_finite() || !(0.0..=1.0).contains(&item.union_score) {
-                    return Err(invalid(
-                        "calibration.selection.union_score",
-                        "Union score must be finite and within [0,1]",
-                        json!({"row":row,"value":item.union_score}),
-                    ));
-                }
-                if !item.anchor_score.is_finite() || !(0.0..=1.0).contains(&item.anchor_score) {
-                    return Err(invalid(
-                        "calibration.selection.anchor_score",
-                        "Anchor score must be finite and within [0,1]",
-                        json!({"row":row,"value":item.anchor_score}),
-                    ));
-                }
-                if item.union_rank == 0
-                    || item.union_rank > rows.len()
-                    || !ranks.insert(item.union_rank)
-                {
-                    return Err(invalid(
-                        "calibration.selection.union_rank",
-                        "Calibrated ranks must uniquely order the pool",
-                        json!({"row":row,"rank":item.union_rank,"candidate_count":rows.len()}),
-                    ));
-                }
-            }
-            let mut candidates = BTreeSet::new();
-            for item in &calibration.candidates {
-                let row = (item.id > 0).then(|| (item.id - 1) as u64);
-                if !row.is_some_and(|row| rows.contains(&row)) || !candidates.insert(item.id) {
-                    return Err(invalid(
-                        "calibration.candidates.id",
-                        "Calibrated candidates must identify unique pool rows",
-                        json!({"id":item.id,"row":row}),
-                    ));
-                }
-                for (field, value) in [
-                    ("score", item.score),
-                    ("hybrid_score", item.hybrid_score),
-                    ("vector_score", item.vector_score),
-                    ("bm25_score", item.bm25_score),
-                    ("time_score", item.time_score),
-                    ("anchor_score", item.anchor_score),
-                ] {
-                    if !value.is_finite() {
-                        return Err(invalid(
-                            &format!("calibration.candidates.{field}"),
-                            "Calibrated score must be finite",
-                            json!({"row":row,"value":value}),
-                        ));
-                    }
-                }
-            }
-            if selected.len() != rows.len() || candidates.len() != rows.len() {
-                return Err(invalid(
-                    "calibration",
-                    "Calibration must cover the complete candidate pool",
-                    json!({"pool_rows":rows,"selected_ids":selected,"candidate_ids":candidates}),
-                ));
-            }
-        }
         Ok(())
     }
     pub(super) fn prepare_pool(
         &self,
         observation: &QueryObservation,
-        pool: &CandidatePool,
+        pool: &CandidateSet,
         config: &NativeConfig,
         fixed: bool,
     ) -> Result<PreparedPool> {

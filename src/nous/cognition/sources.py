@@ -22,7 +22,9 @@ from nous.content.contracts import (
 from nous.media.preparation import MediaPreparer
 from nous.storage.database import ReadTx
 
-from .contracts import Namespace, NamespaceRef, RevisionSelection, SourceBinding
+from .contracts import Namespace, NamespaceRef, RecordRevisionRef, RevisionSelection, SourceBinding
+from .material_contracts import MaterialRef, MaterialSelection, MaterialSource
+from .work.refs import WorkRevisionRef
 from .writing.contracts import SourceChoice
 from .writing.reading import RecordReader, Target
 
@@ -34,11 +36,15 @@ SourceInput = (
     | ContentSelection
     | ArtifactRef
     | ResultOutputRef
+    | WorkRevisionRef
+    | MaterialSelection
     | SourceTarget
 )
 
 if TYPE_CHECKING:
     from nous.application.inputs import InputReader
+
+    from .materials import Materials
 
 
 @dataclass(frozen=True)
@@ -48,13 +54,15 @@ class PreparedSources:
     namespace: Namespace
     bindings: tuple[SourceBinding, ...]
     selected_inputs: SelectedInputs
+    material_sources: tuple[MaterialSource, ...] = ()
 
 
 class SourceResolver:
     """Resolve a source once, before models or a formal write consume it."""
 
-    def __init__(self, reader: RecordReader, preparer: MediaPreparer):
+    def __init__(self, reader: RecordReader, preparer: MediaPreparer, materials: Materials):
         self.reader, self.artifacts, self.preparer = reader, reader.artifacts, preparer
+        self.materials = materials
 
     async def prepare(
         self,
@@ -74,22 +82,33 @@ class SourceResolver:
         read view checks the immutable revision bindings used during adoption.
         """
         resolved: list[object] = []
+        hints: list[MaterialRef | None] = []
         for value in inputs:
             source = value.target if isinstance(value, SourceChoice) else value
+            hint: MaterialRef | None = None
             if isinstance(source, (ExternalInput, InlineText, ArtifactInput, ResultOutputInput)):
                 if input_reader is None:
                     raise NousError(
                         "input.missing_binding", "Source requires the current input reader"
                     )
+                if isinstance(source, ResultOutputInput):
+                    source_result = await self.preparer.results.get(source.result)
+                    hint = ResultOutputRef(result=source_result.ref, output=source.output)
                 artifact, selection = await input_reader.accept_target(source)
                 source = ContentSelection(artifact=artifact.ref, selection=selection)
+            elif isinstance(source, str) and (
+                source.startswith("work(") or source.startswith("res(")
+            ):
+                source = await self.materials.resolve_identifier(source, namespace=namespace)
             resolved.append(source)
+            hints.append(hint)
         async with self.reader.database.read() as tx:
             ns = await self.reader.namespace_in(tx, namespace)
             result: list[SourceBinding] = []
             owners: dict[str, ArtifactRef] = {}
+            material_refs: dict[str, MaterialRef] = {}
             index = 0
-            for value, source in zip(inputs, resolved, strict=True):
+            for value, source, hint in zip(inputs, resolved, hints, strict=True):
                 while True:
                     index += 1
                     key = f"{prefix}{index}"
@@ -98,6 +117,34 @@ class SourceResolver:
                 selected_usage = value.usage if isinstance(value, SourceChoice) else usage
                 if isinstance(source, SourceBinding):
                     binding = source if preserve_keys else source.model_copy(update={"key": key})
+                elif isinstance(source, (MaterialSelection, WorkRevisionRef)):
+                    material = source.material if isinstance(source, MaterialSelection) else source
+                    snapshot = (await self.materials.capture_in(tx, (material,), namespace=ns.ref))[
+                        0
+                    ]
+                    selections = source.selections if isinstance(source, MaterialSelection) else ()
+                    if not selections and snapshot.view.body is not None:
+                        selections = (snapshot.view.body,)
+                    if not selections:
+                        raise NousError("material.no_content", "Material has no content to cite")
+                    chosen = MaterialSource(
+                        key=key,
+                        material=material,
+                        selections=selections,
+                        kind=selected_usage,
+                        name=snapshot.view.title,
+                    )
+                    await self.materials.validate_sources_in(tx, (chosen,), namespace=ns.ref)
+                    binding = SourceBinding(
+                        key=key,
+                        selections=selections,
+                        owner_revision=material
+                        if isinstance(material, RecordRevisionRef)
+                        else None,
+                        usage=selected_usage,
+                        name=snapshot.view.title,
+                    )
+                    material_refs[key] = material
                 elif isinstance(source, RevisionSelection):
                     _, revision, _ = await self.reader.resolve_in(tx, source.revision, ns.id)
                     binding = SourceBinding(
@@ -124,6 +171,7 @@ class SourceResolver:
                         name=artifact.display_name,
                         usage=selected_usage,
                     )
+                    material_refs[key] = source
                 elif isinstance(source, ArtifactRef) or (
                     isinstance(source, str) and identifier_type(source) == "art"
                 ):
@@ -146,6 +194,8 @@ class SourceResolver:
                     )
                 if isinstance(value, SourceChoice):
                     binding = binding.model_copy(update={"usage": selected_usage})
+                if hint is not None:
+                    material_refs[binding.key] = hint
                 await self.artifacts.get_many_in(tx, [item.artifact for item in binding.selections])
                 if binding.owner_revision:
                     _, revision, _ = await self.reader.resolve_in(tx, binding.owner_revision, ns.id)
@@ -212,6 +262,17 @@ class SourceResolver:
                     )
                     for binding in output
                 )
+            ),
+            tuple(
+                MaterialSource(
+                    key=binding.key,
+                    material=material_refs[binding.key],
+                    selections=binding.selections,
+                    kind=binding.usage,
+                    name=binding.name,
+                )
+                for binding in output
+                if binding.key in material_refs
             ),
         )
 

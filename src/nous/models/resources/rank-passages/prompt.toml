@@ -1,0 +1,19 @@
+contract_id = "rank-candidates"
+
+[documentation]
+title = "排序候选材料"
+purpose = "按问题相关性排列候选原键。"
+consumers = ["EvaluationOperations"]
+input_notes = "question 是问题；来源键对应本次候选。"
+output_notes = "按相关性顺序返回候选键。"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+description = "排序任务及输出要求。"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+description = "本次问题和候选。"
+append_sources = true

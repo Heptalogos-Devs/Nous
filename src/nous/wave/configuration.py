@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from functools import lru_cache
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from jsonschema import Draft202012Validator
 from jsonschema import ValidationError as SchemaValidationError
@@ -15,15 +15,18 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationInfo, field_valida
 
 from nous.configuration.metadata import ConfigJson, ConfigMap, ConfigModel, mutable, setting
 
+from .contracts import WaveProgram
+from .program import default_programs
+
 
 @lru_cache(maxsize=1)
-def _native_profiles() -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
+def native_profiles() -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     """Read packaged Rust-generated resources without loading the extension."""
     try:
-        package = find_spec("nous_native")
-        if package is None or not package.submodule_search_locations:
+        extension = find_spec("nous_native._core")
+        if extension is None or extension.origin is None:
             return {}, {}
-        root = Path(next(iter(package.submodule_search_locations))) / "resources"
+        root = Path(extension.origin).parent / "resources"
         defaults = TypeAdapter(dict[str, JsonValue]).validate_json(
             root.joinpath("defaults.json").read_text(encoding="utf-8")
         )
@@ -36,7 +39,7 @@ def _native_profiles() -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
 
 
 def require_native_profiles() -> None:
-    defaults, schemas = _native_profiles()
+    defaults, schemas = native_profiles()
     required = {"build", "pipeline", "readout", "dtsc", "query", "context"}
     if required - defaults.keys() or required - schemas.keys():
         from nous.common.errors import NousError
@@ -48,18 +51,18 @@ def require_native_profiles() -> None:
 
 
 def _defaults(names: tuple[str, ...]) -> dict[str, JsonValue]:
-    defaults, _ = _native_profiles()
+    defaults, _ = native_profiles()
     return copy.deepcopy({name: defaults[name] for name in names if name in defaults})
 
 
 def _build_defaults() -> dict[str, JsonValue]:
-    defaults, _ = _native_profiles()
+    defaults, _ = native_profiles()
     value = defaults.get("build", {})
     return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
 def _profile_defaults(name: str) -> dict[str, JsonValue]:
-    defaults, _ = _native_profiles()
+    defaults, _ = native_profiles()
     profile = defaults.get(name)
     if not isinstance(profile, dict):
         raise ValueError(f"Native defaults are unavailable: {name}")
@@ -75,7 +78,7 @@ def _query_defaults() -> dict[str, JsonValue]:
 
 
 def _controls_schema() -> dict[str, JsonValue]:
-    _, schemas = _native_profiles()
+    _, schemas = native_profiles()
     raw = schemas.get("query")
     if not isinstance(raw, dict):
         raise ValueError("Native query schema is unavailable")
@@ -117,7 +120,7 @@ def _expand(value: JsonValue, definitions: dict[str, JsonValue]) -> JsonValue:
 
 
 def _property_schema(profile: str, name: str) -> dict[str, JsonValue]:
-    _, schemas = _native_profiles()
+    _, schemas = native_profiles()
     raw = schemas.get(profile)
     if not isinstance(raw, dict):
         raise ValueError(f"Native schema is unavailable: {profile}")
@@ -151,7 +154,7 @@ def _validate_native_field(profile: str, name: str, value: object) -> None:
 
 
 def _schema(names: tuple[str, ...], node: dict[str, JsonValue]) -> None:
-    _, schemas = _native_profiles()
+    _, schemas = native_profiles()
     properties: dict[str, JsonValue] = {}
     for name in names:
         raw = schemas.get(name)
@@ -176,7 +179,7 @@ def _query_schema(node: dict[str, JsonValue]) -> None:
 
 
 def _build_schema(node: dict[str, JsonValue]) -> None:
-    _, schemas = _native_profiles()
+    _, schemas = native_profiles()
     raw = schemas.get("build")
     if isinstance(raw, dict):
         expanded = _expand(raw, cast(dict[str, JsonValue], raw.get("$defs", {})))
@@ -219,7 +222,7 @@ class NativeConfig(ConfigModel):
     def validate_native_profile(
         cls, value: Mapping[str, ConfigJson], info: ValidationInfo
     ) -> Mapping[str, ConfigJson]:
-        _, schemas = _native_profiles()
+        _, schemas = native_profiles()
         profiles = {"build": value} if info.field_name == "build" else value
         for name, options in profiles.items():
             raw = (
@@ -243,6 +246,9 @@ class NativeConfig(ConfigModel):
 
 
 class QueryConfig(ConfigModel):
+    tokenizer_path: str | None = setting(
+        None, min_length=1, description="Local tokenizer.json used for token delivery budgets."
+    )
     group_scan_limit: int = Field(
         default_factory=lambda: cast(int, _profile_defaults("query")["group_scan_limit"]),
         description="Maximum candidate rows inspected by each grouped vector lane.",
@@ -255,9 +261,6 @@ class QueryConfig(ConfigModel):
         _validate_native_field("query", "group_scan_limit", value)
         return value
 
-    default_mode: Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] = setting(
-        "hybrid", description="Default retrieval mode."
-    )
     top_k: int = Field(
         default_factory=lambda: cast(int, _profile_defaults("query")["top_k"]),
         description="Default maximum result count.",
@@ -281,15 +284,15 @@ class ContextConfig(ConfigModel):
         description="Recent fragments retained per role.",
         json_schema_extra=lambda node: _native_field_schema("context", "window", node),
     )
-    decay: float = Field(
-        default_factory=lambda: cast(float, _profile_defaults("context")["decay"]),
-        description="Per-fragment recency decay.",
-        json_schema_extra=lambda node: _native_field_schema("context", "decay", node),
-    )
     mix: float = Field(
         default_factory=lambda: cast(float, _profile_defaults("context")["context_mix"]),
         description="Context contribution to the query.",
         json_schema_extra=lambda node: _native_field_schema("context", "context_mix", node),
+    )
+    null_mass: float = Field(
+        default_factory=lambda: cast(float, _profile_defaults("context")["null_mass"]),
+        description="Unassigned mass in each role and stage.",
+        json_schema_extra=lambda node: _native_field_schema("context", "null_mass", node),
     )
     role_weights: ConfigMap[str, float] = Field(
         default_factory=lambda: cast(
@@ -310,7 +313,12 @@ class ContextConfig(ConfigModel):
     )
 
     @field_validator(
-        "window", "decay", "mix", "role_weights", "default_role_weight", "segment_threshold"
+        "window",
+        "mix",
+        "null_mass",
+        "role_weights",
+        "default_role_weight",
+        "segment_threshold",
     )
     @classmethod
     def native_context_value(cls, value: object, info: ValidationInfo) -> object:
@@ -370,6 +378,16 @@ class AssociationsConfig(ConfigModel):
 
 
 class WaveConfig(ConfigModel):
+    default_program: str = setting("dense", description="Default Wave program.")
+    exploration_program: str = setting("research", description="Wave program used for exploration.")
+    unavailable_program: str | None = setting(
+        "text_only",
+        description="Program used when the default lacks required snapshot capabilities.",
+    )
+    programs: ConfigMap[str, WaveProgram] = Field(
+        default_factory=default_programs,
+        description="Typed Wave programs used by query and research tools.",
+    )
     native: NativeConfig = Field(default_factory=NativeConfig)
     query: QueryConfig = Field(default_factory=QueryConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)

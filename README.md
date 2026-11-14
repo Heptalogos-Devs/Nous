@@ -1,6 +1,6 @@
 # Nous
 
-Nous 是独立安装的长期认知服务，为智能体提供记忆、知识、来源、时间、检索与认知成长，也是 Heptalogos 的认知和人格中心。Python 主应用负责领域、模型、事务、CLI 与程序内 SDK；HTTP、MCP 与远程 SDK 沿后续路线接入。必要的 Native 计算承担 VCP 与检索索引等性能热点。
+Nous 是独立安装的长期认知服务，为智能体提供记忆、知识、来源、时间、检索与认知成长，也是 Heptalogos 的认知和人格中心。Python 主应用负责领域、模型、事务和共同应用操作，CLI、程序内 SDK、本地宿主及显式启用的 HTTP、MCP、gRPC 使用同一入口。必要的 Native 计算承担 VCP 与检索索引等性能热点。
 
 ## 领域
 
@@ -17,7 +17,7 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前 CLI 与程序内 SDK 提供 Note、Journal、写作草稿、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。正文提交后可等待标注和刷新，或由正在运行的宿主在后台执行。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
+当前入口提供 Note、Journal、草稿、概念标注、Work、查询、原文读取、关系跟随、可选阅读整理和使用反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。正文提交后可等待标注和刷新，或由正在运行的宿主在后台执行。手工记录、修订和词项检索无需模型，模型任务按实例配置使用。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
 
 此前的服务、SDK 与未迁入的研究材料保存在 [legacy](legacy/README.md)。现行检索计算与索引位于 [native](native/README.md)。
 
@@ -49,9 +49,16 @@ nous tools content add ./notes.md
 ```sh
 nous note add --text "取消等待后，后台线程仍在读文件。" --remember
 nous journal create --text "资源需要持有到实际工作结束。" --title "资源释放"
-nous query "任务结束后文件为什么还被占用" --mode lexical
-nous read "替换为返回的完整修订标识符" --sources
+nous query "任务结束后文件为什么还被占用" --budget 1024 --budget-unit characters --save
+nous read "替换为证据结果标识符" --part E1 --sources
+nous follow "替换为证据结果标识符"
 ```
+
+查询直接交付原文及其精确引用，默认整次预算为 2048 字符。有向量空间时默认用 Dense 召回和语义定位；没有向量空间时使用 text_only 词项程序。需要按用途生成阅读稿时，先配置整理任务，再运行 `nous arrange "<证据结果标识符>" --purpose "只给结论并保留适用条件"`；也可在 query 中指定 `--steward optional` 或 `--steward required`。默认关闭整理。已提交证据在整理失败或取消后仍可读取。
+
+持续工作先用 `nous work create "<工作名称>" "<目标>"` 创建 Work，后续 `nous query "<问题>" --work "<工作修订引用>"` 使用该工作情境。`work read/revise/set-active/record-use` 保存决定、依据和实际使用；完整操作见[Work](docs/design/cognition/work-context.md)与[认知命令](docs/design/interfaces/cognition-cli.md)。
+
+普通 query 不强制存档。已经返回的 JSON 可以稍后保存：`nous --json query "<问题>" > query.json`，然后 `nous save-evidence query.json`，无需重新检索。需要较小的机器输出时，用全局 JSON Pointer 选择，例如 `nous --json --select /evidence/passages query "<问题>"`。
 
 配置写作和标注任务后，可用 `nous journalize --source "<Note标识符>" --file ./paper.pdf --topic "<主题>"` 生成可读草稿。用 `journal draft read` 查看、`journal draft revise` 修改并产生新草稿，再用 `journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
 
@@ -68,7 +75,7 @@ nous runtime run
 在另一个终端保存文稿，并按返回的操作标识查看或等待本次运行的维护：
 
 ```sh
-nous journal create --file ./journal.md --annotate --background --refresh-mode lexical
+nous journal create --file ./journal.md --annotate --background --refresh
 nous runtime operations list
 nous runtime operations wait <操作标识>
 ```
@@ -86,12 +93,14 @@ nous tools media analyze ./photo.png --strategy describe_then_structure
 nous tools result read "替换为返回的完整结果标识符" --sources
 nous tools embedding probe text-embedding --input ./notes.md
 nous tools wave build --manifest ./docs/examples/wave/collection.json --space chosen-text
-nous tools wave query "替换为构建返回的完整快照标识符" "取消后文件为何仍被占用" --mode hybrid --explain
+nous tools wave query "替换为构建返回的完整快照标识符" "取消后文件为何仍被占用" --program hybrid --explain
 nous tools wave read "替换为构建返回的完整快照标识符" "candidate-key" --sources
 ```
 
 将示例标识符替换为实际返回的完整可读标识符并保留引号，chosen-text 替换为已配置空间，candidate-key 使用实际命中键并保留引号；Embedding 空间按 probe 结果配置后使用 `tools embedding run --space <空间名> --purpose document --input ./notes.md`。音视频处理需要可从 PATH 找到的 FFmpeg 和 ffprobe，也可以通过 `media.ffmpeg_path`、`media.ffprobe_path` 指定可执行文件。详细命令和选项见[工具命令](docs/design/interfaces/tools-cli.md)、[Wave 命令](docs/design/interfaces/wave-cli.md)、[本地网关](docs/development/local-gateway.md)与[实际使用通路](docs/development/model-media-walkthrough.md)。
 
+Wave 的开发配方通过 `wave.programs` 配置，普通查询使用所选默认程序；端口和实际算子见[查询程序](docs/design/wave/program.md)。HTTP/MCP/gRPC 的启动、认证、输入和事件见[远程协议](docs/design/interfaces/remote-protocols.md)，服务均由显式宿主持有。
+
 ## 产品范围
 
-Nous 的长期范围包括材料、来源及五轴时间，以及 Memory、Episode、Journal、Ego、Social、LanguageConvention、Motivation 和知识检索。当前正式入口是 CLI 与程序内 SDK，已接通的领域和后续建设按[当前工作](docs/CURRENT.md)区分。
+Nous 的长期范围包括材料、来源及五轴时间，以及 Memory、Episode、Journal、Ego、Social、LanguageConvention、Motivation 和知识检索。已接通的领域和后续建设按[当前工作](docs/CURRENT.md)区分；各传输共用同一正式操作。

@@ -25,11 +25,12 @@ Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须�
 ## 查询请求
 
 ```text
-WaveQuery(snapshot, text="", vector=None, context=[], core_concepts=[], cues=[],
-          candidate_filter=None, top_k=None, mode=None,
+WaveQuery(snapshot, text="", expression=None, vector=None, context=[], core_concepts=[], cues=[],
+          candidate_filter=None, top_k=None, program=None, delivery_budget=None,
           include_trace=False, include_counterevidence=None,
-          thinking_stages=[], candidate_pool=None)
-ContextFragment(key, role, sequence, content=None, text=None, weight=1, time=None)
+          thinking_stages=[], candidate_set=None)
+ContextFragment(key, role, stage, parent_key, sequence, content=None, text=None,
+                relevance=1, validity=1, distance=0, half_life=None)
 QueryCue(label, description, is_core=False)
 ThinkingStage(name, candidates=[candidate_key], top_k)
 ```
@@ -45,16 +46,16 @@ ThinkingStage 的候选均先与本次允许集合相交；不存在 key 是输�
 ```text
 WaveSearchResult:
   snapshot
-  mode, used_lanes, skipped_lanes_with_reason
+  program, program_run, used_lanes, skipped_lanes_with_reason
   groups: ordered GroupHit[]       # 文稿粒度
   hits: ordered {basis, passage}[] # 候选粒度
   context_summary, cue_summary
-  algorithm_versions, scope, coverage
+  algorithm_versions, scope, coverage, branch_coverage
   thinking: stages/routes | unavailable(reason)
   diagnostics?  # include_trace / explain 时展开
 ```
 
-GroupHit 的 rank 决定组次序，basis 的 RankEvidence 记录实际排名候选及分数。PassageDelivery 分别保存交付候选、精确 fragments、匹配字段和原因；其 evidence 只在该交付候选确有已计算排名证据时提供。read 返回完整候选及其概念、路径和来源。
+GroupHit 的 rank 决定组次序，basis 的 RankEvidence 记录实际排名候选及分数。预算不足的组保留排名和材料引用，以 delivery_status 说明未交付原因。PassageDelivery 分别保存完整评分范围 `scored_ranges`、增量正文 `fragments`、增量支持正文 `support_context`、已交付内容的精确引用 `shared_context`、评分和原因；read 返回完整候选及其概念、路径和来源。
 
 构建、读取、清理、分段和检查操作分别返回 `WaveBuildResult`、`WaveReadResult`、`WaveCleanupResult`、`WaveSegmentResult` 与 `WaveInspection` / `WaveNeighborhoodResult`。这些结果直接包含类型化引用及固定字段；构建统计和诊断等开放内容以 JSON 值携带。
 
@@ -79,12 +80,12 @@ Native 当前接收文字候选。纯文本按原 Artifact 的行/字节选区�
 
 VectorRef 包含已登记空间定义、purpose=query 和实际向量 Artifact/row；外部向量的高级进程内调用仍提供同一空间合同。选择 vector 时不再次用 text 计算 raw query；text 仍提供真实字面线索，上下文可按显式选项继续融合。请求内多个 raw 向量来源冲突时返回明确错误。
 
-candidate_pool 是 `{snapshot, entries:[{candidate, lanes:{lane:{score,rank}}}]}`，保存绑定当前快照的有序候选及 lane 分数/名次。传入时 observe 后直接 readout，跳过内部 recall；allowed 过滤仍执行。普通 query 不提供它时使用同一个核心的 recall。
+candidate_set 是 `{snapshot, entries:[{candidate, lanes:{lane:{score,rank}}}]}`，保存绑定当前快照的候选及 lane 分数/名次。`fixed_set` 程序直接消费它；其他程序通过各自显式召回节点生成候选。允许范围在数值执行前校验。
 
-CLI 增加高级选项 `--vector-ref FILE`、`--candidate-pool FILE`，文件只是上述公开值的 JSON；Python 应用解析正式短引用并映射 Native 行号。用户不手写本地整数 row，不在 CLI 直接调用 PyO3。Thinking 与同次观测共同执行，不增加跨 CLI 命令的观测缓存服务。
+CLI 高级选项 `--vector-ref FILE`、`--candidate-set FILE` 使用上述公开值的 JSON；Python 应用解析正式引用并映射 Native 行号。Thinking 与同次观测共同执行。
 
 多路径命中返回 `chosen_path` 的路径 key/label/精确 steps，并保留各路径的 B/P/G/A。原文读取仍使用候选的 ContentSelection。来源支持诊断将 `independent_support_fraction` 的实际比例与 `support_weight` 的数值衰减分开；未知比例为 null。
 
 Python 的 `WaveSnapshots` 拥有 SQL、不可变目录、身份、Native 资源与已打开快照；`WaveQueries` 拥有 QueryPlan、时间/来源范围和结果物化。`WaveOperations` 在根 operation 内组合 prepare、Native 与精确内容回读。
 
-`used_lanes` 列出本次候选召回与最终读出的实际通道。VCP 查询从同一 CandidatePool 的通道分数及覆盖摘要取得 query_knn/bm25/场召回等，再加入 rivermemo 或 dtsc 读出；每个 hit 的 channels 继续保留该候选实际命中的通道，分数与最终顺序沿原计算。
+`used_lanes` 列出本次候选召回与最终读出的实际通道。VCP 查询从同一 CandidateSet 的通道事实取得候选，再经显式校准及 RiverMemo 或 DTSC 读出；每个命中保留实际通道、原始分数与次序。

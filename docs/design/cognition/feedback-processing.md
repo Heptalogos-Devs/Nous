@@ -39,7 +39,7 @@ CLI 使用 feedback record/read/list/resolve 管理意见，journal patch/replac
 
 ## 显式旧版意见映射
 
-`feedback_mappings: Mapping[str, str]` 按反馈引用保存调用者说明：为什么这条旧版意见适用于所选新基准。普通 feedback_refs 无映射时仍要求 exact base；映射只允许同一 Namespace 的同一文稿，说明必须非空。跨文稿意见和没有指定交付文稿的整次 QueryResult 意见不能借映射随文稿修改解决。
+`feedback_mappings: Mapping[str, str]` 按反馈引用保存调用者说明：为什么这条旧版意见适用于所选新基准。普通 feedback_refs 无映射时仍要求 exact base；映射只允许同一 Namespace 的同一文稿，说明必须非空。跨文稿意见和没有指定交付文稿的整次查询意见不能借映射随文稿修改解决。
 
 `WritingOperations.propose_edit(..., feedback_refs=..., feedback_mappings=...)` 通过 FeedbackOperations.select_for_edit 取得经过核验的实际意见，把说明固定在 DraftContext.feedback_mappings。采用时同一 resolve_in 重新核验并在正文采用事务中保存 resolution.mapping_note 与 applied_revision。没有提案的手工 apply/replace 也接收相同参数和核验规则。
 

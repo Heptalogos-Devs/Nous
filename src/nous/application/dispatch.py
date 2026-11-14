@@ -17,6 +17,7 @@ from nous.application.contracts import (
 )
 from nous.application.inputs import InputProvider, InputReader
 from nous.common.errors import NousError
+from nous.presentation.json_selection import select_json, validate_json_pointers
 
 if TYPE_CHECKING:
     from nous.content.artifacts import ArtifactStore
@@ -59,7 +60,7 @@ class Application:
             "name": definition.name,
             "description": definition.description,
             "request": definition.request_adapter.json_schema(),
-            "result": definition.result_adapter.json_schema(),
+            "result": definition.result_adapter.json_schema(mode="serialization"),
             "events": definition.event_adapter.json_schema(),
         }
 
@@ -101,14 +102,17 @@ class Application:
         inputs: Mapping[str, InputProvider] | None = None,
         observer: EventObserver | None = None,
         timeout: float | None = None,  # noqa: ASYNC109
+        select: Sequence[str] = (),
     ) -> object:
-        """Resolve a wire name through the same definition used by typed callers."""
+        """Call a named operation and optionally project its serialized result."""
+        pointers = validate_json_pointers(select)
         return await self._invoke(
             self._get(name),
             request,
             inputs=inputs,
             observer=observer,
             timeout=timeout,
+            select=pointers,
         )
 
     async def _invoke(
@@ -119,6 +123,7 @@ class Application:
         inputs: Mapping[str, InputProvider] | None,
         observer: EventObserver | None,
         timeout: float | None,  # noqa: ASYNC109
+        select: Sequence[str] = (),
     ) -> object:
         if timeout is not None and timeout <= 0:
             raise NousError("operation.invalid_timeout", "Timeout must be positive")
@@ -139,4 +144,5 @@ class Application:
                 events=EventEmitter(execution.operation_id, definition.event_adapter, observer),
             )
             result = await bound.handle(checked, context)
-            return definition.result_adapter.validate_python(result)
+            result = definition.result_adapter.validate_python(result)
+            return select_json(result, select) if select else result

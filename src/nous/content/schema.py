@@ -132,11 +132,58 @@ output_mappings = sa.Table(
     sa.Column("ordinal", sa.Integer, primary_key=True),
     sa.Column("selection", sa.JSON, nullable=False),
     sa.Column("relation", sa.String, nullable=False),
-    sa.Column("origins", sa.JSON, nullable=False),
     sa.ForeignKeyConstraint(
         ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
     ),
     sa.CheckConstraint("relation IN ('identity', 'atomic', 'derived')"),
+)
+
+named_selections = sa.Table(
+    "processing_named_selections",
+    metadata,
+    sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("key", sa.String, nullable=False),
+    sa.Column("sources", sa.JSON, nullable=False),
+    sa.UniqueConstraint("result_id", "key"),
+)
+
+mapping_origins = sa.Table(
+    "content_output_mapping_origins",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("output_name", sa.String, primary_key=True),
+    sa.Column("mapping_ordinal", sa.Integer, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
+    sa.Column("selector", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["result_id", "output_name", "mapping_ordinal"],
+        [
+            "content_output_mappings.result_id",
+            "content_output_mappings.output_name",
+            "content_output_mappings.ordinal",
+        ],
+    ),
+)
+sa.Index("ix_content_output_mapping_origin", mapping_origins.c.artifact_id)
+
+material_sources = sa.Table(
+    "processing_material_sources",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("output_name", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("key", sa.String, nullable=False),
+    sa.Column("kind", sa.String, nullable=False),
+    sa.Column("name", sa.String),
+    sa.Column("material", sa.JSON, nullable=False),
+    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
+    sa.Column("selections", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
+    ),
+    sa.UniqueConstraint("result_id", "output_name", "key"),
 )
 
 dependencies = sa.Table(

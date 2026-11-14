@@ -11,12 +11,14 @@ from nous.application.inputs import FileInput, InputProvider, StreamInput
 from nous.common.errors import NousError
 from nous.content.contracts import ExternalInput, SourceSelection
 from nous.models.vector_contracts import VectorRef
+from nous.presentation.evidence import format_source_text
 from nous.storage.file_input import FileReaderPool
 from nous.wave.contracts import (
     CandidateFilter,
-    CandidatePool,
+    CandidateSet,
     CollectionManifest,
     ContextFragment,
+    DeliveryBudget,
     PassageDelivery,
     QueryCue,
     ThinkingStage,
@@ -55,11 +57,11 @@ def cleanup(
     emit(ctx, result.model_dump(mode="json"))
 
 
-def _show_passage(value: PassageDelivery) -> None:
+def _show_passage(value: PassageDelivery, seen: dict[str, list[tuple[int, int]]]) -> None:
     if value.reason == "title_preview":
         typer.echo("标题命中 / Title match")
-    typer.echo(value.text)
-    for fragment in value.fragments:
+    typer.echo(format_source_text(value.fragments, value.support_context, seen))
+    for fragment in (*value.fragments, *value.support_context):
         typer.echo(
             f"   {fragment.content.artifact.identifier} {fragment.content.selection.model_dump_json()}"
         )
@@ -67,13 +69,14 @@ def _show_passage(value: PassageDelivery) -> None:
 
 def _hits(value: WaveSearchResult, explain: bool) -> None:
     groups = value.groups
+    seen: dict[str, list[tuple[int, int]]] = {}
     if groups:
         for group in groups:
             typer.echo(
                 f"{group.rank}. {group.group.title or group.group.key}  {group.basis.score_kind}={group.basis.ranking_score}"
             )
             for passage in group.passages:
-                _show_passage(passage)
+                _show_passage(passage, seen)
             if explain:
                 typer.echo(group.model_dump_json(indent=2))
     else:
@@ -84,7 +87,7 @@ def _hits(value: WaveSearchResult, explain: bool) -> None:
             typer.echo(
                 f"{basis.candidate_rank}. {basis.candidate.key}  {basis.score_kind}={basis.ranking_score}"
             )
-            _show_passage(passage)
+            _show_passage(passage, seen)
             if explain:
                 typer.echo(basis.model_dump_json(indent=2))
         if not hits:
@@ -174,10 +177,7 @@ def query(
     ctx: typer.Context,
     snapshot: str,
     text: Annotated[str, typer.Argument()] = "",
-    mode: Annotated[
-        Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] | None,
-        typer.Option("--mode"),
-    ] = None,
+    program: Annotated[str | None, typer.Option("--program")] = None,
     context: Annotated[Path | None, typer.Option("--context", exists=True, dir_okay=False)] = None,
     core: Annotated[list[str] | None, typer.Option("--core")] = None,
     cue: Annotated[list[str] | None, typer.Option("--cue")] = None,
@@ -190,10 +190,12 @@ def query(
     vector_ref: Annotated[
         Path | None, typer.Option("--vector-ref", exists=True, dir_okay=False)
     ] = None,
-    candidate_pool: Annotated[
-        Path | None, typer.Option("--candidate-pool", exists=True, dir_okay=False)
+    candidate_set: Annotated[
+        Path | None, typer.Option("--candidate-set", exists=True, dir_okay=False)
     ] = None,
     top_k: Annotated[int | None, typer.Option("--top-k", min=1)] = None,
+    budget: Annotated[int | None, typer.Option("--budget", min=1)] = None,
+    budget_unit: Literal["characters", "bytes", "tokens"] = "characters",
     grouping: Annotated[Literal["candidate", "document"], typer.Option("--grouping")] = "candidate",
     passages_per_group: Annotated[int, typer.Option("--passages-per-group", min=1)] = 1,
     explain: Annotated[bool, typer.Option("--explain")] = False,
@@ -212,7 +214,7 @@ def query(
         source(thinking_stages, "thinking_stages") or ()
     )
     vector: VectorRef | ExternalInput | None = source(vector_ref, "vector")
-    pool: CandidatePool | ExternalInput | None = source(candidate_pool, "candidate_pool")
+    candidates: CandidateSet | ExternalInput | None = source(candidate_set, "candidate_set")
     filters: CandidateFilter | ExternalInput | None = source(candidate_filter, "candidate_filter")
     result = application_call(
         ctx,
@@ -220,15 +222,16 @@ def query(
         WaveQuery(
             snapshot=snapshot,
             text=text,
-            mode=mode,
+            program=program,
             context=query_context,
             vector=vector,
-            candidate_pool=pool,
+            candidate_set=candidates,
             candidate_filter=filters,
             thinking_stages=stages,
             core_concepts=tuple(core or ()),
             cues=tuple(QueryCue(label=item, description=item) for item in cue or ()),
             top_k=top_k,
+            delivery_budget=DeliveryBudget(amount=budget, unit=budget_unit) if budget else None,
             grouping=grouping,
             passages_per_group=passages_per_group,
             include_trace=explain,

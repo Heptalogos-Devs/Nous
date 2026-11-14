@@ -1,24 +1,30 @@
 """Wave native bindings; packaged configuration resources load independently."""
 
 from importlib import import_module
+from importlib.metadata import PackageNotFoundError, distribution
 from typing import TYPE_CHECKING
+
+try:
+    __path__ = [str(distribution("nous-server").locate_file("nous_native"))]
+except PackageNotFoundError:
+    __path__ = []
 
 if TYPE_CHECKING:
     from ._core import (  # pyright: ignore[reportMissingModuleSource]
         Associations,
         CancellationToken,
-        CandidatePool,
         Candidates,
+        CandidateSet,
         Concepts,
         ContextResult,
         NativeEngine,
         NativeError,
-        NativeQueryResult,
         NativeSnapshot,
         QueryObservation,
         SegmentResult,
         SourceFacts,
         aggregate_context,
+        context_masses,
         defaults_json,
         schemas_json,
         segment,
@@ -28,17 +34,17 @@ __all__ = [
     "Associations",
     "CancellationToken",
     "Candidates",
-    "CandidatePool",
+    "CandidateSet",
     "Concepts",
     "ContextResult",
     "NativeEngine",
     "NativeError",
-    "NativeQueryResult",
     "NativeSnapshot",
     "QueryObservation",
     "SegmentResult",
     "SourceFacts",
     "aggregate_context",
+    "context_masses",
     "defaults_json",
     "schemas_json",
     "segment",

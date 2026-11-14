@@ -298,10 +298,10 @@ class AnnotationOperations:
             assert plans is not None
             reading = ReadingInput(sources=plans[0].batches[0].sources)
             validated = definition.validate(proposal.model_dump(mode="json"), reading)
-            outputs = await definition.outputs(
+            interpreted = await definition.outputs(
                 validated, reading, self.artifacts, structured=True, producer={"kind": "user"}
             )
-            annotation = AnnotationSet.model_validate_json(outputs["output"].data)
+            annotation = AnnotationSet.model_validate_json(interpreted.outputs["output"].data)
             unknown = {
                 concept.reuse_key for concept in annotation.concepts if concept.reuse_key
             } - set(candidates)
@@ -330,11 +330,13 @@ class AnnotationOperations:
                     )
                 ),
                 inputs=inputs,
+                mappings=interpreted.mappings,
+                selections=interpreted.selections,
                 parameters={"annotation_context": context.model_dump(mode="json")},
                 coverage=plans[0].coverage,
                 formed_at=self.artifacts.clock.utc_now(),
             )
-            result = await self.results.adopt(facts=facts, outputs=outputs)
+            result = await self.results.adopt(facts=facts, outputs=interpreted.outputs)
             await call.saved(result.ref)
             return await self.read_proposal(result.ref)
 

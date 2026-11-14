@@ -15,8 +15,12 @@ def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path)
 
     from nous.application.configuration import open_configuration_operations
     from nous.cognition.contracts import RevisionSelection
-    from nous.cognition.retrieval.contracts import CognitiveQuery
+    from nous.cognition.material_contracts import FollowMaterial, MaterialSelection
+    from nous.cognition.materials import FOLLOW_MATERIAL
+    from nous.cognition.retrieval.contracts import QueryRequest
     from nous.cognition.retrieval.operations import QUERY
+    from nous.cognition.work.contracts import CreateWork, WorkState
+    from nous.cognition.work.operations import CREATE_WORK
     from nous.cognition.writing.contracts import (
         AddNote,
         AdoptDraft,
@@ -206,10 +210,32 @@ def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path)
                 tuple(item for binding in stored.sources for item in binding.selections)
                 == selections
             )
-            result = await runtime.app.call(
-                QUERY, CognitiveQuery(text="completed memory", mode="lexical")
+            result = await runtime.app.call(QUERY, QueryRequest(text="completed memory"))
+            assert any(
+                group.material.ref == stored.revision_ref for group in result.evidence.materials
             )
-            assert any(group.context.revision_ref == stored.revision_ref for group in result.groups)
+
+            work = await runtime.app.call(
+                CREATE_WORK,
+                CreateWork(
+                    state=WorkState(title="Source work", objective="Record the release rule"),
+                    body="Wait for the worker to exit.",
+                ),
+            )
+            answer = "# Work finding\n\nWait for exit [S1:C1](source:S1:C1)."
+            generated = await runtime.app.call(
+                WRITE_DRAFT,
+                NewDraftRequest(
+                    sources=(SourceChoice(target=MaterialSelection(material=work.revision_ref)),),
+                    adoption="save",
+                    after=policy,
+                ),
+            )
+            assert generated.record is not None
+            relations = await runtime.app.call(
+                FOLLOW_MATERIAL, FollowMaterial(ref=generated.record.commit.revision_ref)
+            )
+            assert any(relation.target == work.revision_ref for relation in relations.relations)
 
             answer = json.dumps(
                 {

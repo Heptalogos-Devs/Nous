@@ -71,7 +71,7 @@ class Associations:
         group_root_indices: Array[np.uint64],
     ) -> None: ...
 
-class CandidatePool:
+class CandidateSet:
     def __init__(self, value_json: str) -> None: ...
     @property
     def value_json(self) -> str: ...
@@ -79,16 +79,6 @@ class CandidatePool:
 class QueryObservation:
     @property
     def diagnostics_json(self) -> str: ...
-
-class NativeQueryResult:
-    @property
-    def row_ids(self) -> Array[np.uint64]: ...
-    @property
-    def quality_scores(self) -> Array[np.float64]: ...
-    @property
-    def ranking_scores(self) -> Array[np.float64]: ...
-    @property
-    def result_json(self) -> str: ...
 
 class NativeSnapshot:
     """Immutable loaded snapshot whose calculations use its engine's worker pool.
@@ -103,6 +93,14 @@ class NativeSnapshot:
     def capabilities(self) -> list[str]: ...
     @property
     def statistics_json(self) -> str: ...
+    def passage_similarities(
+        self,
+        rows: Array[np.uint64],
+        *,
+        references: Array[np.uint64] | None = None,
+        aspects: Array[np.float32] | None = None,
+        cancel: CancellationToken | None = None,
+    ) -> Array[np.float64]: ...
     def observe(
         self,
         vector: Array[np.float32],
@@ -112,35 +110,23 @@ class NativeSnapshot:
         ghost_vectors: Array[np.float32] | None = None,
         cancel: CancellationToken | None = None,
     ) -> QueryObservation: ...
-    def search(
+    def execute(
         self,
         *,
-        mode: str,
+        name: str,
+        program_json: str,
+        expression_json: str | None = None,
         text: str = "",
-        vector: Array[np.float32] | None = None,
+        raw_vector: Array[np.float32] | None = None,
+        contextual_vector: Array[np.float32] | None = None,
+        branch_raw_vectors: Array[np.float32] | None = None,
+        branch_contextual_vectors: Array[np.float32] | None = None,
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
-        candidate_pool: CandidatePool | None = None,
+        candidate_set: CandidateSet | None = None,
         cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
-    def recall(
-        self,
-        observation: QueryObservation,
-        *,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        cancel: CancellationToken | None = None,
-    ) -> CandidatePool: ...
-    def readout(
-        self,
-        observation: QueryObservation,
-        candidate_pool: CandidatePool,
-        *,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
+    ) -> str: ...
     def think(
         self,
         observation: QueryObservation,
@@ -196,6 +182,7 @@ class ContextResult:
     @property
     def diagnostics_json(self) -> str: ...
 
+def context_masses(metadata_json: str, options_json: str = "{}") -> str: ...
 def aggregate_context(
     raw_query: Array[np.float32] | None,
     context_vectors: Array[np.float32],

@@ -66,13 +66,13 @@ Use Python 3.14 and uv. When running or building the project, first set up the d
 Linux / macOS:
 
 ```bash
-source ./dev.sh env
+source ./dev.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-. ./dev.ps1 env
+. ./dev.ps1
 ```
 
 Install development dependencies with `uv sync --locked`. Product entry points are in [README.md](README.md); use `uv run --locked nous --help` or `uv run --locked nous tools --help` for command help.

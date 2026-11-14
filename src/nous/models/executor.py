@@ -45,6 +45,7 @@ from .contracts import GenerationResult, ReadingInput
 from .policy import (
     attempt_reports,
     attempt_scope,
+    endpoint_path,
     error_report,
     model_error,
     retry_delay,
@@ -244,7 +245,8 @@ class ModelExecutor:
             raise NousError(
                 "model.protocol_unsupported", f"Unsupported protocol: {provider.protocol}"
             )
-        if assignment.output_mode not in route.model.output_modes:
+        required_mode = "text" if assignment.output_mode == "prompted" else assignment.output_mode
+        if required_mode not in route.model.output_modes:
             raise NousError(
                 "model.capability_missing",
                 f"Model {route.model_id} does not declare {assignment.output_mode} output",
@@ -255,8 +257,9 @@ class ModelExecutor:
                 f"Model {route.model_id} does not declare text generation",
             )
         if (
-            compiled.schema if compiled else assignment.output_mode != "text"
-        ) and "structured_output" not in route.model.capabilities:
+            assignment.output_mode in {"native", "tool"}
+            and "structured_output" not in route.model.capabilities
+        ):
             raise NousError(
                 "model.capability_missing",
                 f"Model {route.model_id} does not declare structured output",
@@ -324,6 +327,7 @@ class ModelExecutor:
     def model_for_route(self, route: ModelRoute) -> OpenAIChatModel:
         profile = OpenAIModelProfile(
             supports_json_schema_output="native" in route.model.output_modes,
+            supports_json_object_output=False,
             supports_tools="tool" in route.model.output_modes,
             supports_audio_input="audio" in route.model.capabilities,
             supports_image_input="image" in route.model.capabilities,
@@ -390,6 +394,12 @@ class ModelExecutor:
                 output_mode="native",
                 allow_text_output=False,
                 output_object=OutputObjectDefinition(schema, name="result", strict=True),
+            )
+        if prepared.assignment.output_mode == "prompted":
+            return ModelRequestParameters(
+                output_mode="prompted",
+                allow_text_output=True,
+                output_object=OutputObjectDefinition(schema, name="result"),
             )
         return ModelRequestParameters(
             output_mode="tool",
@@ -580,6 +590,9 @@ class ModelExecutor:
                         "provider": route.model.provider,
                         "model_name": route.model.model_name,
                         "protocol": "openai-chat-completions",
+                        "endpoint_path": endpoint_path(
+                            active.snapshot, route.model.provider, "chat/completions"
+                        ),
                     },
                     prepared.task,
                 ) as scope:
@@ -713,13 +726,27 @@ class ModelExecutor:
         return GenerationStream(self, prepared, context, prepare_route)
 
     async def discover(self, provider: str, snapshot: ConfigSnapshot) -> list[str]:
-        try:
-            page = await self.connections.client(provider).models.list(
-                timeout=self.connections.timeout(provider, snapshot)
+        configured = snapshot.values.providers.get(provider)
+        if configured is None:
+            raise NousError(
+                "model.provider_unknown",
+                "The model provider is not configured",
+                details={"provider": provider},
             )
-            return [item.id async for item in page]
-        except (APIConnectionError, APIStatusError, TimeoutError) as error:
-            raise model_error(error, 1) from error
+        route = {
+            "provider": provider,
+            "protocol": configured.protocol,
+            "endpoint_path": endpoint_path(snapshot, provider, "models"),
+        }
+        with attempt_scope(1, route, "models.discover") as scope:
+            try:
+                page = await self.connections.client(provider).models.list(
+                    timeout=self.connections.timeout(provider, snapshot)
+                )
+                return [item.id async for item in page]
+            except (APIConnectionError, APIStatusError, TimeoutError) as error:
+                scope.complete(**error_report(error))
+                raise model_error(error, 1) from error
 
     async def transcribe(
         self,
@@ -772,7 +799,10 @@ class ModelExecutor:
                         "model_id": route.model_id,
                         "provider": route.model.provider,
                         "model_name": route.model.model_name,
-                        "endpoint": "audio.transcriptions",
+                        "protocol": "openai-chat-completions",
+                        "endpoint_path": endpoint_path(
+                            snapshot, route.model.provider, "audio/transcriptions"
+                        ),
                     },
                     frozen.task,
                 ) as scope:

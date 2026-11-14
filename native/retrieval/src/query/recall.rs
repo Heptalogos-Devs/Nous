@@ -1,13 +1,57 @@
-//! Scope-aware group recall and fixed candidate pool calibration.
+//! Scope-aware group recall and fixed candidate set calibration.
 use super::*;
 
 impl Snapshot {
+    pub(super) fn recall_context(
+        &self,
+        allowed: &BTreeSet<u64>,
+        options: &Options,
+        cancel: &CancellationToken,
+    ) -> Result<CandidateSet> {
+        let mut sets = Vec::new();
+        for fragment in &options.context_lexical {
+            ensure!(
+                fragment.contribution.is_finite() && fragment.contribution >= 0.0,
+                "Invalid lexical context contribution"
+            );
+            if fragment.contribution == 0.0 || fragment.text.trim().is_empty() {
+                continue;
+            }
+            let lane = format!("context:{}", fragment.key);
+            let hits = self.lexical(
+                &fragment.text,
+                allowed,
+                options.readout.bm25_k,
+                options.candidates_per_group,
+                options,
+                &lane,
+                cancel,
+            )?;
+            let mut set = self.lane_set(&lane, hits, options);
+            for entry in &mut set.entries {
+                if let Some(score) = entry.lanes.get_mut(&lane) {
+                    score.weight = fragment.contribution;
+                }
+            }
+            sets.push(set);
+        }
+        self.union_sets(
+            &sets.iter().collect::<Vec<_>>(),
+            options.readout.max_union_candidates,
+            None,
+            options.candidates_per_group,
+            options,
+        )
+    }
+
     pub(super) fn lexical(
         &self,
         text: &str,
         allowed: &BTreeSet<u64>,
         limit: usize,
+        candidates_per_group: usize,
         o: &Options,
+        lane: &str,
         cancel: &CancellationToken,
     ) -> Result<Vec<(u64, f64)>> {
         if limit == 0 || text.trim().is_empty() {
@@ -31,14 +75,14 @@ impl Snapshot {
                 text,
                 &refs,
                 limit,
-                o.passages_per_group,
+                candidates_per_group,
                 self.inner.group_ranks.clone(),
                 cancel,
             )?;
             o.lane_coverage
                 .lock()
                 .unwrap()
-                .insert("bm25".into(), coverage);
+                .insert(lane.into(), coverage);
             page
         } else {
             self.inner
@@ -56,6 +100,8 @@ impl Snapshot {
         vector: &[f32],
         allowed: &BTreeSet<u64>,
         limit: usize,
+        candidates_per_group: usize,
+        search_effort: usize,
         o: &Options,
         lane: &str,
         cancel: &CancellationToken,
@@ -75,7 +121,7 @@ impl Snapshot {
         if o.grouping != "document" {
             cancel.check()?;
             return Ok(ann
-                .search_candidates(vector, limit, Some(&ids))?
+                .search_candidates(vector, limit, Some(&ids), search_effort)?
                 .into_iter()
                 .map(|h| {
                     self.inner
@@ -97,10 +143,11 @@ impl Snapshot {
         let mut no_progress = false;
         while !remaining.is_empty() && seen.len() < o.group_scan_limit {
             cancel.check()?;
-            let batch_size = (limit.saturating_mul(o.passages_per_group))
+            let batch_size = (limit.saturating_mul(candidates_per_group))
                 .max(32)
                 .min(o.group_scan_limit - seen.len());
-            let batch = ann.search_candidates(vector, batch_size, Some(&remaining))?;
+            let batch =
+                ann.search_candidates(vector, batch_size, Some(&remaining), search_effort)?;
             if batch.is_empty() {
                 no_progress = true;
                 break;
@@ -120,7 +167,7 @@ impl Snapshot {
                     continue;
                 }
                 let count = counts.entry(group).or_default();
-                if *count < o.passages_per_group {
+                if *count < candidates_per_group {
                     *count += 1;
                     hits.push((row, hit.similarity));
                 }
@@ -132,7 +179,7 @@ impl Snapshot {
             remaining.retain(|id| {
                 counts
                     .get(&groups[self.inner.candidate_rows[id] as usize])
-                    .is_none_or(|count| *count < o.passages_per_group)
+                    .is_none_or(|count| *count < candidates_per_group)
             });
             if counts.len() >= limit {
                 break;
@@ -162,70 +209,58 @@ impl Snapshot {
         );
         Ok(hits)
     }
-    pub fn recall(
+    pub(super) fn lane_set(
         &self,
-        observation: &QueryObservation,
-        allowed: &BTreeSet<u64>,
-        o: &Options,
-        cancel: &CancellationToken,
-    ) -> Result<CandidatePool> {
-        self.validate_observation(observation)?;
-        o.validate_grouping()?;
-        if allowed
-            .iter()
-            .any(|r| *r >= self.inner.candidates.keys.len() as u64)
-        {
-            return Err(failure(
-                "wave.invalid_input",
-                "Candidate scope contains a row outside this snapshot",
-            ));
-        }
-        o.readout
-            .validate()
-            .map_err(|e| failure("wave.invalid_input", e))?;
-        let mut entries = BTreeMap::<u64, BTreeMap<String, LaneScore>>::new();
-        let output = &observation.output;
-        for (name, vector) in [
-            ("query_knn", &output.original_query_vector),
-            ("denoised_field_knn", &output.enhanced_vector),
-            ("local_field_knn", &output.local_vector),
-            ("transfer_field_knn", &output.transfer_vector),
-        ] {
-            if o.lane_limit(name) > 0 && vector.iter().any(|v| *v != 0.0) {
-                for (rank, (row, score)) in self
-                    .dense(vector, allowed, o.lane_limit(name), o, name, cancel)?
-                    .into_iter()
-                    .enumerate()
-                {
-                    entries.entry(row).or_default().insert(
-                        name.into(),
+        lane: &str,
+        hits: Vec<(u64, f64)>,
+        options: &Options,
+    ) -> CandidateSet {
+        CandidateSet {
+            rank_scope: if options.grouping == "document" {
+                "grouped_lane".into()
+            } else {
+                candidate_rank_scope()
+            },
+            identity: self.inner.input.identity.clone(),
+            offered_candidates: hits.len(),
+            entries: hits
+                .into_iter()
+                .enumerate()
+                .map(|(rank, (row, score))| PoolEntry {
+                    row,
+                    lanes: [(
+                        lane.into(),
                         LaneScore {
                             score,
                             rank: rank + 1,
+                            weight: 1.0,
                         },
-                    );
-                }
-            }
+                    )]
+                    .into_iter()
+                    .collect(),
+                })
+                .collect(),
+            lane_coverage: options.lane_coverage.lock().unwrap().clone(),
         }
-        for (rank, (row, score)) in self
-            .lexical(&observation.text, allowed, o.lane_limit("bm25"), o, cancel)?
-            .into_iter()
-            .enumerate()
-        {
-            entries.entry(row).or_default().insert(
-                "bm25".into(),
-                LaneScore {
-                    score,
-                    rank: rank + 1,
-                },
-            );
-        }
+    }
+
+    pub(super) fn direct_lane(
+        &self,
+        observation: &QueryObservation,
+        allowed: &BTreeSet<u64>,
+        limit: usize,
+        candidates_per_group: usize,
+        options: &Options,
+        cancel: &CancellationToken,
+    ) -> Result<CandidateSet> {
+        self.validate_observation(observation)?;
         let direct = observation
             .core_rows
             .iter()
             .copied()
             .chain(
-                output
+                observation
+                    .output
                     .observation
                     .nodes
                     .iter()
@@ -236,13 +271,12 @@ impl Snapshot {
                     .map(|n| (n.id - 1) as u64),
             )
             .collect::<BTreeSet<_>>();
-        let anchor_rows = direct
+        let mut anchors = direct
             .iter()
             .flat_map(|r| self.inner.concept_candidates.get(r).into_iter().flatten())
             .copied()
             .filter(|r| allowed.contains(r))
-            .collect::<BTreeSet<_>>();
-        let mut anchors = anchor_rows
+            .collect::<BTreeSet<_>>()
             .into_iter()
             .map(|row| {
                 let concepts = slice(
@@ -262,127 +296,176 @@ impl Snapshot {
                     .cmp(&self.inner.candidates.keys[b.0 as usize]),
             )
         });
-        if o.grouping == "document" && o.lane_limit("direct_anchor") > 0 {
+        if options.grouping == "document" && limit > 0 {
             let eligible = anchors
                 .iter()
                 .map(|(row, _)| self.inner.candidates.group_rows[*row as usize])
                 .collect::<BTreeSet<_>>()
                 .len();
-            o.lane_coverage.lock().unwrap().insert(
+            options.lane_coverage.lock().unwrap().insert(
                 "direct_anchor".into(),
                 crate::grouping::LaneCoverage {
                     examined_rows: anchors.len(),
                     eligible_groups_known: Some(eligible),
                     recall_exhausted: true,
-                    truncated: eligible > o.lane_limit("direct_anchor"),
-                    reason: (eligible > o.lane_limit("direct_anchor"))
-                        .then(|| "lane_group_limit".into()),
+                    truncated: eligible > limit,
+                    reason: (eligible > limit).then(|| "lane_group_limit".into()),
                 },
             );
         }
-        let anchors = if o.grouping == "document" {
+        let hits = if options.grouping == "document" {
             crate::grouping::collect(
                 anchors,
                 &self.inner.candidates.group_rows,
-                o.lane_limit("direct_anchor"),
-                o.passages_per_group,
+                limit,
+                candidates_per_group,
             )
         } else {
-            anchors
-                .into_iter()
-                .take(o.lane_limit("direct_anchor"))
-                .collect()
+            anchors.into_iter().take(limit).collect()
         };
-        for (rank, (row, score)) in anchors.into_iter().enumerate() {
-            cancel.check()?;
-            entries.entry(row).or_default().insert(
-                "direct_anchor".into(),
-                LaneScore {
-                    score,
-                    rank: rank + 1,
-                },
-            );
+        cancel.check()?;
+        Ok(self.lane_set("direct_anchor", hits, options))
+    }
+
+    pub(super) fn union_sets(
+        &self,
+        sets: &[&CandidateSet],
+        candidate_limit: usize,
+        group_limit: Option<usize>,
+        candidates_per_group: usize,
+        options: &Options,
+    ) -> Result<CandidateSet> {
+        let mut rows = BTreeMap::<u64, BTreeMap<String, LaneScore>>::new();
+        let mut coverage = BTreeMap::new();
+        for set in sets {
+            self.validate_candidates(set)?;
+            coverage.extend(set.lane_coverage.clone());
+            for entry in &set.entries {
+                let lanes = rows.entry(entry.row).or_default();
+                for (name, score) in &entry.lanes {
+                    let existing: &mut LaneScore =
+                        lanes.entry(name.clone()).or_insert_with(|| score.clone());
+                    if score.rank < existing.rank
+                        || score.rank == existing.rank && score.score > existing.score
+                    {
+                        *existing = score.clone();
+                    }
+                }
+            }
         }
-        let mut entries = entries
+        let mut entries = rows
             .into_iter()
             .map(|(row, lanes)| PoolEntry { row, lanes })
             .collect::<Vec<_>>();
-        entries.sort_by(|a, b| {
-            let score = |e: &PoolEntry| {
-                e.lanes
-                    .values()
-                    .map(|l| 1.0 / (o.rrf_k + l.rank as f64))
-                    .sum::<f64>()
-            };
-            score(b).total_cmp(&score(a)).then(a.row.cmp(&b.row))
-        });
-
-        if o.grouping == "document" {
-            let mut group_lanes = BTreeMap::<u64, BTreeMap<String, usize>>::new();
+        let score = |entry: &PoolEntry| {
+            entry
+                .lanes
+                .values()
+                .map(|lane| lane.weight / (options.rrf_k + lane.rank as f64))
+                .sum::<f64>()
+        };
+        entries.sort_by(|a, b| score(b).total_cmp(&score(a)).then(a.row.cmp(&b.row)));
+        let offered = entries.len();
+        if options.grouping == "document" {
+            let mut group_lanes = BTreeMap::<u64, BTreeMap<String, (usize, f64)>>::new();
             for entry in &entries {
                 let lanes = group_lanes
                     .entry(self.inner.candidates.group_rows[entry.row as usize])
                     .or_default();
                 for (name, lane) in &entry.lanes {
-                    let rank = lanes.entry(name.clone()).or_insert(lane.rank);
-                    *rank = (*rank).min(lane.rank);
+                    let rank = lanes
+                        .entry(name.clone())
+                        .or_insert((lane.rank, lane.weight));
+                    if lane.rank < rank.0 {
+                        *rank = (lane.rank, lane.weight);
+                    }
                 }
             }
-            let group_scores = group_lanes
+            let mut groups = group_lanes
                 .into_iter()
                 .map(|(group, lanes)| {
                     (
                         group,
                         lanes
                             .values()
-                            .map(|rank| 1.0 / (o.rrf_k + *rank as f64))
+                            .map(|(rank, weight)| weight / (options.rrf_k + *rank as f64))
                             .sum::<f64>(),
                     )
                 })
+                .collect::<Vec<_>>();
+            groups.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let groups = groups
+                .into_iter()
+                .take(group_limit.unwrap_or(usize::MAX))
+                .enumerate()
+                .map(|(rank, (group, _))| (group, rank))
                 .collect::<BTreeMap<_, _>>();
-            entries.sort_by(|a, b| {
-                group_scores[&self.inner.candidates.group_rows[b.row as usize]]
-                    .total_cmp(&group_scores[&self.inner.candidates.group_rows[a.row as usize]])
+            entries.retain(|entry| {
+                groups.contains_key(&self.inner.candidates.group_rows[entry.row as usize])
             });
+            entries.sort_by(|a, b| {
+                groups[&self.inner.candidates.group_rows[a.row as usize]]
+                    .cmp(&groups[&self.inner.candidates.group_rows[b.row as usize]])
+                    .then_with(|| score(b).total_cmp(&score(a)))
+                    .then(a.row.cmp(&b.row))
+            });
+            let ordered = entries.iter().map(|entry| entry.row).collect::<Vec<_>>();
+            let selected = crate::grouping::fair_rows(
+                &ordered,
+                &self.inner.candidates.group_rows,
+                candidate_limit,
+                candidates_per_group,
+            );
+            entries.retain(|entry| selected.contains(&entry.row));
+        } else {
+            entries.truncate(candidate_limit);
         }
-        let mut pool = CandidatePool {
-            rank_scope: if o.grouping == "document" {
+        Ok(CandidateSet {
+            rank_scope: if options.grouping == "document" {
                 "grouped_lane".into()
             } else {
                 candidate_rank_scope()
             },
             identity: self.inner.input.identity.clone(),
-            offered_candidates: entries.len(),
             entries,
-            calibration: None,
-            lane_coverage: o.lane_coverage.lock().unwrap().clone(),
-        };
-        if o.grouping == "document" {
-            let ordered = pool
-                .entries
-                .iter()
-                .map(|entry| entry.row)
-                .collect::<Vec<_>>();
-            let selected = crate::grouping::fair_rows(
-                &ordered,
-                &self.inner.candidates.group_rows,
-                o.readout.max_union_candidates,
-                o.passages_per_group,
-            );
-            pool.entries.retain(|entry| selected.contains(&entry.row));
-        }
-        let prepared =
-            self.prepare_pool(observation, &pool, &o.readout, o.grouping == "document")?;
-        pool.entries
-            .retain(|e| prepared.selection.iter().any(|c| c.id == e.row as i64 + 1));
-        pool.entries.sort_by_key(|e| {
+            offered_candidates: offered,
+            lane_coverage: coverage,
+        })
+    }
+
+    pub(super) fn calibrate(
+        &self,
+        observation: &QueryObservation,
+        input: &CandidateSet,
+        options: &Options,
+    ) -> Result<CalibratedPool> {
+        self.validate_observation(observation)?;
+        self.validate_candidates(input)?;
+        let prepared = self.prepare_pool(
+            observation,
+            input,
+            &options.readout,
+            options.grouping == "document",
+        )?;
+        let mut candidates = input.clone();
+        candidates.entries.retain(|entry| {
             prepared
                 .selection
                 .iter()
-                .position(|c| c.id == e.row as i64 + 1)
+                .any(|part| part.id == entry.row as i64 + 1)
+        });
+        candidates.entries.sort_by_key(|entry| {
+            prepared
+                .selection
+                .iter()
+                .position(|part| part.id == entry.row as i64 + 1)
                 .unwrap()
         });
-        pool.calibration = Some(prepared);
-        Ok(pool)
+        Ok(CalibratedPool {
+            candidates,
+            prepared,
+            observation: observation.output.clone(),
+            population: input.entries.len(),
+        })
     }
 }

@@ -30,9 +30,9 @@ VCP 原始共现事实与附加质量在事实层汇合，再共用同一传输�
 
 ## DTSC
 
-保留独立的 DTSC 字段/曲线算法，位于 `native/vcp/src/dtsc`，通过正式 query.mode=dtsc 调用。输入复用当前 Snapshot、查询观测、候选曲线和配置；不恢复旧 baseline 运行栈。
+DTSC 字段/曲线算法位于 `native/vcp/src/dtsc`，通过程序中的 `dtsc.readout` 使用同次快照、观测、候选和配置。
 
-保留其 field trust、curve contact 和低证据回退的实际公式与诊断。无效矩阵在公共边界返回错误，不沿用历史实现默默裁掉坏向量的补偿。结果明确算法名，不能把它假报成最新 RiverMemo。其是否作为默认路径由真实资料效果另作决定，本轮默认仍是已选完整混合检索。
+保留其 field trust、curve contact 和低证据回退的实际公式与诊断。无效矩阵在公共边界返回错误，不沿用历史实现默默裁掉坏向量的补偿。结果明确算法名，DTSC 作为可选程序使用；普通默认程序使用原问题的 dense 召回。
 
 ## 时间与范围
 

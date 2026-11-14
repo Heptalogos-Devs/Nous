@@ -17,17 +17,28 @@ from tests.integration.shared.models import (
 def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -> None:
     """A real Wave query consumes immutable context settings and retains its exact source."""
     from nous.application.inputs import FileInput
-    from nous.cognition import CognitiveQuery
     from nous.cognition.feedback import (
         READ_FEEDBACK,
         RECORD_QUERY_FEEDBACK,
         QueryFeedbackRequest,
         ReadFeedback,
     )
+    from nous.cognition.retrieval.contracts import (
+        ContextSelection,
+        EvidenceDelivery,
+        QueryControls,
+        QueryRequest,
+    )
     from nous.cognition.retrieval.operations import QUERY
     from nous.cognition.writing.contracts import AddNote, ReadRecord
     from nous.cognition.writing.operations import ADD_NOTE, READ_RECORD
-    from nous.content.contracts import ContentSelection, ExternalInput, InlineText, SourceSelection
+    from nous.content.contracts import (
+        ContentSelection,
+        ExternalInput,
+        InlineText,
+        ResultOutputRef,
+        SourceSelection,
+    )
     from nous.runtime.bootstrap import open_instance
     from nous.temporal.values import Instant, Interval, Known, TimePoint, parse_explicit_time
     from nous.wave.contracts import (
@@ -86,22 +97,26 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                 )
                 selector = SourceSelection(start_byte=0, end_byte=9)
                 selected = ContentSelection(artifact=view.body_artifact, selection=selector)
-                request = CognitiveQuery(
+                request = QueryRequest(
                     text="How can help become a source of light?",
-                    mode="hybrid",
-                    context=(
-                        ContextFragment(
-                            key="source-excerpt",
-                            role="user",
-                            sequence=1,
-                            content=ContextContent(
-                                artifact=view.body_artifact.identifier, selector=selector
+                    save=True,
+                    context=ContextSelection(
+                        fragments=(
+                            ContextFragment(
+                                key="source-excerpt",
+                                role="user",
+                                sequence=1,
+                                content=ContextContent(
+                                    artifact=view.body_artifact.identifier, selector=selector
+                                ),
                             ),
-                        ),
+                        )
                     ),
                 )
                 answer = await runtime.app.call(QUERY, request)
-                assert answer.groups and answer.context.selected_context[0].content == selected
+                assert answer.evidence.materials
+                assert answer.evidence.intent.context[0].source is not None
+                assert answer.evidence.intent.context[0].source.selections == (selected,)
                 recorded = view.times.recorded
                 assert recorded is not None
                 window = Interval(
@@ -111,15 +126,16 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                 )
                 filtered = await runtime.app.call(
                     QUERY,
-                    CognitiveQuery(
+                    QueryRequest(
                         text="Moonlight",
-                        mode="hybrid",
-                        filters=CandidateFilter(
-                            times=(TimeCondition(axis="recorded", range=window),)
+                        controls=QueryControls(
+                            filters=CandidateFilter(
+                                times=(TimeCondition(axis="recorded", range=window),)
+                            )
                         ),
                     ),
                 )
-                assert [group.context.revision_ref for group in filtered.groups] == [
+                assert [group.material.ref for group in filtered.evidence.materials] == [
                     note.commit.revision_ref
                 ]
                 # Manual collections cannot replace the artifact's actual recorded time.
@@ -163,7 +179,7 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                     WaveQuery(
                         snapshot=snapshot,
                         text="Moonlight",
-                        mode="lexical",
+                        program="lexical",
                         candidate_filter=temporal_filter(spoofed),
                     ),
                 )
@@ -181,22 +197,32 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                     WaveQuery(
                         snapshot=snapshot,
                         text="Moonlight",
-                        mode="lexical",
+                        program="lexical",
                         candidate_filter=temporal_filter(actual_window),
                     ),
                 )
                 assert len(current.hits) == 1
+                assert answer.evidence_ref is not None
                 feedback = await runtime.app.call(
                     RECORD_QUERY_FEEDBACK,
-                    QueryFeedbackRequest(result=answer, category="retrieval", target=(0, 0)),
+                    QueryFeedbackRequest(
+                        evidence=answer.evidence_ref,
+                        category="retrieval",
+                        passage_key=answer.evidence.passages[0].key,
+                    ),
                 )
             async with open_instance(instance, environment={}) as reopened:
                 stored = await reopened.app.call(
                     READ_FEEDBACK, ReadFeedback(ref=feedback.identifier)
                 )
                 assert stored.target.query is not None
-                assert (
-                    stored.target.query.context.selected_context == answer.context.selected_context
+                assert stored.target.query.evidence == answer.evidence_ref
+                artifact = await reopened.results.resolve_output(
+                    ResultOutputRef(result=answer.evidence_ref, output="evidence")
                 )
+                delivery = EvidenceDelivery.model_validate_json(
+                    await reopened.artifacts.read_text(artifact)
+                )
+                assert delivery.intent.context == answer.evidence.intent.context
 
         asyncio.run(scenario())

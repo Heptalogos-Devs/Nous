@@ -39,6 +39,7 @@ from nous.content.contracts import (
     AcceptContent,
     ArtifactInput,
     ContentReadView,
+    DeleteResult,
     ExportContent,
     ExternalInput,
     InlineText,
@@ -47,7 +48,13 @@ from nous.content.contracts import (
     SourceSelection,
     SourceTarget,
 )
-from nous.content.operations import ACCEPT_CONTENT, EXPORT_CONTENT, READ_ARTIFACT, READ_RESULT
+from nous.content.operations import (
+    ACCEPT_CONTENT,
+    DELETE_RESULT,
+    EXPORT_CONTENT,
+    READ_ARTIFACT,
+    READ_RESULT,
+)
 from nous.media.analysis import ANALYZE_MEDIA, INSPECT_MEDIA, AnalyzeMedia, InspectMedia
 from nous.models.generation.contracts import DiscoverModels, PreviewPrompt, ProbeModel, RunModel
 from nous.models.generation.operations import MODEL_DISCOVER, MODEL_PROBE, MODEL_RUN, PROMPT_PREVIEW
@@ -557,6 +564,15 @@ def result_read(
         emit(ctx, value)
     else:
         _emit_results(ctx, value)
+
+
+@result_cli.command("delete")
+def result_delete(ctx: typer.Context, ref: str) -> None:
+    result = application_call(ctx, DELETE_RESULT, DeleteResult(ref=ref))
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.identifier)
 
 
 @embedding_cli.command("probe")

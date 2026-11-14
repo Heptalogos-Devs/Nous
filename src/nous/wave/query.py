@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
@@ -20,23 +20,37 @@ from nous.models.embeddings import resolved_space
 from nous.models.vector_contracts import VectorRef
 from nous.runtime.execution import ExecutionManager
 from nous.temporal.domains import TimeService
-from nous.temporal.values import CognitiveTimes, Instant, Unknown, match_range
+from nous.temporal.values import (
+    CognitiveTimes,
+    Instant,
+    Interval,
+    Known,
+    TimePoint,
+)
 
 from .contracts import (
     CandidateFilter,
-    CandidatePool,
+    CandidateSet,
     Concept,
     ContextFragment,
+    GroupDescriptor,
+    ProgramRunFacts,
     ThinkingStage,
-    WaveNeighborhoodResult,
+    WaveExpression,
     WaveQuery,
-    WaveReadResult,
 )
 from .mapping import (
     ConceptMapping,
-    SnapshotMapping,
     SnapshotRow,
 )
+from .program import (
+    CompiledProgram,
+    EvaluationParameters,
+    delivery_budget,
+    program_run_facts,
+    resolve_program,
+)
+from .scope import allowed_rows
 from .serialization import encode_json
 
 if TYPE_CHECKING:
@@ -48,22 +62,43 @@ class BoundQuery:
     """WaveQuery after external inputs have been read and validated."""
 
     vector: VectorRef | None
-    candidate_pool: CandidatePool | None
+    candidate_set: CandidateSet | None
     context: tuple[ContextFragment, ...]
     candidate_filter: CandidateFilter | None
     thinking_stages: tuple[ThinkingStage, ...]
 
 
+class _ContextAllocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    row: int
+    key: str
+    role: str
+    stage: str
+    parent_key: str
+    contribution: float
+    decayed_weight: float
+    role_weight: float
+
+
+class _ContextDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selected_context: tuple[_ContextAllocation, ...] = ()
+    roles: tuple[dict[str, JsonValue], ...] = ()
+    query_origin: str | None = None
+    effective_query: tuple[float, ...] | None = None
+    context_mix: float | None = None
+
+
 def require_bound_query(request: WaveQuery) -> BoundQuery:
     """Reject a query that still carries unread external inputs."""
     vector = request.vector
-    candidate_pool = request.candidate_pool
+    candidate_set = request.candidate_set
     context = request.context
     candidate_filter = request.candidate_filter
     thinking_stages = request.thinking_stages
     if (
         isinstance(vector, ExternalInput)
-        or isinstance(candidate_pool, ExternalInput)
+        or isinstance(candidate_set, ExternalInput)
         or isinstance(context, ExternalInput)
         or isinstance(candidate_filter, ExternalInput)
         or isinstance(thinking_stages, ExternalInput)
@@ -71,19 +106,25 @@ def require_bound_query(request: WaveQuery) -> BoundQuery:
         raise NousError(
             "input.missing_binding", "External query inputs require an application call"
         )
-    return BoundQuery(vector, candidate_pool, context, candidate_filter, thinking_stages)
+    return BoundQuery(vector, candidate_set, context, candidate_filter, thinking_stages)
 
 
 @dataclass(frozen=True)
 class QueryPlan:
-    mode: str
+    program: CompiledProgram
     text: str
-    vector: npt.NDArray[np.float32] | None
+    raw_vector: npt.NDArray[np.float32] | None
+    contextual_vector: npt.NDArray[np.float32] | None
     ghosts: npt.NDArray[np.float32] | None
     allowed: npt.NDArray[np.uint64]
     options: Mapping[str, object]
-    pool: nous_native.CandidatePool | None
+    candidate_set: nous_native.CandidateSet | None
     summary: dict[str, object]
+    program_run: ProgramRunFacts
+    aspect_vectors: npt.NDArray[np.float32] | None = None
+    expression: dict[str, object] | None = None
+    branch_raw_vectors: npt.NDArray[np.float32] | None = None
+    branch_contextual_vectors: npt.NDArray[np.float32] | None = None
 
 
 class WaveQueries:
@@ -105,64 +146,24 @@ class WaveQueries:
             instance_id,
         )
 
-    @staticmethod
-    def _allowed_rows(mapping: SnapshotMapping, requested: CandidateFilter | None) -> list[int]:
-        candidates = mapping["candidates"]
-        if requested is None:
-            return list(range(len(candidates)))
-        available = {item["key"] for item in candidates}
-        selected = (
-            set(requested.candidate_keys) if requested.candidate_keys is not None else available
-        )
-        unknown = selected - available
-        if unknown:
-            raise NousError(
-                "wave.candidate_not_found",
-                "Candidate filter refers to unknown keys",
-                details={"candidates": sorted(unknown)},
-            )
-        rows: list[int] = []
-        for index, candidate in enumerate(candidates):
-            if candidate["key"] not in selected:
-                continue
-            if requested.times:
-                # All time conditions must match one actual source/declaration, not a mixture.
-                root_keys = set(candidate["roots"])
-                groups = [
-                    document
-                    for key, document in mapping["documents"].items()
-                    if key == candidate["content_document"]
-                    or root_keys.intersection(document["roots"])
-                ]
-                matches_group = False
-                for group in groups:
-                    times = (
-                        CognitiveTimes.model_validate(group["times"]) if group["times"] else None
-                    )
-                    states: list[str] = []
-                    for condition in requested.times:
-                        value = getattr(times, condition.axis) if times is not None else None
-                        if condition.axis == "recorded" and value is not None:
-                            value = Instant(at=value)
-                        states.append(match_range(value or Unknown(), condition.range))
-                    if all(
-                        state == "matches" or (state == "unknown" and requested.include_unknown)
-                        for state in states
-                    ):
-                        matches_group = True
-                        break
-                if not matches_group:
-                    continue
-            rows.append(index)
-        return rows
-
     async def _query_inputs(
-        self, request: WaveQuery, row: SnapshotRow
-    ) -> tuple[npt.NDArray[np.float32] | None, npt.NDArray[np.float32] | None, dict[str, object]]:
+        self,
+        request: WaveQuery,
+        row: SnapshotRow,
+        program: CompiledProgram,
+        *,
+        vectors_required: bool | None = None,
+        context_cache: dict[tuple[str, ...], npt.NDArray[np.float32]] | None = None,
+        include_ghosts: bool = True,
+    ) -> tuple[
+        npt.NDArray[np.float32] | None,
+        npt.NDArray[np.float32] | None,
+        npt.NDArray[np.float32] | None,
+        dict[str, object],
+    ]:
         import nous_native as native
 
         bound = require_bound_query(request)
-        mode = request.mode or self.execution.snapshot.values.wave.query.default_mode
         concepts = row["mapping"]["concepts"]
         by_key = {item["key"]: item for item in concepts}
         by_label: dict[str, list[ConceptMapping]] = {}
@@ -188,26 +189,20 @@ class WaveQueries:
                     details={"concept": key, "matches": [item["key"] for item in matches]},
                 )
             resolved_core.append(matches[0])
-        if mode == "lexical" and bound.vector is not None:
-            raise NousError("wave.invalid_input", "Lexical mode does not consume query vectors")
-        if mode == "lexical" or row["space_id"] is None and mode == "hybrid":
-            return (
-                None,
-                None,
-                {
-                    "query_origin": "text",
-                    "context_used": False,
-                    "selected_context": [],
-                    "omitted_context_count": len(bound.context),
-                    "core_keys": [concept["key"] for concept in resolved_core],
-                    "core_labels": [concept["label"] for concept in resolved_core],
-                },
-            )
-        if row["space_id"] is None:
-            raise NousError("wave.capability_unavailable", "This snapshot has no vector space")
-        definition = resolved_space(self.execution.snapshot, row["space_id"])
-        if definition.model_dump(mode="json") != row["space_definition"]:
-            raise NousError("wave.space_mismatch", "Snapshot and configured vector space differ")
+        needs_vectors = (
+            "vectors" in program.requirements if vectors_required is None else vectors_required
+        )
+        if not needs_vectors and bound.vector is not None:
+            raise NousError("wave.invalid_input", "This program does not consume query vectors")
+        space_id = row["space_id"]
+        if needs_vectors:
+            if space_id is None:
+                raise NousError("wave.capability_unavailable", "This snapshot has no vector space")
+            definition = resolved_space(self.execution.snapshot, space_id)
+            if definition.model_dump(mode="json") != row["space_definition"]:
+                raise NousError(
+                    "wave.space_mismatch", "Snapshot and configured vector space differ"
+                )
         options = self.execution.snapshot.values.wave.context
         query_selections: list[str | ContentSelection] = []
         raw_vector = None
@@ -225,26 +220,65 @@ class WaveQueries:
         encoded_raw = raw_vector is None and bool(request.text.strip())
         if encoded_raw:
             query_selections.append(request.text)
+        active_stages: set[str] = set()
+        uses_contextual_signal = any(
+            ref.node == "query" and ref.port == "contextual_signal"
+            for node in program.nodes
+            for value in node.inputs.values()
+            for ref in (value if isinstance(value, tuple) else (value,))
+        )
+        if (
+            any(node.operator == "context.recall" for node in program.nodes)
+            or uses_contextual_signal
+        ):
+            active_stages.add("retrieval")
+        if any(
+            node.operator == "passages.locate"
+            and isinstance(signals := node.parameters.get("signals", ["lexical", "semantic"]), list)
+            and "lexical" in signals
+            for node in program.nodes
+        ):
+            active_stages.add("localization")
+        if any(node.operator == "passages.evaluate" for node in program.nodes):
+            active_stages.add("evaluation")
         fragments = (
-            sorted(enumerate(bound.context), key=lambda pair: (pair[1].sequence, pair[0]))
+            sorted(
+                (
+                    (index, item)
+                    for index, item in enumerate(bound.context)
+                    if item.stage in active_stages
+                ),
+                key=lambda pair: (pair[1].sequence, pair[0]),
+            )
             if options.enabled
             else []
         )
         fragment_meta: list[dict[str, object]] = []
+        vector_meta: list[dict[str, object]] = []
         resolved_fragments: dict[str, dict[str, object]] = {}
+        resolved_texts: dict[str, str] = {}
         for _, fragment in fragments:
             if fragment.content is not None:
                 artifact = await self.artifacts.get(fragment.content.artifact)
                 selected = ContentSelection(
                     artifact=artifact.ref, selection=fragment.content.selector
                 )
+                selected = (await self.artifacts.normalize_selections((selected,)))[0]
             else:
                 assert fragment.text is not None
                 selected = fragment.text
-            query_selections.append(selected)
+            if fragment.stage == "retrieval" and (uses_contextual_signal or not raw_present):
+                query_selections.append(selected)
+            resolved_texts[fragment.key] = (
+                await self.artifacts.read_selection(selected)
+                if isinstance(selected, ContentSelection)
+                else selected
+            )
             resolved_fragments[fragment.key] = {
                 "key": fragment.key,
                 "role": fragment.role,
+                "stage": fragment.stage,
+                "parent_key": fragment.parent_key or fragment.key,
                 "sequence": fragment.sequence,
                 "weight": fragment.weight,
                 "time": fragment.time.model_dump(mode="json") if fragment.time else None,
@@ -257,30 +291,110 @@ class WaveQueries:
                 {
                     "key": fragment.key,
                     "role": fragment.role,
+                    "stage": fragment.stage,
+                    "parent_key": fragment.parent_key or fragment.key,
                     "sequence": fragment.sequence,
                     "weight": fragment.weight,
+                    "relevance": fragment.relevance,
+                    "validity": fragment.validity,
+                    "distance": fragment.distance,
+                    "half_life": fragment.half_life,
+                    "source_key": (
+                        selected.artifact.identifier
+                        if isinstance(selected, ContentSelection)
+                        else hashlib.sha256(selected.encode("utf-8")).hexdigest()
+                    ),
+                    "source_start": selected.selection.start_byte
+                    if isinstance(selected, ContentSelection)
+                    else None,
+                    "source_end": selected.selection.end_byte
+                    if isinstance(selected, ContentSelection)
+                    else None,
                 }
             )
-        concept_only = not raw_present and not fragment_meta
+            if fragment.stage == "retrieval" and (uses_contextual_signal or not raw_present):
+                vector_meta.append(fragment_meta[-1])
+        aggregate_options: dict[str, object] = {
+            "window": options.window,
+            "context_mix": options.mix,
+            "null_mass": options.null_mass,
+            "role_weights": dict(options.role_weights),
+            "default_role_weight": options.default_role_weight,
+        }
+        mass = (
+            _ContextDiagnostics.model_validate_json(
+                await self.execution.blocking(
+                    native.context_masses,
+                    encode_json(fragment_meta),
+                    encode_json(aggregate_options),
+                )
+            )
+            if fragment_meta
+            else _ContextDiagnostics()
+        )
+        selected_context = [
+            {
+                **resolved_fragments[item.key],
+                "text": resolved_texts[item.key],
+                "decayed_weight": item.decayed_weight,
+                "role_weight": item.role_weight,
+                "contribution": item.contribution,
+            }
+            for item in mass.selected_context
+        ]
+        lexical_context = [
+            {"key": item.key, "text": resolved_texts[item.key], "contribution": item.contribution}
+            for item in mass.selected_context
+            if item.stage == "retrieval"
+        ]
+        localization_context = [
+            {"key": item.key, "text": resolved_texts[item.key], "contribution": item.contribution}
+            for item in mass.selected_context
+            if item.stage == "localization"
+        ]
+        evaluation_context = [
+            resolved_texts[item.key] for item in mass.selected_context if item.stage == "evaluation"
+        ]
+        if not needs_vectors:
+            return (
+                None,
+                None,
+                None,
+                {
+                    "query_origin": "text",
+                    "context_used": bool(mass.selected_context),
+                    "selected_context": selected_context,
+                    "roles": list(mass.roles),
+                    "omitted_context_count": len(bound.context) - len(mass.selected_context),
+                    "core_keys": [concept["key"] for concept in resolved_core],
+                    "core_labels": [concept["label"] for concept in resolved_core],
+                    "context_lexical": lexical_context,
+                    "localization_context": localization_context,
+                    "evaluation_context": evaluation_context,
+                },
+            )
+        if space_id is None:
+            raise NousError("wave.capability_unavailable", "This snapshot has no vector space")
+        concept_only = not raw_present and not vector_meta
         if concept_only:
             for core_index, concept in enumerate(resolved_core):
                 text = Concept.model_validate(concept).embedding_text()
                 query_selections.append(text)
-                fragment_meta.append(
+                vector_meta.append(
                     {
                         "key": f"core:{core_index}",
                         "role": "concept",
-                        "sequence": len(fragment_meta),
+                        "sequence": len(vector_meta),
                         "weight": 1.0,
                     }
                 )
             for cue_index, cue in enumerate(request.cues):
                 query_selections.append(cue.embedding_text())
-                fragment_meta.append(
+                vector_meta.append(
                     {
                         "key": f"cue:{cue_index}",
                         "role": "concept",
-                        "sequence": len(fragment_meta),
+                        "sequence": len(vector_meta),
                         "weight": 1.0,
                     }
                 )
@@ -288,26 +402,34 @@ class WaveQueries:
             raise NousError(
                 "wave.empty_query", "Provide query text, context, a core concept or a cue"
             )
-        vectors = (
-            await self.embedding.encode_query(query_selections, row["space_id"])
-            if query_selections
-            else np.empty((0, len(raw_vector) if raw_vector is not None else 0), dtype=np.float32)
+        context_selections = query_selections[1:] if encoded_raw else query_selections
+        context_key = tuple(
+            item.model_dump_json() if isinstance(item, ContentSelection) else "text:" + item
+            for item in context_selections
         )
-        raw = raw_vector if raw_vector is not None else (vectors[0] if encoded_raw else None)
-        context_vectors = vectors[1:] if encoded_raw else vectors
+        cached_context = context_cache.get(context_key) if context_cache and context_key else None
+        if cached_context is not None:
+            raw = raw_vector
+            if encoded_raw:
+                raw = (await self.embedding.encode_query((request.text,), space_id))[0]
+            context_vectors = cached_context
+        else:
+            vectors = (
+                await self.embedding.encode_query(query_selections, space_id)
+                if query_selections
+                else np.empty(
+                    (0, len(raw_vector) if raw_vector is not None else 0), dtype=np.float32
+                )
+            )
+            raw = raw_vector if raw_vector is not None else (vectors[0] if encoded_raw else None)
+            context_vectors = vectors[1:] if encoded_raw else vectors
+            if context_cache is not None and context_key:
+                context_cache[context_key] = context_vectors
         if len(context_vectors):
-            aggregate_options: dict[str, object] = {
-                "window": options.window,
-                "decay": options.decay,
-                "context_mix": options.mix,
-                "role_weights": dict(options.role_weights),
-                "default_role_weight": options.default_role_weight,
-            }
             if concept_only:
                 aggregate_options.update(
                     {
                         "window": len(context_vectors),
-                        "decay": 1.0,
                         "context_mix": 1.0,
                         "role_weights": {"concept": 1.0},
                     }
@@ -316,34 +438,31 @@ class WaveQueries:
                 native.aggregate_context,
                 raw,
                 context_vectors,
-                encode_json(fragment_meta),
+                encode_json(vector_meta),
                 encode_json(aggregate_options),
             )
             effective = aggregated.vector
-            summary: dict[str, object] = json.loads(aggregated.diagnostics_json)
-            summary.pop("effective_query", None)
+            diagnostic = _ContextDiagnostics.model_validate_json(aggregated.diagnostics_json)
+            summary: dict[str, object] = diagnostic.model_dump(
+                mode="json", exclude={"selected_context", "effective_query"}, exclude_none=True
+            )
             summary["context_options"] = aggregate_options
             if concept_only:
                 summary["query_origin"] = "concepts"
         else:
             effective = raw
-            summary = {"query_origin": "text", "context_used": False}
-        native_selected = cast(list[dict[str, object]], summary.pop("selected_context", []))
-        selected_context = [
-            {
-                **resolved_fragments[cast(str, part["key"])],
-                "decayed_weight": part["decayed_weight"],
-                "role_weight": part["role_weight"],
-            }
-            for part in native_selected
-            if part["key"] in resolved_fragments
-        ]
+            diagnostic = _ContextDiagnostics()
+            summary = {"query_origin": "text", "context_used": bool(mass.selected_context)}
         summary["selected_context"] = selected_context
+        summary["roles"] = list(mass.roles)
+        summary["context_lexical"] = lexical_context
+        summary["localization_context"] = localization_context
+        summary["evaluation_context"] = evaluation_context
         summary["omitted_context_count"] = len(bound.context) - len(selected_context)
         ghosts: npt.NDArray[np.float32] | None = None
-        if request.cues:
+        if request.cues and include_ghosts:
             ghosts = await self.embedding.encode_query(
-                tuple(cue.embedding_text() for cue in request.cues), row["space_id"]
+                tuple(cue.embedding_text() for cue in request.cues), space_id
             )
         if bound.vector is not None:
             summary["query_origin"] = "vector+context" if len(context_vectors) else "vector"
@@ -353,15 +472,39 @@ class WaveQueries:
             }
         summary["core_keys"] = [concept["key"] for concept in resolved_core]
         summary["core_labels"] = [concept["label"] for concept in resolved_core]
-        return effective, ghosts, summary
+        return raw if raw is not None else effective, effective, ghosts, summary
 
-    async def prepare(self, request: WaveQuery, row: SnapshotRow) -> QueryPlan:
+    async def prepare(
+        self, request: WaveQuery, row: SnapshotRow, capabilities: Sequence[str]
+    ) -> QueryPlan:
         bound = require_bound_query(request)
         await self.time.validate(fragment.time for fragment in bound.context)
         if bound.candidate_filter is not None:
             await self.time.validate(condition.range for condition in bound.candidate_filter.times)
         wave = self.execution.snapshot.values.wave
-        mode = request.mode or wave.query.default_mode
+        program = resolve_program(
+            wave, request.program or (wave.exploration_program if request.explore else None)
+        )
+        selection: Literal["explicit", "default", "fallback", "exploration"] = (
+            "explicit" if request.program else "exploration" if request.explore else "default"
+        )
+        missing = program.requirements - set(capabilities)
+        if missing and request.program is None and not request.explore and wave.unavailable_program:
+            program = resolve_program(wave, wave.unavailable_program)
+            selection = "fallback"
+            missing = program.requirements - set(capabilities)
+        if missing:
+            raise NousError(
+                "wave.capability_unavailable",
+                "Snapshot cannot execute the requested program",
+                details={"program": program.name, "missing": sorted(missing)},
+            )
+        if (bound.thinking_stages or request.explore) and "thinking" not in program.outputs:
+            raise NousError(
+                "wave.capability_unavailable",
+                "The selected program does not produce thinking routes",
+                details={"program": program.name},
+            )
         query_settings = wave.native.model_dump(mode="json")["query"]
         readout = cast(dict[str, JsonValue], query_settings["readout"])
         maximum = cast(int, readout["maxUnionCandidates"])
@@ -375,8 +518,48 @@ class WaveQueries:
                 },
             )
         mapping = row["mapping"]
-        allowed = self._allowed_rows(mapping, bound.candidate_filter)
-        vector, ghosts, query_summary = await self._query_inputs(request, row)
+        allowed = allowed_rows(mapping, bound.candidate_filter)
+
+        def leaf_texts(expression: WaveExpression, prefix: tuple[str, ...] = ()) -> list[str]:
+            parts = (*prefix, expression.text) if expression.text.strip() else prefix
+            if expression.kind == "term":
+                return [" ".join(parts).strip()]
+            return [text for child in expression.children for text in leaf_texts(child, parts)]
+
+        expression = request.expression
+        if expression is None and (request.prefer or request.avoid or request.sort):
+            expression = WaveExpression(
+                kind="term", text=request.text, candidate_filter=bound.candidate_filter
+            )
+        expression_texts = leaf_texts(expression) if expression else []
+        localization_text = (
+            request.text.strip() or " ".join(dict.fromkeys(expression_texts)).strip()
+        )
+        signal_request = request.model_copy(update={"text": localization_text})
+        context_cache: dict[tuple[str, ...], npt.NDArray[np.float32]] = {}
+        raw_vector, contextual_vector, ghosts, query_summary = await self._query_inputs(
+            signal_request,
+            row,
+            program,
+            vectors_required=False
+            if not localization_text and not request.core_concepts and not request.cues
+            else None,
+            context_cache=context_cache,
+        )
+        aspect_vectors = None
+        if request.aspects:
+            space_id = row["space_id"]
+            if space_id is not None and "vectors" in capabilities:
+                definition = resolved_space(self.execution.snapshot, space_id)
+                if definition.model_dump(mode="json") != row["space_definition"]:
+                    raise NousError(
+                        "wave.space_mismatch", "Snapshot and configured vector space differ"
+                    )
+                aspect_vectors = await self.embedding.encode_query(request.aspects, space_id)
+            query_summary["aspects"] = list(request.aspects)
+            query_summary["aspect_status"] = (
+                "encoded" if aspect_vectors is not None else "unavailable"
+            )
         concepts = mapping["concepts"]
         keys = {item["key"]: index for index, item in enumerate(concepts)}
         core_rows = [keys[key] for key in cast(list[str], query_summary.get("core_keys", []))]
@@ -410,47 +593,68 @@ class WaveQueries:
             "top_k": request.top_k or wave.query.top_k,
             "grouping": request.grouping,
             "passages_per_group": request.passages_per_group,
+            "candidates_per_group": controls["candidates_per_group"],
+            "ann_search_effort": controls["ann_search_effort"],
             "group_scan_limit": wave.query.group_scan_limit,
             "include_trace": request.include_trace,
             "core_rows": core_rows,
             "ghosts": [{"name": cue.label, "is_core": cue.is_core} for cue in request.cues],
             "thinking_stages": stages,
+            "explore": request.explore,
+            "context_lexical": query_summary.get("context_lexical", []),
+            "localization_context": query_summary.get("localization_context", []),
             "dedup_threshold": wave.dedup.threshold if wave.dedup.semantic_enabled else None,
             "rrf_k": wave.fusion.rrf_k,
+            "preference_weight": controls["preference_weight"],
             "include_counterevidence": (
                 request.include_counterevidence
                 if request.include_counterevidence is not None
                 else wave.query.include_counterevidence
             ),
         }
-        query_text = " ".join([request.text, *(cue.label for cue in request.cues)]).strip()
-        if not query_text and mode == "lexical":
+        query_text = " ".join([localization_text, *(cue.label for cue in request.cues)]).strip()
+        if not query_text and "text" in program.requirements:
             query_text = " ".join(cast(list[str], query_summary.get("core_labels", [])))
-        if mode == "lexical" and not query_text:
+        if not query_text and raw_vector is None and expression is None:
             raise NousError(
                 "wave.empty_query", "Lexical retrieval requires query text or cue labels"
             )
-        native_pool = None
-        if bound.candidate_pool is not None:
-            pool = bound.candidate_pool
-            if pool.snapshot not in {row["identifier"], row["id"]}:
+        native_candidates = None
+        if bound.candidate_set is not None:
+            if expression is not None:
                 raise NousError(
-                    "wave.candidate_pool_mismatch", "Candidate pool belongs to another snapshot"
+                    "wave.invalid_input",
+                    "A fixed candidate set cannot be combined with a query expression",
                 )
-            unknown = {entry.candidate for entry in pool.entries} - candidate_rows.keys()
+            if not any(
+                ref.node == "scope" and ref.port == "candidates"
+                for node in program.nodes
+                for value in node.inputs.values()
+                for ref in (value if isinstance(value, tuple) else (value,))
+            ):
+                raise NousError(
+                    "wave.invalid_input",
+                    "The selected program does not consume a fixed candidate set",
+                )
+            candidate_set = bound.candidate_set
+            if candidate_set.snapshot not in {row["identifier"], row["id"]}:
+                raise NousError(
+                    "wave.candidate_set_mismatch", "Candidate set belongs to another snapshot"
+                )
+            unknown = {entry.candidate for entry in candidate_set.entries} - candidate_rows.keys()
             if unknown:
                 raise NousError(
                     "wave.candidate_not_found",
-                    "Candidate pool contains unknown keys",
+                    "Candidate set contains unknown keys",
                     details={"candidates": sorted(unknown)},
                 )
             import nous_native as native
 
-            native_pool = native.CandidatePool(
+            native_candidates = native.CandidateSet(
                 encode_json(
                     {
                         "identity": row["identity"],
-                        "rank_scope": pool.rank_scope,
+                        "rank_scope": candidate_set.rank_scope,
                         "entries": [
                             {
                                 "row": candidate_rows[entry.candidate],
@@ -459,7 +663,7 @@ class WaveQueries:
                                     for name, lane in entry.lanes.items()
                                 },
                             }
-                            for entry in pool.entries
+                            for entry in candidate_set.entries
                         ],
                     }
                 )
@@ -470,6 +674,36 @@ class WaveQueries:
             "context": query_summary.get("context_options"),
             "query_origin": query_summary.get("query_origin"),
         }
+        budget = delivery_budget(program, request.delivery_budget)
+        signature = row["identity"].get("space_signature")
+        evaluation_tasks: dict[str, object] = {}
+        for node in program.nodes:
+            if node.operator != "passages.evaluate":
+                continue
+            parameters = EvaluationParameters.model_validate(node.parameters)
+            task = parameters.task or (
+                "rank-passages" if parameters.method == "rank" else "evaluate-passages"
+            )
+            assignment = self.execution.snapshot.values.tasks.get(task)
+            evaluation_tasks[task] = (
+                assignment.model_dump(mode="json") if assignment is not None else None
+            )
+        program_run = program_run_facts(
+            program,
+            requested_program=request.program,
+            selection=selection,
+            options=search_options,
+            context_options=wave.context.model_dump(mode="json"),
+            evaluation_options=self.execution.snapshot.values.evaluation.model_dump(mode="json"),
+            evaluation_tasks=evaluation_tasks,
+            budget=budget,
+            space_id=row["space_id"],
+            space_signature=signature if isinstance(signature, str) else None,
+            space_definition=row["space_definition"],
+            candidate_set=bound.candidate_set,
+            expression_kind=expression.kind if expression is not None else None,
+            expression_terms=len(expression_texts),
+        )
         query_summary["grouping"] = {
             "by": request.grouping,
             "top_k": request.top_k or wave.query.top_k,
@@ -477,115 +711,175 @@ class WaveQueries:
             "lane_limit_unit": "groups" if request.grouping == "document" else "candidates",
             "group_scan_limit": wave.query.group_scan_limit,
         }
+        sort_requests: set[str] = {request.sort} if request.sort else set()
+
+        def gather_sorts(value: WaveExpression) -> None:
+            if value.sort:
+                sort_requests.add(value.sort)
+            for child in value.children:
+                gather_sorts(child)
+
+        if expression is not None:
+            gather_sorts(expression)
+        sort_values: dict[str, dict[str, object]] = {}
+        for sort in sort_requests:
+            parts = sort.split(",")
+            if (
+                len(parts) > 2
+                or parts[0] not in {"occurred", "observed", "formed", "valid", "recorded"}
+                or (len(parts) == 2 and parts[1] not in {"asc", "desc"})
+            ):
+                raise NousError(
+                    "wave.invalid_input", "Invalid time ordering", details={"sort": sort}
+                )
+            axis = parts[0]
+            values: dict[str, object] = {}
+            for group_key, descriptor in mapping["groups"].items():
+                group = GroupDescriptor.model_validate(descriptor)
+                document = mapping["documents"][group.document_key]
+                times = (
+                    CognitiveTimes.model_validate(document["times"]) if document["times"] else None
+                )
+                value = getattr(times, axis) if times else None
+                point: TimePoint | None = (
+                    value
+                    if isinstance(value, TimePoint)
+                    else value.at
+                    if isinstance(value, Instant)
+                    else value.start.at
+                    if isinstance(value, Interval) and isinstance(value.start, Known)
+                    else None
+                )
+                values[group_key] = (
+                    {"domain": point.domain_id, "ticks": point.ticks} if point else None
+                )
+            sort_values[axis] = values
+        search_options["sort_values"] = sort_values
+        expression_plan: dict[str, object] | None = None
+        branch_raw: list[npt.NDArray[np.float32]] = []
+        branch_contextual: list[npt.NDArray[np.float32]] = []
+        if expression is not None:
+            branches: list[dict[str, object]] = []
+            vectors: dict[tuple[str, tuple[str, ...]], int] = {}
+
+            async def bind_expression(
+                value: WaveExpression, path: str, prefix: tuple[str, ...] = ()
+            ) -> dict[str, object]:
+                parts = (*prefix, value.text) if value.text.strip() else prefix
+                if value.kind != "term":
+                    return {
+                        "kind": value.kind,
+                        "limit": value.limit,
+                        "sort": value.sort,
+                        "prefer": list(value.prefer),
+                        "avoid": list(value.avoid),
+                        "children": [
+                            await bind_expression(child, f"{path}.{index}", parts)
+                            for index, child in enumerate(value.children)
+                        ],
+                    }
+                text = " ".join(parts).strip()
+                if (
+                    not text
+                    and value.candidate_filter is None
+                    and not value.core_concepts
+                    and bound.candidate_filter is None
+                ):
+                    raise NousError(
+                        "wave.empty_query", "A query term needs text or a bound selector"
+                    )
+                branch_allowed = set(allowed)
+                if value.candidate_filter is not None:
+                    await self.time.validate(
+                        condition.range for condition in value.candidate_filter.times
+                    )
+                    branch_allowed.intersection_update(
+                        allowed_rows(mapping, value.candidate_filter)
+                    )
+                concepts_for_branch = value.core_concepts or request.core_concepts
+                branch_request = signal_request.model_copy(
+                    update={
+                        "text": text,
+                        "core_concepts": concepts_for_branch,
+                        "expression": None,
+                    }
+                )
+                index = None
+                branch_summary: dict[str, object] = {}
+                if text or concepts_for_branch:
+                    key = (text, concepts_for_branch)
+                    if text == localization_text and concepts_for_branch == request.core_concepts:
+                        branch_vector, branch_effective, branch_summary = (
+                            raw_vector,
+                            contextual_vector,
+                            query_summary,
+                        )
+                    else:
+                        (
+                            branch_vector,
+                            branch_effective,
+                            _,
+                            branch_summary,
+                        ) = await self._query_inputs(
+                            branch_request,
+                            row,
+                            program,
+                            context_cache=context_cache,
+                            include_ghosts=False,
+                        )
+                    if branch_vector is not None and branch_effective is not None:
+                        if key not in vectors:
+                            vectors[key] = len(branch_raw)
+                            branch_raw.append(branch_vector)
+                            branch_contextual.append(branch_effective)
+                        index = vectors[key]
+                keys_for_branch = branch_summary.get("core_keys", [])
+                if concepts_for_branch:
+                    required = set(cast(list[str], keys_for_branch))
+                    branch_allowed = {
+                        candidate_row
+                        for candidate_row in branch_allowed
+                        if required.issubset(set(candidates[candidate_row]["concepts"]))
+                    }
+                branch_index = len(branches)
+                branches.append(
+                    {
+                        "name": path,
+                        "text": text,
+                        "allowed_rows": sorted(branch_allowed),
+                        "core_rows": [keys[key] for key in cast(list[str], keys_for_branch)],
+                        "vector_index": index,
+                        "limit": value.limit,
+                        "prefer": list(value.prefer),
+                        "avoid": list(value.avoid),
+                        "sort": value.sort,
+                    }
+                )
+                return {"kind": "term", "branch": branch_index, "limit": value.limit}
+
+            tree = await bind_expression(expression, "0")
+            expression_plan = {
+                "tree": tree,
+                "branches": branches,
+                "prefer": list(request.prefer),
+                "avoid": list(request.avoid),
+                "sort": request.sort,
+            }
         return QueryPlan(
-            mode,
+            program,
             query_text,
-            vector,
+            raw_vector,
+            contextual_vector,
             ghosts,
             np.asarray(allowed, dtype=np.uint64),
             search_options,
-            native_pool,
+            native_candidates,
             query_summary,
-        )
-
-    async def read(
-        self, row: SnapshotRow, candidate_key: str, *, sources: bool = False
-    ) -> WaveReadResult:
-        mapping = row["mapping"]
-        candidate = next(
-            (item for item in mapping["candidates"] if item["key"] == candidate_key), None
-        )
-        if candidate is None:
-            raise NousError(
-                "wave.candidate_not_found",
-                "Candidate does not exist in this snapshot",
-                details={"candidate": candidate_key},
-            )
-        content = ContentSelection.model_validate(candidate["content"])
-        return WaveReadResult.model_validate(
-            {
-                "snapshot": {
-                    "instance_id": self.instance_id,
-                    "id": row["id"],
-                    "identifier": row["identifier"],
-                },
-                "candidate": {"snapshot": row["identifier"], "key": candidate_key},
-                "content": content,
-                "origin_contents": candidate["origin_contents"],
-                "text": await self.artifacts.read_selection(content),
-                "group": row["mapping"]["groups"][candidate["group_key"]],
-                "concepts": candidate["concepts"],
-                "paths": candidate["paths"],
-                "sources": [
-                    {"evidence_root": root, "artifacts": mapping["roots"][root]}
-                    for root in candidate["roots"]
-                ]
-                if sources
-                else None,
-            }
-        )
-
-    @staticmethod
-    def neighborhood_rows(row: SnapshotRow, concepts: Sequence[str]) -> npt.NDArray[np.uint64]:
-        all_concepts = row["mapping"]["concepts"]
-        rows = {item["key"]: index for index, item in enumerate(all_concepts)}
-        unknown = set(concepts) - rows.keys()
-        if unknown:
-            raise NousError(
-                "wave.concept_not_found",
-                "Neighborhood refers to unknown concept keys",
-                details={"concepts": sorted(unknown)},
-            )
-        return np.asarray([rows[key] for key in concepts], dtype=np.uint64)
-
-    def neighborhood(
-        self, row: SnapshotRow, concepts: Sequence[str], result: str
-    ) -> WaveNeighborhoodResult:
-        all_concepts = row["mapping"]["concepts"]
-        neighborhood = json.loads(result)
-        for edge in neighborhood.get("edges", []):
-            edge["source"] = all_concepts[edge["source"]]["key"]
-            edge["target"] = all_concepts[edge["target"]]["key"]
-        for node in neighborhood.get("nodes", []):
-            node["concept"] = all_concepts[node.pop("row")]["key"]
-            node["roots"] = [
-                row["mapping"]["root_order"][index] for index in node.pop("root_rows", [])
-            ]
-            node["source_witness_groups"] = [
-                [row["mapping"]["root_order"][index] for index in group]
-                for group in node.get("source_witness_groups", [])
-            ]
-            node["candidates"] = [
-                row["mapping"]["candidates"][index]["key"]
-                for index in node.pop("candidate_rows", [])
-            ]
-        for association in neighborhood.get("associations", []):
-            association["source"] = all_concepts[association["source"]]["key"]
-            association["target"] = all_concepts[association["target"]]["key"]
-            group = association.get("support_group")
-            if isinstance(group, dict):
-                group = cast(dict[str, object], group)
-                association["support_group"] = next(
-                    (
-                        item
-                        for item in row["mapping"]["support_groups"]
-                        if item["key"] == group.get("key")
-                    ),
-                    group,
-                )
-            association["evidence_roots"] = [
-                row["mapping"]["root_order"][index] for index in association["evidence_roots"]
-            ]
-        return WaveNeighborhoodResult.model_validate(
-            {
-                "snapshot": {
-                    "instance_id": self.instance_id,
-                    "id": row["id"],
-                    "identifier": row["identifier"],
-                },
-                "concepts": concepts,
-                "neighborhood": neighborhood,
-            }
+            program_run,
+            aspect_vectors,
+            expression_plan,
+            np.stack(branch_raw).astype(np.float32) if branch_raw else None,
+            np.stack(branch_contextual).astype(np.float32) if branch_contextual else None,
         )
 
     async def segment_vectors(

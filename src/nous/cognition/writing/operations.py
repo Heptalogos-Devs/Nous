@@ -37,6 +37,7 @@ from ..contracts import (
 from ..feedback import FeedbackOperations
 from ..maintenance.contracts import MaintenanceCompleted, MaintenanceNotStarted
 from ..maintenance.operations import MaintenanceOperations
+from ..material_contracts import MaterialSource
 from .contracts import (
     AddNote,
     AdoptDraft,
@@ -180,6 +181,7 @@ class RecordOperations:
                 author=request.author,
                 viewpoint=request.viewpoint,
                 sources=selected.bindings,
+                material_sources=selected.material_sources,
             )
         return await self._after(commit, request.after, call)
 
@@ -258,6 +260,7 @@ class RecordOperations:
             return await self._after(previous, after, call)
         original = await self._target_base(namespace, target, expected)
         changes = source_changes or SourceChanges()
+        new_materials: tuple[MaterialSource, ...] = ()
         if choices:
             reserved = [source.key for source in original.sources] + [
                 source.key for source in changes.add
@@ -265,6 +268,7 @@ class RecordOperations:
             additions = await self.core.sources.prepare(
                 namespace, choices, prefix="N", reserved_keys=reserved, input_reader=call.inputs
             )
+            new_materials = additions.material_sources
             changes = changes.model_copy(update={"add": (*changes.add, *additions.bindings)})
         bindings = changes.apply_to(original.sources)
         if changes.add:
@@ -294,6 +298,24 @@ class RecordOperations:
             if replayed is not None:
                 commit = replayed
             else:
+                previous_materials = (
+                    await self.reader.material_sources_many_in(
+                        tx,
+                        (original.revision_ref.revision_id,),
+                        sources={original.revision_ref.revision_id: original.sources},
+                    )
+                )[original.revision_ref.revision_id]
+                retained = tuple(
+                    item
+                    for item in previous_materials
+                    if changes.preserve and item.key not in changes.remove
+                )
+                chosen = {binding.key: binding for binding in bindings}
+                added_materials = tuple(
+                    item.model_copy(update={"selections": chosen[item.key].selections})
+                    for item in new_materials
+                    if item.key in chosen
+                )
                 commit = await self.core.append_in(
                     tx,
                     target,
@@ -304,6 +326,7 @@ class RecordOperations:
                     change_kind=change_kind,
                     reason=reason,
                     sources=bindings,
+                    material_sources=(*retained, *added_materials),
                     write_key=write_key,
                     write_fingerprint=fingerprint if write_key else None,
                     **metadata,
@@ -517,6 +540,7 @@ class RecordOperations:
                         "author": context.author,
                         "viewpoint": context.viewpoint,
                         "sources": context.source_bindings,
+                        "material_sources": context.material_sources,
                         "times": context.times,
                         "origin_result_id": result_id,
                         "body_artifact": draft.body_artifact,

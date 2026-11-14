@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -24,6 +24,8 @@ from nous.content.contracts import (
     ProcessingResult,
     ProgramProducer,
     ResultFacts,
+    ResultOutput,
+    ResultOutputRef,
     ResultRef,
     SelectedInputs,
     SelectedSource,
@@ -32,10 +34,14 @@ from nous.content.contracts import (
     UserProducer,
 )
 from nous.content.edits import PreparedTextEdit
+from nous.content.selections import subtract_selection
 from nous.models.generation import GenerationOperations, GenerationRequest
 
 from ..contracts import NamespaceRef, RecordRevisionRef, RecordView, SourceBinding
+from ..material_contracts import MaterialSelection, MaterialSource
+from ..retrieval.contracts import EvidenceDelivery
 from ..sources import PreparedSources
+from ..work.refs import WorkRevisionRef
 from .contracts import (
     AdoptDraft,
     CitationContext,
@@ -61,6 +67,9 @@ from .operations import RecordOperations
 from .reading import RecordReader
 from .records import WrittenRecords
 from .tasks import EditProposal, compose_edit, writing_body
+
+if TYPE_CHECKING:
+    from ..materials import Materials
 
 
 def _source_directory(sources: Sequence[SourceBinding]) -> str:
@@ -165,9 +174,11 @@ class WritingOperations:
         generation: GenerationOperations,
         drafts: DraftStore,
         records: RecordOperations,
+        materials: Materials,
     ) -> None:
         self.core, self.reader, self.generation = core, reader, generation
         self.drafts, self.records = drafts, records
+        self.materials = materials
         self.execution, self.database, self.results = (
             reader.execution,
             reader.database,
@@ -195,10 +206,42 @@ class WritingOperations:
         self, base: RecordRevisionRef, refs: Sequence[str], mappings: Mapping[str, str]
     ) -> str:
         views = await self.records.feedback.select_for_edit(refs, base, mappings=mappings)
-        return "\n\n".join(
-            f"[{item.identifier}] {item.category}: {item.value or ''}\n{item.comment or ''}"
-            for item in views
-        )
+        deliveries: dict[ResultRef, EvidenceDelivery] = {}
+        output: list[str] = []
+        for item in views:
+            parts = [f"[{item.identifier}] {item.category}: {item.value or ''}", item.comment or ""]
+            query = item.target.query
+            if query is not None and query.evidence is not None:
+                if query.evidence not in deliveries:
+                    artifact = await self.results.resolve_output(
+                        ResultOutputRef(result=query.evidence, output="evidence")
+                    )
+                    deliveries[query.evidence] = EvidenceDelivery.model_validate_json(
+                        await self.results.artifacts.read_text(artifact)
+                    )
+                delivery = deliveries[query.evidence]
+                parts.append(f"Query: {delivery.intent.original_text}")
+                if query.passage_key is not None:
+                    passage = next(
+                        (value for value in delivery.passages if value.key == query.passage_key),
+                        None,
+                    )
+                    if passage is None:
+                        raise NousError(
+                            "cognition.selection_mismatch", "Feedback evidence key is unavailable"
+                        )
+                    content = await self.results.artifacts.read_selections(passage.selections)
+                    parts.append(
+                        f"Evidence {passage.key}:\n" + "".join(part.text for part in content)
+                    )
+            elif query is not None:
+                facts = query.model_dump(
+                    mode="json", exclude={"evidence", "passage_key", "snapshot_available"}
+                )
+                if facts:
+                    parts.append(json.dumps(facts, ensure_ascii=False))
+            output.append("\n".join(parts))
+        return "\n\n".join(output)
 
     async def _prepare(
         self, request: WriteDraft, call: CallContext
@@ -222,6 +265,7 @@ class WritingOperations:
         namespace = await self.core.scope.resolve_for(request.namespace, owner)
         choices = await self._choices(request.sources, call)
         inherited: tuple[SourceBinding, ...] = ()
+        inherited_materials: tuple[MaterialSource, ...] = ()
         targets: dict[str, ContentSelection] = {}
         selected_targets: tuple[ContentSelection, ...] = ()
         feedback_mappings: dict[str, str] = {}
@@ -231,6 +275,14 @@ class WritingOperations:
         if isinstance(request, (EditDraftRequest, RewriteDraftRequest)):
             base = await self._base(request.base, namespace)
             inherited = base.sources
+            async with self.database.read() as tx:
+                inherited_materials = (
+                    await self.core.reader.material_sources_many_in(
+                        tx,
+                        (base.revision_ref.revision_id,),
+                        sources={base.revision_ref.revision_id: base.sources},
+                    )
+                )[base.revision_ref.revision_id]
             if isinstance(request, RewriteDraftRequest) and base.ref.kind != "journal":
                 raise NousError("input.invalid_kind", "Rewrite requires a Journal")
             if not request.instruction.strip() and not (
@@ -259,6 +311,7 @@ class WritingOperations:
                     sources=(*first.selected_inputs.sources, *extra.selected_inputs.sources),
                     facts=(*first.selected_inputs.facts, *extra.selected_inputs.facts),
                 ),
+                (*first.material_sources, *extra.material_sources),
             )
         else:
             prepared = await self.core.sources.prepare(
@@ -376,6 +429,7 @@ class WritingOperations:
             intent=request.intent,
             base_revision=base.revision_ref if base else None,
             selected_sources=prepared.bindings,
+            material_sources=(*inherited_materials, *prepared.material_sources),
             citation_context=CitationContext(
                 inherited_sources=inherited, new_sources=prepared.bindings, targets=targets
             ),
@@ -594,16 +648,129 @@ class WritingOperations:
     ) -> WritingOutcome:
         product = await self.results.get(request.result)
         raw_context = product.parameters.get("writing")
-        if not isinstance(raw_context, dict):
-            raise NousError("cognition.writing_product_required", "Result is not a writing product")
-        context = WritingProductContext.model_validate(raw_context)
+        if isinstance(raw_context, dict):
+            context = WritingProductContext.model_validate(raw_context)
+            await self.core.scope.resolve_for(request.namespace, context.namespace_ref)
+        else:
+            namespace = await self.core.scope.resolve_for(request.namespace)
+            bindings = (
+                request.sources
+                if request.sources is not None
+                else tuple(
+                    SourceBinding(key=item.key, selections=item.sources)
+                    for item in product.selections
+                )
+            )
+            context = WritingProductContext(
+                namespace_ref=namespace,
+                intent="new",
+                selected_sources=(),
+                citation_context=CitationContext(inherited_sources=bindings),
+                times=await self.core.prepare_times(None),
+                title=request.title,
+                output_state="material",
+            )
+        if request.sources is not None and isinstance(raw_context, dict):
+            context = context.model_copy(
+                update={
+                    "selected_sources": (),
+                    "citation_context": CitationContext(inherited_sources=request.sources),
+                }
+            )
+        if request.title is not None:
+            context = context.model_copy(update={"title": request.title})
         if context.output_state == "no_material":
             return WritingOutcome(status="no_material", product=product.ref)
-        output = next((item for item in product.outputs if item.name == "output"), None)
+        output = next(
+            (item for item in product.outputs if item.name == (request.output or "output")), None
+        )
+        if output is None and request.output is None:
+            markdown: list[ResultOutput] = []
+            for item in product.outputs:
+                artifact = await self.results.artifacts.get(item.artifact)
+                if item.role != "diagnostic" and artifact.media_type == "text/markdown":
+                    markdown.append(item)
+            if len(markdown) == 1:
+                output = markdown[0]
         if output is None:
-            raise NousError("model.invalid_output", "Writing product has no output")
+            raise NousError(
+                "cognition.markdown_output_required", "Choose one Markdown output for the draft"
+            )
+        if context.intent != "edit":
+            artifact = await self.results.artifacts.get(output.artifact)
+            if artifact.media_type != "text/markdown":
+                raise NousError(
+                    "cognition.markdown_output_required", "The selected output is not Markdown"
+                )
+        formal_sources = await self.materials.sources_for(
+            ResultOutputRef(result=product.ref, output=output.name)
+        )
+        owner: NamespaceRef | None = None
+        for source in formal_sources:
+            reference = source.material
+            if isinstance(reference, RecordRevisionRef):
+                ref = reference.record_ref
+            elif isinstance(reference, WorkRevisionRef):
+                ref = reference.work_ref
+            else:
+                continue
+            candidate = NamespaceRef(instance_id=ref.instance_id, id=ref.namespace_id)
+            if owner is not None and owner != candidate:
+                raise NousError(
+                    "cognition.namespace_mismatch", "Material sources span different namespaces"
+                )
+            owner = candidate
+        if formal_sources:
+            namespace = await self.core.scope.resolve_for(request.namespace, owner)
+            if isinstance(raw_context, dict):
+                await self.core.scope.resolve_for(namespace, context.namespace_ref)
+            else:
+                context = context.model_copy(update={"namespace_ref": namespace})
+            await self.materials.read_many(
+                tuple(
+                    MaterialSelection(material=item.material, selections=item.selections)
+                    for item in formal_sources
+                ),
+                namespace=context.namespace_ref,
+            )
+            if not isinstance(raw_context, dict) and request.sources is None:
+                sources = tuple(
+                    SourceBinding(
+                        key=item.key,
+                        selections=item.selections,
+                        owner_revision=item.material
+                        if isinstance(item.material, RecordRevisionRef)
+                        else None,
+                        name=item.name,
+                    )
+                    for item in formal_sources
+                )
+                context = context.model_copy(
+                    update={"citation_context": CitationContext(inherited_sources=sources)}
+                )
         raw = await self.results.artifacts.read_bytes(output.artifact)
         bindings = await self._bindings(product, context)
+        declared = {item.key: item for item in context.material_sources}
+        declared.update({item.key: item for item in formal_sources})
+        slots = {group.key: group.slot_key for group in product.inputs}
+        adopted_sources: list[MaterialSource] = []
+        for binding in bindings:
+            item = declared.get(binding.key) or declared.get(slots.get(binding.key, ""))
+            if item is not None and all(
+                not subtract_selection(selection, item.selections)
+                for selection in binding.selections
+            ):
+                adopted_sources.append(
+                    item.model_copy(
+                        update={
+                            "key": binding.key,
+                            "selections": binding.selections,
+                            "kind": binding.usage,
+                            "name": binding.name,
+                        }
+                    )
+                )
+        formal_sources = tuple(adopted_sources)
         keys = tuple(item.key for item in bindings)
         base = (
             await self._base(context.base_revision, context.namespace_ref)
@@ -661,6 +828,7 @@ class WritingOperations:
             {
                 **context.model_dump(mode="python"),
                 "source_bindings": bindings,
+                "material_sources": formal_sources,
                 "normalized_edits": normalized_edits,
                 "issues": self._issues(body.decode("utf-8"), bindings),
             }
@@ -727,7 +895,19 @@ class WritingOperations:
                 )
             )
         context = old.context.model_copy(
-            update={"source_bindings": bindings, "issues": tuple(issues)}
+            update={
+                "source_bindings": bindings,
+                "material_sources": tuple(
+                    item
+                    for item in old.context.material_sources
+                    if (changes is None or changes.preserve and item.key not in changes.remove)
+                    and any(
+                        binding.key == item.key and binding.selections == item.selections
+                        for binding in bindings
+                    )
+                ),
+                "issues": tuple(issues),
+            }
         )
         ref = await self._save_composition(
             product=old.result_ref,

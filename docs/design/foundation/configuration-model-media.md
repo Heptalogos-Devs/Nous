@@ -30,7 +30,7 @@
 
 Provider 的 protocol/endpoint/credential_ref 以及 network 中的代理、CA、trust_env、连接池采用 restart；各请求 timeout 为 next_operation。Model 添加 `input_formats`（MIME 列表）、`output_modes`（text/native/tool）、可选协议 compatibility 设置，均在下一操作准备请求时采用。它们描述接入合同，不按 model_name 的字符串分支推断。
 
-TaskAssignment 添加 `operation=generation|transcription`（默认 generation）；generation 要求 prompt，transcription 允许无 prompt，若有则只允许单个提示文本，不能伪装 system/user 多角色能力。`output_mode=text|native|tool` 为 generation 输出选择，默认 text；实际可用模式须与模型声明/协议一致。
+TaskAssignment 添加 `operation=generation|transcription`（默认 generation）；generation 要求 prompt，transcription 允许无 prompt，若有则只允许单个提示文本，不能伪装 system/user 多角色能力。`output_mode=text|prompted|native|tool` 为 generation 输出策略，默认 text。`prompted` 使用已声明文本能力的模型，通过 SDK 在提示中提供 Schema，再按同一任务合同校验；`native` 与 `tool` 需要模型声明相应结构化能力。
 
 任务名称是可配置的 ResourceId。Prompt 的 contract_id 指向任务 owner 提供的输入/输出值类型。通用用户结构化任务可指定 JSON Schema 文件，由标准 jsonschema 校验，详见 Prompt 专题。
 
