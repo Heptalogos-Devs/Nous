@@ -80,16 +80,6 @@ class QueryObservation:
     @property
     def diagnostics_json(self) -> str: ...
 
-class NativeQueryResult:
-    @property
-    def row_ids(self) -> Array[np.uint64]: ...
-    @property
-    def quality_scores(self) -> Array[np.float64]: ...
-    @property
-    def ranking_scores(self) -> Array[np.float64]: ...
-    @property
-    def result_json(self) -> str: ...
-
 class NativeSnapshot:
     """Immutable loaded snapshot whose calculations use its engine's worker pool.
 
@@ -103,6 +93,14 @@ class NativeSnapshot:
     def capabilities(self) -> list[str]: ...
     @property
     def statistics_json(self) -> str: ...
+    def passage_similarities(
+        self,
+        rows: Array[np.uint64],
+        *,
+        references: Array[np.uint64] | None = None,
+        aspects: Array[np.float32] | None = None,
+        cancel: CancellationToken | None = None,
+    ) -> Array[np.float64]: ...
     def observe(
         self,
         vector: Array[np.float32],
@@ -112,35 +110,23 @@ class NativeSnapshot:
         ghost_vectors: Array[np.float32] | None = None,
         cancel: CancellationToken | None = None,
     ) -> QueryObservation: ...
-    def execute_program(
+    def execute(
         self,
         *,
         name: str,
         program_json: str,
+        expression_json: str | None = None,
         text: str = "",
         raw_vector: Array[np.float32] | None = None,
         contextual_vector: Array[np.float32] | None = None,
+        branch_raw_vectors: Array[np.float32] | None = None,
+        branch_contextual_vectors: Array[np.float32] | None = None,
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
         candidate_set: CandidateSet | None = None,
         cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
-    def execute_expression(
-        self,
-        *,
-        name: str,
-        program_json: str,
-        expression_json: str,
-        text: str = "",
-        original_vector: Array[np.float32] | None = None,
-        raw_vectors: Array[np.float32] | None = None,
-        contextual_vectors: Array[np.float32] | None = None,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        ghost_vectors: Array[np.float32] | None = None,
-        cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
+    ) -> str: ...
     def think(
         self,
         observation: QueryObservation,

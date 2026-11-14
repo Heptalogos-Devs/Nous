@@ -17,7 +17,8 @@ NativeEngine(settings: EngineSettings)
 NativeSnapshot
   identity, capabilities, statistics
   observe(signals: QuerySignals, options: ObservationOptions, cancel) -> QueryObservation
-  execute_program(program, signals, allowed_rows, options, cancel) -> NativeQueryResult
+  execute(program, signals, allowed_rows, options, cancel) -> 定位结果 JSON
+  passage_similarities(candidate_rows, selected_rows, aspects, cancel) -> 相似度矩阵
   think(observation, stages: ThinkingStages, options, cancel) -> ThinkingResult
   neighborhood(node_rows, options, cancel) -> NeighborhoodResult
 ```

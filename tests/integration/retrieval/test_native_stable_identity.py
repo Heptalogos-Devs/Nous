@@ -19,15 +19,11 @@ def _search(
     text: str = "",
     vector: npt.NDArray[np.float32] | None = None,
     options_json: str = "{}",
-) -> native.NativeQueryResult:
+) -> str:
     program = resolve_program(WaveConfig(), name)
-    definition = {
-        "nodes": [node.model_dump(mode="json") for node in program.nodes],
-        "outputs": {key: ref.model_dump(mode="json") for key, ref in program.outputs.items()},
-    }
-    return snapshot.execute_program(
+    return snapshot.execute(
         name=name,
-        program_json=json.dumps(definition),
+        program_json=json.dumps(program.native_plan),
         text=text,
         raw_vector=vector,
         contextual_vector=vector,
@@ -126,24 +122,30 @@ def test_head_changes_keep_old_snapshot_and_incremental_identities(tmp_path: Pat
             {"grouping": "document", "top_k": 10, "query_space_signature": "space"}
         )
         for query in ("unique" + keys[0], "unique" + keys[-1]):
-            old_hits = json.loads(
-                _search(old, "lexical", text=query, options_json=options).result_json
-            )["hits"]
+            old_hits = json.loads(_search(old, "lexical", text=query, options_json=options))["hits"]
             incremental_hits = json.loads(
-                _search(deleted, "lexical", text=query, options_json=options).result_json
+                _search(deleted, "lexical", text=query, options_json=options)
             )["hits"]
-            full_hits = json.loads(
-                _search(full, "lexical", text=query, options_json=options).result_json
-            )["hits"]
+            full_hits = json.loads(_search(full, "lexical", text=query, options_json=options))[
+                "hits"
+            ]
             assert [deleted_keys[item["row"]] for item in incremental_hits] == [
                 deleted_keys[item["row"]] for item in full_hits
             ]
             assert len(old_hits) == 1
         dense_query = vectors[-1]
-        incremental_rows = _search(
-            deleted, "dense", vector=dense_query, options_json=options
-        ).row_ids
-        full_rows = _search(full, "dense", vector=dense_query, options_json=options).row_ids
+        incremental_rows = [
+            item["row"]
+            for item in json.loads(
+                _search(deleted, "dense", vector=dense_query, options_json=options)
+            )["hits"]
+        ]
+        full_rows = [
+            item["row"]
+            for item in json.loads(
+                _search(full, "dense", vector=dense_query, options_json=options)
+            )["hits"]
+        ]
         assert deleted_keys[int(incremental_rows[0])] == keys[-1]
         assert deleted_keys[int(full_rows[0])] == keys[-1]
         inserted_keys = ["new-head", *deleted_keys]
@@ -160,16 +162,25 @@ def test_head_changes_keep_old_snapshot_and_incremental_identities(tmp_path: Pat
         reopened = engine.open(str(tmp_path / "insert"), _identity("insert"))
         _build(engine, tmp_path, "insert-full", inserted_keys, inserted_vectors)
         rebuilt = engine.open(str(tmp_path / "insert-full"), _identity("insert-full"))
-        incremental_ties = _search(reopened, "lexical", text="common", options_json=options).row_ids
-        full_ties = _search(rebuilt, "lexical", text="common", options_json=options).row_ids
+        incremental_ties = [
+            item["row"]
+            for item in json.loads(
+                _search(reopened, "lexical", text="common", options_json=options)
+            )["hits"]
+        ]
+        full_ties = [
+            item["row"]
+            for item in json.loads(
+                _search(rebuilt, "lexical", text="common", options_json=options)
+            )["hits"]
+        ]
         assert [inserted_keys[int(row)] for row in incremental_ties] == [
             inserted_keys[int(row)] for row in full_ties
         ]
-        hit = _search(reopened, "dense", vector=dense_query, options_json=options).row_ids[0]
+        hit = json.loads(_search(reopened, "dense", vector=dense_query, options_json=options))[
+            "hits"
+        ][0]["row"]
         assert inserted_keys[int(hit)] == keys[-1]
-        assert (
-            len(json.loads(_search(old, "lexical", text="unique" + keys[0]).result_json)["hits"])
-            == 1
-        )
+        assert len(json.loads(_search(old, "lexical", text="unique" + keys[0]))["hits"]) == 1
     finally:
         engine.close()

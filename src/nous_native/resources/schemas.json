@@ -1303,6 +1303,12 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "aspect_weight": {
+          "default": 1.0,
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
+        },
         "budget": {
           "anyOf": [
             {
@@ -1316,6 +1322,19 @@
             "amount": 2048,
             "unit": "characters"
           }
+        },
+        "redundancy_threshold": {
+          "default": 0.92,
+          "format": "double",
+          "maximum": 0.999999,
+          "minimum": -1.0,
+          "type": "number"
+        },
+        "redundancy_weight": {
+          "default": 1.0,
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
         }
       },
       "title": "SelectParameters",

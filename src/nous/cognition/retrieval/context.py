@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from nous.application.contracts import CallContext
@@ -10,7 +9,8 @@ from nous.cognition.contracts import NamespaceRef
 from nous.cognition.material_contracts import (
     MaterialSelection,
 )
-from nous.cognition.work.contracts import ListWorkUses
+from nous.cognition.work.contracts import ListWorkUses, WorkAttributes
+from nous.cognition.work.refs import WorkRevisionRef
 from nous.common.errors import NousError
 from nous.content.contracts import (
     ResultOutputRef,
@@ -23,7 +23,6 @@ from nous.wave.contracts import (
 from .contracts import (
     ContextSelection,
     EvidenceDelivery,
-    UsedContext,
 )
 
 if TYPE_CHECKING:
@@ -51,42 +50,39 @@ class ContextPreparer:
     async def prepare(
         self,
         selection: ContextSelection,
-        text: str,
         namespace: NamespaceRef,
         anchors: tuple[MaterialSelection, ...],
         call: CallContext,
-    ) -> tuple[tuple[ContextFragment, ...], dict[str, UsedContext]]:
+    ) -> tuple[tuple[ContextFragment, ...], dict[str, MaterialSelection]]:
         fragments = list(selection.fragments)
-        used: dict[str, UsedContext] = {}
+        sources: dict[str, MaterialSelection] = {}
         default_stages: dict[str, tuple[str, ...]] = {}
         window = min(call.settings.values.wave.context.window, 200)
         if selection.work is not None:
-            view = await self.work.read_revision(selection.work)
-            await self.scope.resolve_for(
-                namespace, NamespaceRef(instance_id=view.ref.instance_id, id=view.ref.namespace_id)
-            )
-            choices: list[tuple[str, str]] = [("objective", view.state.objective)]
-            if view.state.focus:
-                choices.append(("focus", view.state.focus))
+            work = await self.materials.resolve_identifier(selection.work, namespace=namespace)
+            if not isinstance(work, WorkRevisionRef):
+                raise NousError("input.invalid_context", "Work context requires a work reference")
+            view = await self.materials.resolve(work, namespace=namespace)
+            attributes = WorkAttributes.model_validate(view.attributes.values)
+            state, fields = attributes.state, attributes.fields
+            choices: list[tuple[str, str]] = [("objective", state.objective)]
+            if state.focus:
+                choices.append(("focus", state.focus))
             candidates = [
                 ("decision:" + item.key, item.statement)
-                for item in view.state.decisions
+                for item in state.decisions
                 if item.state == "active"
             ]
             candidates += [
                 ("question:" + item.key, item.question)
-                for item in view.state.questions
+                for item in state.questions
                 if item.state == "open"
             ]
-            candidates.sort(
-                key=lambda item: SequenceMatcher(None, text.casefold(), item[1].casefold()).ratio(),
-                reverse=True,
-            )
             choices.extend(candidates[: max(0, window - len(choices))])
-            parent = "material:" + self.materials.key(view.revision_ref)
+            parent = "material:" + self.materials.key(work)
             for key, value in choices:
                 identity = f"{parent}:{key}"
-                field = view.fields.get(key)
+                field = fields.get(key)
                 fragments.append(
                     ContextFragment(
                         key=identity,
@@ -104,26 +100,20 @@ class ContextPreparer:
                         half_life=None,
                     )
                 )
-                used[identity] = UsedContext(
-                    key=identity,
-                    source=MaterialSelection(
-                        material=view.revision_ref,
-                        selections=(view.fields[key],) if key in view.fields else (),
-                    ),
-                    text=value,
-                    role="work",
-                    stage="retrieval",
-                    parent_key=parent,
+                sources[identity] = MaterialSelection(
+                    material=work,
+                    selections=(field,) if field else (),
                 )
                 if key in {"objective", "focus"} or key.startswith("decision:"):
                     default_stages[identity] = ("retrieval", "localization")
             uses = await self.work.list_uses(
-                ListWorkUses(ref=view.ref, namespace=namespace, limit=max(window, 1)), call
+                ListWorkUses(ref=work.work_ref, namespace=namespace, limit=max(window, 1)),
+                call,
             )
-            explicit = [*view.state.active]
+            explicit = [*state.active]
             explicit.extend(
                 basis
-                for decision in view.state.decisions
+                for decision in state.decisions
                 if decision.state == "active"
                 for basis in decision.basis
             )
@@ -136,21 +126,30 @@ class ContextPreparer:
                 for age, use in enumerate(uses)
                 for item in use.selections
             )
-            seen: set[str] = set()
+            seen: set[MaterialSelection] = set()
             unique: list[tuple[int, MaterialSelection, int, float | None, bool]] = []
             for index, (choice, age, lifetime, localize) in enumerate(active):
-                signature = choice.model_dump_json()
-                if signature in seen:
+                if choice in seen:
                     continue
-                seen.add(signature)
+                seen.add(choice)
                 unique.append((index, choice, age, lifetime, localize))
-            reads = await self.materials.read_many(
+            selections = await self.materials.selections(
                 tuple(choice for _, choice, _, _, _ in unique), namespace=namespace
             )
-            for (index, choice, age, lifetime, localize), read in zip(unique, reads, strict=True):
+            text = iter(
+                await self.artifacts.text_capabilities(
+                    tuple(part for _, parts in selections for part in parts)
+                )
+            )
+            for (index, choice, age, lifetime, localize), (_, parts) in zip(
+                unique, selections, strict=True
+            ):
                 parent = "material:" + self.materials.key(choice.material)
-                for part_index, part in enumerate(read.selections):
-                    if not part.body_text:
+                for part_index, part in enumerate(parts):
+                    if not next(text) or (
+                        part.selection.start_byte is not None
+                        and part.selection.start_byte == part.selection.end_byte
+                    ):
                         continue
                     identity = f"work-active:{index}:{part_index}"
                     fragments.append(
@@ -161,22 +160,15 @@ class ContextPreparer:
                             parent_key=parent,
                             sequence=-age,
                             content=ContextContent(
-                                artifact=part.source.artifact.identifier,
-                                selector=part.source.selection,
+                                artifact=part.artifact.identifier,
+                                selector=part.selection,
                             ),
                             distance=age,
                             half_life=lifetime,
                         )
                     )
-                    used[identity] = UsedContext(
-                        key=identity,
-                        source=MaterialSelection(
-                            material=choice.material, selections=(part.source,)
-                        ),
-                        text=part.body_text,
-                        role="active_memory",
-                        stage="retrieval",
-                        parent_key=parent,
+                    sources[identity] = MaterialSelection(
+                        material=choice.material, selections=(part,)
                     )
                     if localize:
                         default_stages[identity] = ("retrieval", "localization")
@@ -205,22 +197,20 @@ class ContextPreparer:
                             ),
                         )
                     )
-                    used[identity] = UsedContext(
-                        key=identity,
-                        source=MaterialSelection(
-                            material=passage.material, selections=(part.content,)
-                        ),
-                        text=part.text,
-                        role="prior_delivery",
-                        stage="retrieval",
-                        parent_key=parent,
+                    sources[identity] = MaterialSelection(
+                        material=passage.material, selections=(part.content,)
                     )
         if anchors:
-            reads = await self.materials.read_many(anchors, namespace=namespace)
-            for index, read in enumerate(reads):
-                parent = "material:" + self.materials.key(read.material.ref)
-                for part_index, part in enumerate(read.selections):
-                    if part.body_text is None:
+            selections = await self.materials.selections(anchors, namespace=namespace)
+            text = iter(
+                await self.artifacts.text_capabilities(
+                    tuple(part for _, parts in selections for part in parts)
+                )
+            )
+            for index, (view, parts) in enumerate(selections):
+                parent = "material:" + self.materials.key(view.ref)
+                for part_index, part in enumerate(parts):
+                    if not next(text):
                         raise NousError(
                             "input.unsupported_context",
                             "This context selection has no readable text",
@@ -234,35 +224,28 @@ class ContextPreparer:
                             parent_key=parent,
                             sequence=part_index,
                             content=ContextContent(
-                                artifact=part.source.artifact.identifier,
-                                selector=part.source.selection,
+                                artifact=part.artifact.identifier,
+                                selector=part.selection,
                             ),
                         )
                     )
-                    used[identity] = UsedContext(
-                        key=identity,
-                        source=MaterialSelection(
-                            material=read.material.ref, selections=(part.source,)
-                        ),
-                        text=part.body_text,
-                        role="anchor",
-                        stage="retrieval",
-                        parent_key=parent,
+                    sources[identity] = MaterialSelection(
+                        material=view.ref, selections=(part,)
                     )
         if len({item.key for item in fragments}) != len(fragments):
             raise NousError("input.invalid_context", "Context keys must be unique")
         prepared: list[ContextFragment] = []
-        selected: dict[str, UsedContext] = {}
+        selected: dict[str, MaterialSelection] = {}
         for item in fragments:
-            if item.key not in used:
+            if item.key not in sources:
                 prepared.append(item)
                 continue
             stages = selection.stages or default_stages.get(item.key, ("retrieval",))
             for stage in dict.fromkeys(stages):
                 key = item.key if stage == "retrieval" else f"{item.key}:{stage}"
                 prepared.append(item.model_copy(update={"key": key, "stage": stage}))
-                selected[key] = used[item.key].model_copy(update={"key": key, "stage": stage})
-        fragments, used = prepared, selected
+                selected[key] = sources[item.key]
+        fragments, sources = prepared, selected
         if len({item.key for item in fragments}) != len(fragments):
             raise NousError("input.invalid_context", "Context keys must be unique")
         supported = {"retrieval", "localization", "evaluation"}
@@ -273,4 +256,4 @@ class ContextPreparer:
                 "Context stage is not available",
                 details={"stages": sorted(unknown)},
             )
-        return tuple(fragments), used
+        return tuple(fragments), sources

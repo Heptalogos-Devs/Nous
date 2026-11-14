@@ -94,7 +94,7 @@ def format_retrieval(
             coverage = outcome.evidence.coverage
             label = (
                 "No material selected"
-                if coverage.truncated or (coverage.ranked_candidates or 0) > 0
+                if coverage is None or coverage.truncated or (coverage.ranked_candidates or 0) > 0
                 else "No matching knowledge"
             )
             lines.append(translate(label, language))

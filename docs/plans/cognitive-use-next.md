@@ -2,7 +2,7 @@
 
 ## 当前落点
 
-当前主线由[可编排检索与认知使用](composable-retrieval.md)组织：共同材料、Wave 程序、精确原文、可选阅读整理、Work 和实际使用反馈。后续领域复用这些完整能力。执行由普通 Runtime 与异步 Task 持有，Work 保存跨会话认知工作；进程重开读取正式成果和工作状态。
+后续领域复用[共同材料](../design/content/cognitive-materials.md)、[Wave 程序](../design/wave/program.md)、[原文定位](../design/wave/localization.md)、Work 和实际使用反馈。执行由普通 Runtime 与异步 Task 持有，Work 保存跨会话认知工作；进程重开读取正式成果和工作状态。
 
 ## WorkContext 驱动一次真实研究
 

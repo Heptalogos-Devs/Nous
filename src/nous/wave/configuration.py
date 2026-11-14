@@ -15,7 +15,8 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationInfo, field_valida
 
 from nous.configuration.metadata import ConfigJson, ConfigMap, ConfigModel, mutable, setting
 
-from .program import WaveProgram, default_programs
+from .contracts import WaveProgram
+from .program import default_programs
 
 
 @lru_cache(maxsize=1)
@@ -245,6 +246,9 @@ class NativeConfig(ConfigModel):
 
 
 class QueryConfig(ConfigModel):
+    tokenizer_path: str | None = setting(
+        None, min_length=1, description="Local tokenizer.json used for token delivery budgets."
+    )
     group_scan_limit: int = Field(
         default_factory=lambda: cast(int, _profile_defaults("query")["group_scan_limit"]),
         description="Maximum candidate rows inspected by each grouped vector lane.",

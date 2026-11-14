@@ -9,19 +9,18 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import sqlalchemy as sa
-from pydantic import JsonValue, TypeAdapter
+from pydantic import ConfigDict
 from sqlalchemy.engine import RowMapping
 
 from nous.application.contracts import CallContext, define_operation
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier
 from nous.common.operations import record_completed
-from nous.content.contracts import ContentSelection, ExternalInput, ResultOutputRef, ResultRef
+from nous.content.contracts import ContentSelection, ExternalInput, ResultRef
 from nous.content.results import ResultStore
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 from nous.temporal.values import Clock
-from nous.wave.contracts import CandidateRef, RankEvidence, SnapshotRef
 from nous.wave.operations import WaveOperations
 
 from . import feedback_schema, schema
@@ -36,13 +35,7 @@ from .contracts import (
     RevisionSelection,
 )
 from .material_contracts import MaterialSelection
-from .retrieval.contracts import (
-    BoundQueryControls,
-    EvidenceDelivery,
-    QueryControls,
-    QueryIntent,
-    UsedContext,
-)
+from .retrieval.contracts import EvidenceDelivery
 from .scope import NamespaceOperations
 
 if TYPE_CHECKING:
@@ -54,16 +47,14 @@ ResolutionAction = Literal["acknowledged", "not_applied", "applied"]
 
 
 class QueryFeedback(CognitiveValue):
-    """Freeze the query and the ranking basis for the selected delivery."""
+    """Identify the saved delivery and the passage receiving feedback."""
 
-    intent: QueryIntent
-    snapshot: SnapshotRef
+    # Older standalone feedback has historical query facts but no saved delivery.
+    model_config = ConfigDict(frozen=True, extra="allow")
+
     snapshot_available: bool = True
     evidence: ResultRef | None = None
     passage_key: str | None = None
-    group_rank: int | None = None
-    basis: RankEvidence | None = None
-    candidate: CandidateRef | None = None
 
 
 class FeedbackTarget(CognitiveValue):
@@ -170,71 +161,26 @@ RESOLVE_FEEDBACK = define_operation(
 
 
 async def upgrade_query_feedback_in(tx: WriteTx) -> None:
-    """Retain existing feedback while adopting the current query-intent shape."""
-    rows = (
-        (
-            await tx.connection.execute(
-                sa.select(feedback_schema.feedback.c.id, feedback_schema.feedback.c.target)
-            )
-        )
-        .mappings()
-        .all()
+    """Protect saved evidence references and retain older standalone feedback facts."""
+    columns = await tx.connection.run_sync(
+        lambda connection: {
+            item["name"] for item in sa.inspect(connection).get_columns("cognition_feedback")
+        }
     )
-    for row in rows:
-        target = TypeAdapter(dict[str, JsonValue]).validate_python(row["target"])
-        query = target.get("query")
-        if not isinstance(query, dict) or "context" not in query:
-            continue
-        context = TypeAdapter(dict[str, JsonValue]).validate_python(query["context"])
-        snapshot = SnapshotRef.model_validate(context["snapshot_ref"])
-        selections: list[UsedContext] = []
-        for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(
-            context.get("selected_context", [])
-        ):
-            content = item.get("content")
-            source = None
-            if content:
-                part = ContentSelection.model_validate(content)
-                source = MaterialSelection(material=part.artifact, selections=(part,))
-            selections.append(
-                UsedContext.model_validate(
-                    {
-                        "key": item["key"],
-                        "source": source,
-                        "text": item.get("text"),
-                        "role": item["role"],
-                        "stage": item.get("stage", "retrieval"),
-                        "parent_key": item.get("parent_key") or item["key"],
-                        "contribution": item.get("contribution"),
-                    }
-                )
-            )
-        intent = QueryIntent.model_validate(
-            dict(
-                original_text=context["request_text"],
-                constraints=BoundQueryControls(
-                    controls=QueryControls.model_validate({"filters": context.get("filters")}),
-                    namespace=NamespaceRef(
-                        instance_id=snapshot.instance_id, id=str(context["namespace_id"])
-                    ),
-                ),
-                context=tuple(selections),
-            )
-        )
-        target["query"] = QueryFeedback.model_validate(
-            dict(
-                intent=intent,
-                snapshot=snapshot,
-                group_rank=query.get("group_rank"),
-                basis=query.get("basis"),
-                candidate=query.get("candidate"),
-            )
-        ).model_dump(mode="json")
-        await tx.connection.execute(
-            sa.update(feedback_schema.feedback)
-            .where(feedback_schema.feedback.c.id == row["id"])
-            .values(target=target)
-        )
+    if "evidence_result_id" in columns:
+        return
+    await tx.connection.exec_driver_sql(
+        "ALTER TABLE cognition_feedback ADD COLUMN evidence_result_id VARCHAR "
+        "REFERENCES processing_results(id)"
+    )
+    await tx.connection.exec_driver_sql(
+        "UPDATE cognition_feedback SET "
+        "evidence_result_id = json_extract(target, '$.query.evidence.id'), "
+        "target = json_remove(target, '$.query.intent', '$.query.snapshot', "
+        "'$.query.group_rank', '$.query.basis', '$.query.candidate') "
+        "WHERE EXISTS (SELECT 1 FROM processing_results "
+        "WHERE id = json_extract(cognition_feedback.target, '$.query.evidence.id'))"
+    )
 
 
 class FeedbackOperations:
@@ -302,6 +248,9 @@ class FeedbackOperations:
                 "id": object_id,
                 "namespace_id": namespace_id,
                 "target": target.model_dump(mode="json"),
+                "evidence_result_id": target.query.evidence.id
+                if target.query and target.query.evidence
+                else None,
                 "category": category,
                 "value": value,
                 "comment": comment,
@@ -362,7 +311,9 @@ class FeedbackOperations:
                     "resolved_at": saved["resolved_at"],
                 }
             )
-        return FeedbackView.model_validate({**dict(row), "resolution": resolution})
+        data = dict(row)
+        data.pop("evidence_result_id", None)
+        return FeedbackView.model_validate({**data, "resolution": resolution})
 
     async def _get_in(self, tx: ReadTx, ref: str, namespace_id: str) -> RowMapping:
         row = (
@@ -460,9 +411,11 @@ class FeedbackOperations:
                 raise NousError(
                     "cognition.invalid_evidence", "Result is not a query evidence delivery"
                 )
-            artifact = await self.results.resolve_output(
-                ResultOutputRef(result=result.ref, output="evidence")
+            artifact = next(
+                (item.artifact for item in result.outputs if item.name == "evidence"), None
             )
+            if artifact is None:
+                raise NousError("cognition.invalid_evidence", "Evidence output is missing")
             delivery = EvidenceDelivery.model_validate_json(
                 await self.reader.artifacts.read_text(artifact)
             )
@@ -470,7 +423,6 @@ class FeedbackOperations:
                 request.namespace, delivery.intent.constraints.namespace
             )
             passage = None
-            group = None
             selection = None
             revision = None
             if request.passage_key is not None:
@@ -480,9 +432,6 @@ class FeedbackOperations:
                         "cognition.selection_mismatch", "Evidence key is not in this delivery"
                     )
                 passage = matches[0]
-                group = next(
-                    (item for item in delivery.materials if passage.key in item.passage_keys), None
-                )
                 selected = passage.selections
                 if isinstance(passage.material, RecordRevisionRef):
                     revision = passage.material
@@ -490,15 +439,16 @@ class FeedbackOperations:
                 else:
                     selection = MaterialSelection(material=passage.material, selections=selected)
             async with AsyncExitStack() as stack:
-                try:
-                    await stack.enter_async_context(
-                        self.wave.snapshots.hold_reference(delivery.snapshot)
-                    )
-                    snapshot_available = True
-                except NousError as error:
-                    if error.code != "wave.snapshot_not_found":
-                        raise
-                    snapshot_available = False
+                snapshot_available = False
+                if delivery.snapshot is not None:
+                    try:
+                        await stack.enter_async_context(
+                            self.wave.snapshots.hold_reference(delivery.snapshot)
+                        )
+                        snapshot_available = True
+                    except NousError as error:
+                        if error.code != "wave.snapshot_not_found":
+                            raise
                 async with self.database.write() as tx:
                     ns = await self._namespace_in(tx, namespace.id)
                     saved = await self._insert_in(
@@ -509,14 +459,9 @@ class FeedbackOperations:
                             revision=revision,
                             selection=selection,
                             query=QueryFeedback(
-                                intent=delivery.intent,
-                                snapshot=delivery.snapshot,
                                 snapshot_available=snapshot_available,
                                 evidence=result.ref,
                                 passage_key=request.passage_key,
-                                group_rank=group.rank if group else None,
-                                basis=group.basis if group else None,
-                                candidate=passage.candidate if passage else None,
                             ),
                         ),
                         request.category,
@@ -524,7 +469,7 @@ class FeedbackOperations:
                         request.comment,
                         request.author,
                     )
-                    if snapshot_available:
+                    if snapshot_available and delivery.snapshot is not None:
                         await self.wave.retain_in(
                             tx, delivery.snapshot, owner_kind="feedback", owner_id=saved.id
                         )

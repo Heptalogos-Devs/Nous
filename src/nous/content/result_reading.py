@@ -136,6 +136,9 @@ async def get_many_in(
     )
     outputs_by_result = await rows_for(schema.outputs, ("ordinal",))
     mappings_by_result = await rows_for(schema.output_mappings, ("output_name", "ordinal"))
+    mapping_origins_by_result = await rows_for(
+        schema.mapping_origins, ("output_name", "mapping_ordinal", "ordinal")
+    )
     selections_by_result = await rows_for(schema.named_selections, ("ordinal",))
     dependencies_by_result = await rows_for(schema.dependencies, ("ordinal",))
     artifact_ids = {
@@ -145,6 +148,7 @@ async def get_many_in(
             parts_by_result,
             origins_by_result,
             outputs_by_result,
+            mapping_origins_by_result,
             dependencies_by_result,
         )
         for rows in collection.values()
@@ -259,12 +263,22 @@ async def get_many_in(
             ),
             facts=tuple(SourceFacts.model_validate(item) for item in row["selected_facts"]),
         )
+        mapping_sources: dict[tuple[str, int], list[ContentSelection]] = {}
+        for item in mapping_origins_by_result.get(result_id, ()):
+            mapping_sources.setdefault(
+                (str(item["output_name"]), int(item["mapping_ordinal"])), []
+            ).append(
+                ContentSelection(
+                    artifact=identities[str(item["artifact_id"])],
+                    selection=SourceSelection.model_validate(item["selector"]),
+                )
+            )
         mappings = tuple(
             OutputMapping(
                 output_name=str(item["output_name"]),
                 selection=SourceSelection.model_validate(item["selection"]),
                 relation=item["relation"],
-                origins=tuple(ContentSelection.model_validate(value) for value in item["origins"]),
+                origins=tuple(mapping_sources[(str(item["output_name"]), int(item["ordinal"]))]),
             )
             for item in mappings_by_result.get(result_id, ())
         )

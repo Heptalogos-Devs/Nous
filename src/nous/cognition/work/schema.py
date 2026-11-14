@@ -34,14 +34,11 @@ revisions = sa.Table(
     sa.UniqueConstraint("work_id", "ordinal"),
     sa.CheckConstraint("ordinal > 0"),
 )
-references = sa.Table(
-    "work_references",
+result_dependencies = sa.Table(
+    "work_result_dependencies",
     metadata,
     sa.Column("revision_id", sa.String, sa.ForeignKey(revisions.c.id), primary_key=True),
-    sa.Column("ordinal", sa.Integer, primary_key=True),
-    sa.Column("role", sa.String, nullable=False),
-    sa.Column("material", sa.JSON, nullable=False),
-    sa.Column("selections", sa.JSON, nullable=False),
+    sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), primary_key=True),
 )
 representations = sa.Table(
     "work_representations",

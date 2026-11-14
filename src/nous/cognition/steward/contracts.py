@@ -21,9 +21,15 @@ class ReadingItem(CognitiveValue):
         return self
 
 
+class ReadingContextRequest(CognitiveValue):
+    key: str = Field(min_length=1)
+    direction: Literal["before", "after"]
+
+
 class ReadingBrief(CognitiveValue):
     title: str | None = None
     items: tuple[ReadingItem, ...]
+    context_requests: tuple[ReadingContextRequest, ...] = ()
 
 
 class ArrangeReading(CognitiveValue):

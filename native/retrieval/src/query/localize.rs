@@ -1,7 +1,59 @@
 //! Locate and calibrate original-text units across all selected groups.
 use super::*;
+use rayon::prelude::*;
 
 impl Snapshot {
+    /// Compare only the proposed passage rows with selected rows or explicit aspects.
+    pub fn passage_similarities(
+        &self,
+        rows: &[u64],
+        references: &[u64],
+        aspects: &[Vec<f32>],
+        cancel: &CancellationToken,
+    ) -> Result<Vec<Vec<f64>>> {
+        let candidates =
+            self.inner.candidate_units.as_ref().ok_or_else(|| {
+                failure("wave.capability_missing", "Passage vectors are unavailable")
+            })?;
+        let get = |row: u64| {
+            candidates
+                .get(row as usize)
+                .ok_or_else(|| failure("wave.invalid_input", "Passage row exceeds snapshot"))
+        };
+        let targets = references
+            .iter()
+            .map(|row| get(*row))
+            .collect::<Result<Vec<_>>>()?;
+        let aspects = aspects
+            .iter()
+            .map(|value| unit(value))
+            .collect::<Result<Vec<_>>>()?;
+        let dimensions = candidates.first().map_or(0, |value| value.len());
+        ensure!(
+            aspects.iter().all(|value| value.len() == dimensions),
+            "Aspect vector dimensions differ from the snapshot"
+        );
+        rows.par_iter()
+            .map(|row| {
+                cancel.check()?;
+                let candidate = get(*row)?;
+                Ok(targets
+                    .iter()
+                    .map(|value| value.as_ref())
+                    .chain(aspects.iter().map(Vec::as_slice))
+                    .map(|value| {
+                        candidate
+                            .iter()
+                            .zip(value)
+                            .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                            .sum::<f64>()
+                            .clamp(-1.0, 1.0)
+                    })
+                    .collect())
+            })
+            .collect()
+    }
+
     pub(super) fn locate_groups(
         &self,
         text: &str,
@@ -55,24 +107,22 @@ impl Snapshot {
             }
         }
         let mut contextual = BTreeMap::<String, f64>::new();
-        if lexical_enabled {
-            for fragment in &options.localization_context {
-                if fragment.contribution <= 0.0 || fragment.text.trim().is_empty() {
-                    continue;
-                }
-                let page = self.inner.lexical.search_allowed(
-                    &fragment.text,
-                    "snapshot",
-                    "snapshot",
-                    rows.len(),
-                    &keys,
-                )?;
-                for (rank, hit) in page.hits.into_iter().enumerate() {
-                    *contextual.entry(hit.id).or_default() +=
-                        fragment.contribution / (options.localize_rrf_k + rank as f64 + 1.0);
-                }
-                cancel.check()?;
+        for fragment in &options.localization_context {
+            if fragment.contribution <= 0.0 || fragment.text.trim().is_empty() {
+                continue;
             }
+            let page = self.inner.lexical.search_allowed(
+                &fragment.text,
+                "snapshot",
+                "snapshot",
+                rows.len(),
+                &keys,
+            )?;
+            for (rank, hit) in page.hits.into_iter().enumerate() {
+                *contextual.entry(hit.id).or_default() +=
+                    fragment.contribution / (options.localize_rrf_k + rank as f64 + 1.0);
+            }
+            cancel.check()?;
         }
         let mut semantic = Vec::<(u64, f64)>::new();
         let semantic_enabled = options

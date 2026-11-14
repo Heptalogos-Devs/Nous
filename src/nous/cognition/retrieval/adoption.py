@@ -3,9 +3,8 @@
 from contextlib import AsyncExitStack
 
 from nous.application.contracts import CallContext, Progress
-from nous.cognition.material_contracts import MaterialSelection, MaterialSource
+from nous.cognition.material_contracts import MaterialSource
 from nous.cognition.materials import Materials
-from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
@@ -38,19 +37,15 @@ class EvidenceAdoption:
         artifacts: ArtifactStore,
         results: ResultStore,
         materials: Materials,
-        scope: NamespaceOperations,
         wave: WaveOperations,
     ) -> None:
         self.database, self.artifacts, self.results = database, artifacts, results
-        self.materials, self.scope, self.wave = materials, scope, wave
+        self.materials, self.wave = materials, wave
 
-    async def save(
-        self, evidence: EvidenceDelivery, call: CallContext, *, retain_snapshot: bool = False
-    ) -> ResultRef:
-        evidence = evidence.model_copy(deep=True)
+    async def validate(self, evidence: EvidenceDelivery) -> None:
+        """Validate a delivery supplied by an external caller before adoption."""
         namespace = evidence.intent.constraints.namespace
-        await self.scope.resolve_for(None, namespace)
-        if evidence.snapshot.instance_id != namespace.instance_id:
+        if evidence.snapshot is not None and evidence.snapshot.instance_id != namespace.instance_id:
             raise NousError("cognition.namespace_mismatch", "Evidence belongs to another instance")
         keys = [passage.key for passage in evidence.passages]
         if len(keys) != len(set(keys)):
@@ -70,22 +65,22 @@ class EvidenceAdoption:
                 "cognition.invalid_evidence", "Evidence keys do not match their materials"
             )
         if any(
-            (part.candidate is not None and part.candidate.snapshot != evidence.snapshot.identifier)
+            (
+                part.candidate is not None
+                and (
+                    evidence.snapshot is None
+                    or part.candidate.snapshot != evidence.snapshot.identifier
+                )
+            )
             or not (part.fragments or part.support_context)
             or not part.selections
             for part in evidence.passages
         ):
             raise NousError("cognition.invalid_evidence", "Evidence contains an invalid passage")
-        await self.materials.resolve_many(
-            tuple(item.material.ref for item in evidence.materials), namespace=namespace
-        )
-        await self.materials.read_many(
-            tuple(
-                MaterialSelection(material=part.material, selections=part.selections)
-                for part in evidence.passages
-            ),
-            namespace=namespace,
-        )
+        async with self.database.read() as tx:
+            await self.materials.capture_in(
+                tx, tuple(item.material.ref for item in evidence.materials), namespace=namespace
+            )
         delivered = tuple(
             fragment
             for passage in evidence.passages
@@ -104,6 +99,15 @@ class EvidenceAdoption:
         if any(left.text != right.text for left, right in zip(delivered, actual, strict=True)):
             raise NousError("cognition.invalid_evidence", "Delivered text differs from its source")
 
+    async def save(
+        self,
+        evidence: EvidenceDelivery,
+        call: CallContext,
+        *,
+        retain_snapshot: bool = False,
+        dependencies: tuple[ResultRef, ...] = (),
+    ) -> ResultRef:
+        namespace = evidence.intent.constraints.namespace
         await call.events.emit(Progress(stage="evidence.save", completed=0, total=1))
         sources = tuple(
             SelectedSource(slot_key=part.key, selections=part.selections)
@@ -140,7 +144,8 @@ class EvidenceAdoption:
                 NamedSelection(key=source.slot_key, sources=source.selections) for source in sources
             ),
             request={"intent": evidence.intent.model_dump(mode="json")},
-            coverage=evidence.coverage.model_dump(mode="json"),
+            coverage=evidence.coverage.model_dump(mode="json") if evidence.coverage else {},
+            dependencies=dependencies,
             formed_at=evidence.formed_at or self.artifacts.clock.utc_now(),
         )
         prepared = await self.results.prepare_outputs(
@@ -151,7 +156,7 @@ class EvidenceAdoption:
             }
         )
         async with AsyncExitStack() as stack:
-            if retain_snapshot:
+            if retain_snapshot and evidence.snapshot is not None:
                 await stack.enter_async_context(
                     self.wave.snapshots.hold_reference(evidence.snapshot)
                 )
@@ -160,15 +165,16 @@ class EvidenceAdoption:
                 await self.materials.adopt_sources_in(
                     tx,
                     saved,
-                    "evidence",
+                    ("evidence",),
                     tuple(
                         MaterialSource(
                             key=part.key, material=part.material, selections=part.selections
                         )
                         for part in evidence.passages
                     ),
+                    namespace=namespace,
                 )
-                if retain_snapshot:
+                if retain_snapshot and evidence.snapshot is not None:
                     await self.wave.retain_in(
                         tx, evidence.snapshot, owner_kind="result", owner_id=saved.ref.id
                     )

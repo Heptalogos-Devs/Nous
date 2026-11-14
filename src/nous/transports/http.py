@@ -15,6 +15,7 @@ from starlette.routing import Route
 from nous.application.inputs import StreamInput
 from nous.common.errors import NousError
 from nous.content.contracts import ExportOffer
+from nous.presentation.json_selection import select_json
 from nous.runtime.execution import complete_cleanup
 
 from .asgi import BearerAuth, serve_asgi
@@ -26,7 +27,6 @@ from .shared import (
     error_value,
     input_bindings,
     json_bytes,
-    json_value,
 )
 
 if TYPE_CHECKING:
@@ -131,7 +131,7 @@ def create_http_app(
         try:
             payload = CallRequest.model_validate_json(await _body(request, max_request_bytes))
             value = await _call_until_disconnect(app, payload, request)
-            return JSONResponse({"value": json_value(value)})
+            return JSONResponse({"value": select_json(value)})
         except ClientDisconnect:
             raise
         except Exception as error:
@@ -152,7 +152,7 @@ def create_http_app(
                 {"key": "content", "name": name},
                 inputs={"content": StreamInput(request.stream(), name=name)},
             )
-            return JSONResponse({"value": json_value(value)})
+            return JSONResponse({"value": select_json(value)})
         except ClientDisconnect:
             raise
         except Exception as error:

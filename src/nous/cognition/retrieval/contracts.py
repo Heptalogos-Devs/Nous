@@ -1,9 +1,9 @@
 """Immutable cognitive queries, actual preparation context and delivered selections."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from nous.cognition.concept_contracts import ConceptRef
 from nous.cognition.material_contracts import (
@@ -133,7 +133,7 @@ class DeliveryRequest(CognitiveValue):
 
 
 class ContextSelection(CognitiveValue):
-    work: WorkRevisionRef | None = None
+    work: str | WorkRevisionRef | None = None
     fragments: tuple[ContextFragment, ...] = ()
     prior_deliveries: tuple[ResultRef, ...] = ()
     stages: tuple[Literal["retrieval", "localization", "evaluation"], ...] | None = Field(
@@ -143,7 +143,7 @@ class ContextSelection(CognitiveValue):
 
 class QueryAnchor(CognitiveValue):
     selections: tuple[MaterialSelection, ...] = ()
-    prior_delivery: ResultRef | None = None
+    prior_delivery: str | ResultRef | None = None
     snapshot: str | SnapshotRef | None = None
     view: Literal["current", "anchored"] = "current"
 
@@ -185,13 +185,21 @@ class BoundQueryControls(CognitiveValue):
 
 class QueryIntent(CognitiveValue):
     original_text: str
-    resolved_text: str | None = None
     aspects: tuple[str, ...] = ()
     constraints: BoundQueryControls
     context: tuple[UsedContext, ...] = ()
     bound_materials: tuple[MaterialRef, ...] = ()
     bound_concepts: tuple[ConceptRef, ...] = ()
     expression: QueryExpression | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_saved_intent(cls, value: object) -> object:
+        if isinstance(value, dict):
+            data = cast(dict[str, object], value)
+            if "resolved_text" in data and data["resolved_text"] is None:
+                return {key: item for key, item in data.items() if key != "resolved_text"}
+        return cast(object, value)
 
 
 class PassageEvidence(CognitiveValue):
@@ -237,18 +245,18 @@ class ContinuationLink(CognitiveValue):
 
 
 class DeliveryUsage(CognitiveValue):
-    unit: Literal["characters", "bytes"]
+    unit: Literal["characters", "bytes", "tokens"]
     amount: int = Field(ge=0)
 
 
 class EvidenceDelivery(CognitiveValue):
     intent: QueryIntent
     formed_at: datetime | None = None
-    snapshot: SnapshotRef
+    snapshot: SnapshotRef | None
     captured_generation: int | None
     materials: tuple[RetrievedMaterial, ...]
     passages: tuple[PassageEvidence, ...]
-    coverage: SearchCoverage
+    coverage: SearchCoverage | None = None
     branch_coverage: tuple[WaveBranchCoverage, ...] = ()
     continuation: tuple[ContinuationLink, ...] = ()
     program: str

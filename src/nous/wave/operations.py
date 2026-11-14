@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
+from functools import partial
 from time import perf_counter
 from typing import TYPE_CHECKING
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import JsonValue, TypeAdapter
 
 from nous.application.contracts import CallContext, EventDeliveryError, define_operation
@@ -74,7 +77,7 @@ from .delivery import (
     WaveDelivery,
     select_passages,
 )
-from .program import CompiledProgram, EvaluationParameters, native_segment
+from .program import CompiledProgram, EvaluationParameters
 from .query import WaveQueries, require_bound_query
 from .reading import describe_neighborhood, neighborhood_rows, read_candidate
 from .serialization import encode_json
@@ -147,7 +150,7 @@ class WaveOperations:
             database, execution, paths, instance_id, time, artifacts, results, embedding, preparer
         )
         self.queries = WaveQueries(execution, artifacts, embedding, time, instance_id)
-        self.delivery = WaveDelivery(artifacts, instance_id)
+        self.delivery = WaveDelivery(artifacts, instance_id, execution, paths.config)
         self.evaluator = evaluator
 
     def close(self) -> None:
@@ -393,41 +396,42 @@ class WaveOperations:
         async with self.execution.operation("wave.query"):
             async with self.snapshots.borrow(request.snapshot) as (row, snapshot, token):
                 plan = await self.queries.prepare(request, row, snapshot.capabilities)
-                locator, native_plan = native_segment(plan.program)
 
-                def compute() -> nous_native.NativeQueryResult:
-                    if plan.expression is None:
-                        return snapshot.execute_program(
-                            name=plan.program.name,
-                            program_json=encode_json(native_plan),
-                            text=plan.text,
-                            raw_vector=plan.raw_vector,
-                            contextual_vector=plan.contextual_vector,
-                            ghost_vectors=plan.ghosts,
-                            allowed_rows=plan.allowed,
-                            options_json=encode_json(plan.options),
-                            candidate_set=plan.candidate_set,
-                            cancel=token,
-                        )
-                    return snapshot.execute_expression(
+                result = await self.snapshots.compute(
+                    partial(
+                        snapshot.execute,
                         name=plan.program.name,
-                        program_json=encode_json(native_plan),
-                        expression_json=encode_json(plan.expression),
+                        program_json=encode_json(plan.program.native_plan),
+                        expression_json=encode_json(plan.expression) if plan.expression else None,
                         text=plan.text,
-                        original_vector=plan.raw_vector,
-                        raw_vectors=plan.branch_raw_vectors,
-                        contextual_vectors=plan.branch_contextual_vectors,
+                        raw_vector=plan.raw_vector,
+                        contextual_vector=plan.contextual_vector,
+                        branch_raw_vectors=plan.branch_raw_vectors,
+                        branch_contextual_vectors=plan.branch_contextual_vectors,
                         ghost_vectors=plan.ghosts,
                         allowed_rows=plan.allowed,
                         options_json=encode_json(plan.options),
+                        candidate_set=plan.candidate_set,
                         cancel=token,
-                    )
-
-                result = await self.snapshots.compute(compute, token)
+                    ),
+                    token,
+                )
                 output = await self.delivery.locate(
                     request, row, result, plan.summary, plan.program_run
                 )
-            output = await self._finish_query(plan.program, locator, request, output, call)
+                output = await self._finish_query(
+                    plan.program,
+                    request,
+                    output,
+                    call,
+                    snapshot,
+                    token,
+                    {
+                        candidate["key"]: index
+                        for index, candidate in enumerate(row["mapping"]["candidates"])
+                    },
+                    plan.aspect_vectors,
+                )
             get_logger(__name__).info(
                 "wave.query.completed",
                 extra={
@@ -673,60 +677,98 @@ class WaveOperations:
     async def _finish_query(
         self,
         program: CompiledProgram,
-        locator: str,
         request: WaveQuery,
         localized: LocatedResult,
         call: CallContext | None,
+        snapshot: nous_native.NativeSnapshot,
+        token: nous_native.CancellationToken,
+        candidate_rows: dict[str, int],
+        aspect_vectors: npt.NDArray[np.float32] | None,
     ) -> WaveSearchResult:
-        values: dict[tuple[str, str], LocatedResult | WaveSearchResult] = {
-            (locator, "passages"): localized
-        }
-        for node in program.nodes:
-            if node.operator not in {"passages.evaluate", "passages.select", "delivery.read"}:
-                continue
-            input_port = {
-                "passages.evaluate": "passages",
-                "passages.select": "passages",
-                "delivery.read": "selected",
-            }[node.operator]
-            ref = node.inputs[input_port]
-            if isinstance(ref, tuple) or (ref.node, ref.port) not in values:
-                raise NousError(
-                    "wave.invalid_program",
-                    "Delivery input is unavailable",
-                    details={"node": node.id, "port": input_port},
-                )
-            value = values[(ref.node, ref.port)]
-            if not isinstance(value, LocatedResult):
-                raise NousError(
-                    "wave.invalid_program",
-                    "Delivery stage requires localized ranges",
-                    details={"node": node.id},
-                )
+        value = localized
+        for node in program.delivery_steps:
             if node.operator == "passages.evaluate":
-                output: LocatedResult | WaveSearchResult = await self._evaluate_passages(
+                value = await self._evaluate_passages(
                     value, request, EvaluationParameters.model_validate(node.parameters), call
                 )
-                output_port = "passages"
             elif node.operator == "passages.select":
                 configured = node.parameters.get("budget")
                 budget = request.delivery_budget or (
                     DeliveryBudget.model_validate(configured) if configured is not None else None
                 )
-                output = select_passages(value, request.passages_per_group, budget)
-                output_port = "selected"
+                passages = (
+                    [part for group in value.groups for part in group.passages]
+                    if value.groups
+                    else [hit.passage for hit in value.hits]
+                )
+                counter = await self.delivery.selection_budget(
+                    budget,
+                    tuple(
+                        content
+                        for part in passages
+                        for content in (*part.fragments, *part.support_context)
+                    ),
+                    views=value.views,
+                )
+                aspect_similarities = None
+                semantic_similarity: Callable[[int], Awaitable[npt.NDArray[np.float64]]] | None = (
+                    None
+                )
+                if passages and "vectors" in snapshot.capabilities:
+                    rows = np.asarray(
+                        [candidate_rows[part.candidate.key] for part in passages], dtype=np.uint64
+                    )
+                    if aspect_vectors is not None:
+                        aspect_similarities = await self.snapshots.compute(
+                            partial(
+                                snapshot.passage_similarities,
+                                rows,
+                                aspects=aspect_vectors,
+                                cancel=token,
+                            ),
+                            token,
+                        )
+                    if len(rows) > 1:
+
+                        async def compare(
+                            candidate_indices: npt.NDArray[np.uint64], index: int
+                        ) -> npt.NDArray[np.float64]:
+                            values = await self.snapshots.compute(
+                                partial(
+                                    snapshot.passage_similarities,
+                                    candidate_indices,
+                                    references=candidate_indices[index : index + 1],
+                                    cancel=token,
+                                ),
+                                token,
+                            )
+                            return values[:, 0]
+
+                        semantic_similarity = partial(compare, rows)
+                value = await select_passages(
+                    value,
+                    request.passages_per_group,
+                    counter,
+                    aspect_similarities=aspect_similarities,
+                    semantic_similarity=semantic_similarity,
+                    aspect_weight=TypeAdapter(float).validate_python(
+                        node.parameters["aspect_weight"]
+                    ),
+                    redundancy_weight=TypeAdapter(float).validate_python(
+                        node.parameters["redundancy_weight"]
+                    ),
+                    redundancy_threshold=TypeAdapter(float).validate_python(
+                        node.parameters["redundancy_threshold"]
+                    ),
+                )
+                if value.result.program_run is not None:
+                    facts = self.delivery.budget_facts(value.result.program_run, counter)
+                    value = value.model_copy(
+                        update={"result": value.result.model_copy(update={"program_run": facts})}
+                    )
             else:
-                output = await self.delivery.read(value)
-                output_port = "evidence"
-            values[(node.id, output_port)] = output
-        output_ref = program.outputs["evidence"]
-        try:
-            final = values[(output_ref.node, output_ref.port)]
-        except KeyError as error:
-            raise NousError("wave.invalid_program", "Program did not produce evidence") from error
-        if not isinstance(final, WaveSearchResult):
-            raise NousError("wave.invalid_program", "Program evidence was not read")
-        return final
+                return await self.delivery.read(value)
+        raise NousError("wave.invalid_program", "Program did not produce evidence")
 
     async def read(self, ref: str, candidate_key: str, *, sources: bool = False) -> WaveReadResult:
         async with self.execution.operation("wave.read"):

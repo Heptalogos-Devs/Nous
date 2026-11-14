@@ -1,11 +1,10 @@
-"""Resolve exact cognitive material through its registered owner."""
+"""Resolve exact cognitive materials through their domain owners."""
 
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 import sqlalchemy as sa
-from pydantic import BaseModel, JsonValue
+from pydantic import JsonValue
 
 from nous.application.contracts import CallContext, define_operation
 from nous.cognition.contracts import (
@@ -22,7 +21,6 @@ from nous.cognition.material_adapters import (
 from nous.cognition.material_contracts import (
     CognitiveMaterialView,
     FollowMaterial,
-    MaterialAttributes,
     MaterialRead,
     MaterialRef,
     MaterialRelation,
@@ -34,6 +32,9 @@ from nous.cognition.material_contracts import (
     ReadMaterial,
     RelationRead,
 )
+from nous.cognition.schema import source_materials
+from nous.cognition.work.contracts import WorkAttributes
+from nous.cognition.work.refs import WorkRevisionRef
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type, split_revision
 from nous.content.contracts import (
@@ -46,33 +47,34 @@ from nous.content.contracts import (
 from nous.content.schema import material_sources
 from nous.storage.database import ReadTx, WriteTx
 
+
+async def upgrade_material_source_refs_in(tx: WriteTx) -> None:
+    """Protect existing explicitly saved result-output identities with foreign keys."""
+
+    def columns_for(connection: sa.Connection, name: str) -> set[str]:
+        return {item["name"] for item in sa.inspect(connection).get_columns(name)}
+
+    for table in (material_sources, source_materials):
+        columns = await tx.connection.run_sync(columns_for, table.name)
+        if "source_result_id" in columns:
+            continue
+        await tx.connection.exec_driver_sql(
+            f'ALTER TABLE "{table.name}" ADD COLUMN source_result_id VARCHAR '
+            "REFERENCES processing_results(id)"
+        )
+        await tx.connection.exec_driver_sql(
+            f"UPDATE \"{table.name}\" SET source_result_id = json_extract(material, '$.result.id') "
+            "WHERE json_extract(material, '$.result.kind') = 'result' "
+            "AND json_extract(material, '$.output') IS NOT NULL"
+        )
+
+
 if TYPE_CHECKING:
     from nous.cognition.annotation.operations import AnnotationOperations
+    from nous.cognition.work.reading import WorkReader
     from nous.cognition.writing.reading import RecordReader
     from nous.content.artifacts import ArtifactStore
     from nous.content.results import ResultStore
-
-
-type MaterialCapture = Callable[
-    [ReadTx, tuple[MaterialRef, ...]], Awaitable[tuple[MaterialSnapshot, ...]]
-]
-type MaterialCurrent = Callable[[ReadTx, NamespaceRef], Awaitable[tuple[MaterialSnapshot, ...]]]
-type MaterialPrepare = Callable[[CognitiveMaterialView], Awaitable[CognitiveMaterialView]]
-type MaterialKey = Callable[[MaterialRef], str]
-type MaterialNamespace = Callable[[MaterialRef], NamespaceRef | None]
-type IdentifierResolver = Callable[..., Awaitable[MaterialRef]]
-
-
-@dataclass(frozen=True)
-class _Registration:
-    schema_key: str
-    attributes: type[BaseModel]
-    key: MaterialKey
-    namespace: MaterialNamespace | None
-    kinds: tuple[str, ...]
-    capture: MaterialCapture
-    current: MaterialCurrent | None
-    prepare: MaterialPrepare | None
 
 
 READ_MATERIAL = define_operation(
@@ -90,7 +92,7 @@ FOLLOW_MATERIAL = define_operation(
 
 
 class Materials:
-    """Registry and shared read/follow operations; owners remain authoritative."""
+    """Shared material reads and captures backed by the domain owners."""
 
     def __init__(
         self,
@@ -98,91 +100,33 @@ class Materials:
         results: ResultStore,
         records: RecordReader,
         annotations: AnnotationOperations,
+        work: WorkReader,
     ):
-        self.artifacts, self.results, self.records = artifacts, results, records
-        adapters = MaterialAdapters(artifacts, results, records, annotations, self.sources_many_in)
-        self._readers: dict[type, _Registration] = {}
-        self._identifiers: dict[str, IdentifierResolver] = {}
-        self.register(
-            ArtifactRef,
-            "artifact",
-            ArtifactAttributes,
-            key=adapters.artifact_key,
-            kinds=("artifact",),
-            capture_in=adapters.capture_artifacts,
-        )
-        self.register(
-            ResultOutputRef,
-            "result_output",
-            ResultOutputAttributes,
-            key=adapters.output_key,
-            kinds=("result_output",),
-            capture_in=adapters.capture_outputs,
-        )
-        self.register(
-            RecordRevisionRef,
-            "record",
-            RecordAttributes,
-            key=adapters.record_key,
-            namespace=adapters.record_namespace,
-            kinds=("note", "journal"),
-            capture_in=adapters.capture_records,
-            current_in=adapters.current_records,
-        )
-
-    def register[T: MaterialRef](
-        self,
-        ref_type: type[T],
-        schema_key: str,
-        attributes: type[BaseModel],
-        *,
-        key: Callable[[T], str],
-        kinds: tuple[str, ...],
-        capture_in: Callable[[ReadTx, tuple[T, ...]], Awaitable[tuple[MaterialSnapshot, ...]]],
-        namespace: Callable[[T], NamespaceRef | None] | None = None,
-        current_in: MaterialCurrent | None = None,
-        prepare: MaterialPrepare | None = None,
-    ) -> None:
-        if ref_type in self._readers or any(
-            item.schema_key == schema_key for item in self._readers.values()
-        ):
-            raise ValueError("Material reference and schema keys must be unique")
-        if not kinds or len(kinds) != len(set(kinds)):
-            raise ValueError("Material kinds must be declared and unique")
-        self._readers[ref_type] = _Registration(
-            schema_key,
-            attributes,
-            cast(MaterialKey, key),
-            cast(MaterialNamespace | None, namespace),
-            kinds,
-            cast(MaterialCapture, capture_in),
-            current_in,
-            prepare,
-        )
+        self.artifacts, self.results, self.records, self.work = artifacts, results, records, work
+        self.adapters = MaterialAdapters(artifacts, results, records, annotations)
 
     def key(self, ref: MaterialRef) -> str:
-        entry = self._readers.get(type(ref))
-        if entry is None:
-            raise NousError("material.unknown_type", "Material type is not registered")
-        return entry.key(ref)
+        if isinstance(ref, ArtifactRef):
+            return self.adapters.artifact_key(ref)
+        if isinstance(ref, ResultOutputRef):
+            return self.adapters.output_key(ref)
+        if isinstance(ref, RecordRevisionRef):
+            return self.adapters.record_key(ref)
+        return self.work.material_key(ref)
 
     def searchable_kinds(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                {kind for entry in self._readers.values() if entry.current for kind in entry.kinds}
-            )
-        )
+        return ("journal", "note", "work")
 
     def describe(self) -> dict[str, dict[str, JsonValue]]:
         return {
-            entry.schema_key: cast(dict[str, JsonValue], entry.attributes.model_json_schema())
-            for entry in self._readers.values()
+            key: cast(dict[str, JsonValue], attributes.model_json_schema())
+            for key, attributes in (
+                ("artifact", ArtifactAttributes),
+                ("result_output", ResultOutputAttributes),
+                ("record", RecordAttributes),
+                ("work", WorkAttributes),
+            )
         }
-
-    def register_identifier(self, prefix: str, resolver: IdentifierResolver) -> None:
-        if prefix in self._identifiers or prefix in {"note", "jrn", "art", "res"}:
-            raise ValueError("Material identifier prefix is already registered")
-        self._identifiers[prefix] = resolver
 
     async def resolve_identifier(
         self, target: str | MaterialRef, *, namespace: NamespaceSelector = None
@@ -211,8 +155,8 @@ class Materials:
             if not output_name:
                 raise NousError("material.output_required", "Choose a named result output")
             return ResultOutputRef(result=result.ref, output=output_name)
-        if prefix in self._identifiers and not separator:
-            return await self._identifiers[prefix](target, namespace=namespace)
+        if prefix == "work" and not separator:
+            return await self.work.resolve_identifier(target, namespace=namespace)
         raise NousError("material.invalid_reference", "Material reference is not recognized")
 
     async def resolve(
@@ -220,115 +164,52 @@ class Materials:
     ) -> CognitiveMaterialView:
         return (await self.resolve_many((ref,), namespace=namespace))[0]
 
-    def _validate_snapshot(
-        self, snapshot: MaterialSnapshot, entry: _Registration
-    ) -> MaterialSnapshot:
-        view = snapshot.view
-        owner = entry.namespace(view.ref) if entry.namespace else None
-        if (
-            view.attributes.schema_key != entry.schema_key
-            or view.sections
-            or view.kind not in entry.kinds
-            or snapshot.index.key != entry.key(view.ref)
-            or snapshot.index.namespace != owner
-        ):
-            raise NousError(
-                "material.invalid_view", "Material owner returned an inconsistent snapshot"
+    async def capture_in(
+        self, tx: ReadTx, refs: Sequence[MaterialRef], *, namespace: NamespaceSelector = None
+    ) -> tuple[MaterialSnapshot, ...]:
+        """Capture exact domain facts together in the caller's read transaction."""
+        selected = (
+            (await self.records.namespace_in(tx, namespace)).ref
+            if namespace is not None
+            else self.records.bound_namespace
+        )
+        records = tuple(ref for ref in refs if isinstance(ref, RecordRevisionRef))
+        works = tuple(ref for ref in refs if isinstance(ref, WorkRevisionRef))
+        artifacts = tuple(ref for ref in refs if isinstance(ref, ArtifactRef))
+        outputs = tuple(ref for ref in refs if isinstance(ref, ResultOutputRef))
+        if len(records) + len(works) + len(artifacts) + len(outputs) != len(refs):
+            raise NousError("material.unknown_type", "Material type is not supported")
+        for ref in (*records, *works):
+            owner = (
+                self.adapters.record_namespace(ref)
+                if isinstance(ref, RecordRevisionRef)
+                else self.work.material_namespace(ref)
             )
-        if owner is not None:
             if owner.instance_id != self.artifacts.instance_id:
                 raise NousError(
                     "cognition.instance_mismatch", "Material belongs to another instance"
                 )
-            if self.records.bound_namespace is not None and owner != self.records.bound_namespace:
+            if selected is not None and owner != selected:
                 raise NousError(
                     "cognition.namespace_mismatch", "Material belongs to another namespace"
                 )
-        if (view.body is None) != (snapshot.body_digest is None):
-            raise NousError(
-                "material.invalid_view", "Material body and digest must be captured together"
-            )
-        for artifact in (
-            snapshot.index.root.artifact if snapshot.index.root else None,
-            snapshot.index.provenance,
-        ):
-            if artifact is not None and artifact.instance_id != self.artifacts.instance_id:
-                raise NousError(
-                    "content.instance_mismatch", "Material source belongs to another instance"
-                )
-        validated = entry.attributes.model_validate(view.attributes.values)
-        return snapshot.model_copy(
-            update={
-                "view": view.model_copy(
-                    update={
-                        "attributes": MaterialAttributes(
-                            schema_key=entry.schema_key, values=validated.model_dump(mode="json")
-                        )
-                    }
-                )
-            }
+        formal = await self.sources_many_in(tx, tuple(ref.result.id for ref in outputs))
+        captured = (
+            *(await self.adapters.capture_records(tx, records) if records else ()),
+            *(await self.work.capture_materials_in(tx, works) if works else ()),
+            *(await self.adapters.capture_artifacts(tx, artifacts) if artifacts else ()),
+            *(await self.adapters.capture_outputs(tx, outputs, formal) if outputs else ()),
         )
-
-    async def capture_in(
-        self, tx: ReadTx, refs: Sequence[MaterialRef], *, namespace: NamespaceSelector = None
-    ) -> tuple[MaterialSnapshot, ...]:
-        """Capture exact materials in the caller's single consistent read view."""
-        selected = (
-            (await self.records.namespace_in(tx, namespace)).ref if namespace is not None else None
-        )
-        groups: dict[type, list[tuple[int, MaterialRef]]] = {}
-        for index, ref in enumerate(refs):
-            if type(ref) not in self._readers:
-                raise NousError("material.unknown_type", "Material type is not registered")
-            groups.setdefault(type(ref), []).append((index, ref))
-        output: list[MaterialSnapshot | None] = [None] * len(refs)
-        for ref_type, group in groups.items():
-            entry = self._readers[ref_type]
-            snapshots = await entry.capture(tx, tuple(ref for _, ref in group))
-            if len(snapshots) != len(group):
-                raise NousError(
-                    "material.invalid_view", "Material owner returned an incomplete snapshot"
-                )
-            for (index, ref), snapshot in zip(group, snapshots, strict=True):
-                if snapshot.view.ref != ref:
-                    raise NousError(
-                        "material.invalid_view", "Material owner returned a different reference"
-                    )
-                value = self._validate_snapshot(snapshot, entry)
-                if (
-                    selected is not None
-                    and value.index.namespace is not None
-                    and value.index.namespace != selected
-                ):
-                    raise NousError(
-                        "cognition.namespace_mismatch", "Material belongs to another namespace"
-                    )
-                output[index] = value
-        return tuple(cast(MaterialSnapshot, item) for item in output)
+        by_ref = {item.view.ref: item for item in captured}
+        return tuple(by_ref[ref] for ref in refs)
 
     async def current_in(self, tx: ReadTx, namespace: NamespaceRef) -> tuple[MaterialSnapshot, ...]:
-        """Capture all registered current materials without applying retrieval eligibility."""
+        """Capture current records and Work in one consistent namespace view."""
         selected = (await self.records.namespace_in(tx, namespace)).ref
-        result: list[MaterialSnapshot] = []
-        keys: set[str] = set()
-        for ref_type, entry in self._readers.items():
-            if entry.current is None:
-                continue
-            for snapshot in await entry.current(tx, namespace):
-                if type(snapshot.view.ref) is not ref_type:
-                    raise NousError(
-                        "material.invalid_view", "Material owner returned a different type"
-                    )
-                value = self._validate_snapshot(snapshot, entry)
-                if value.index.namespace != selected:
-                    raise NousError(
-                        "cognition.namespace_mismatch", "Material belongs to another namespace"
-                    )
-                if value.index.key in keys:
-                    raise NousError("material.invalid_view", "Material keys must be unique")
-                keys.add(value.index.key)
-                result.append(value)
-        return tuple(result)
+        return (
+            *await self.adapters.current_records(tx, selected),
+            *await self.work.current_materials_in(tx, selected),
+        )
 
     async def resolve_many(
         self, refs: Sequence[MaterialRef], *, namespace: NamespaceSelector = None
@@ -339,9 +220,8 @@ class Materials:
         views = [snapshot.view for snapshot in snapshots]
         text_indices: list[int] = []
         for index, view in enumerate(views):
-            entry = self._readers[type(view.ref)]
-            if entry.prepare is not None:
-                views[index] = await entry.prepare(view)
+            if isinstance(view.ref, WorkRevisionRef):
+                views[index] = await self.work.prepare_material(view)
             elif view.body is not None:
                 media_type = view.attributes.values.get("media_type", "text/markdown")
                 if isinstance(media_type, str) and is_text_media_type(media_type):
@@ -367,11 +247,13 @@ class Materials:
         self,
         tx: WriteTx,
         result: ProcessingResult,
-        output_name: str,
+        output_names: tuple[str, ...],
         sources: Sequence[MaterialSource],
+        *,
+        namespace: NamespaceRef,
     ) -> None:
-        """Adopt exact material identities with the producer's named output."""
-        if output_name not in {item.name for item in result.outputs}:
+        """Adopt task selections and their formal identities with the named outputs."""
+        if not set(output_names).issubset(item.name for item in result.outputs):
             raise NousError("content.not_found", "Material source output does not exist")
         named = {item.key: item.sources for item in result.selections}
         if len({item.key for item in sources}) != len(sources):
@@ -380,6 +262,7 @@ class Materials:
             raise NousError(
                 "material.invalid_source", "Material source differs from the task's named selection"
             )
+        await self.validate_sources_in(tx, sources, namespace=namespace)
         if sources:
             await tx.connection.execute(
                 material_sources.insert(),
@@ -392,8 +275,12 @@ class Materials:
                         "kind": source.kind,
                         "name": source.name,
                         "material": source.material.model_dump(mode="json"),
+                        "source_result_id": source.material.result.id
+                        if isinstance(source.material, ResultOutputRef)
+                        else None,
                         "selections": [item.model_dump(mode="json") for item in source.selections],
                     }
+                    for output_name in output_names
                     for ordinal, source in enumerate(sources)
                 ],
             )
@@ -407,7 +294,7 @@ class Materials:
     async def sources_many_in(
         self, tx: ReadTx, result_ids: Sequence[str]
     ) -> dict[tuple[str, str], tuple[MaterialSource, ...]]:
-        """Read material-owned source relations for completed result outputs together."""
+        """Read the formal material sources of completed result outputs."""
         values: dict[tuple[str, str], list[MaterialSource]] = {}
         identifiers = list(dict.fromkeys(result_ids))
         for offset in range(0, len(identifiers), 800):
@@ -469,15 +356,33 @@ class Materials:
         for source, snapshot in zip(sources, snapshots, strict=True):
             self._validate_selections(snapshot.view, source.selections)
 
+    @classmethod
+    def _selections(
+        cls, items: Sequence[MaterialSelection], views: Sequence[CognitiveMaterialView]
+    ) -> tuple[tuple[ContentSelection, ...], ...]:
+        selected: list[tuple[ContentSelection, ...]] = []
+        for item, view in zip(items, views, strict=True):
+            ranges = item.selections or ((view.body,) if view.body is not None else ())
+            cls._validate_selections(view, ranges)
+            selected.append(ranges)
+        return tuple(selected)
+
+    async def selections(
+        self, items: Sequence[MaterialSelection], *, namespace: NamespaceSelector = None
+    ) -> tuple[tuple[CognitiveMaterialView, tuple[ContentSelection, ...]], ...]:
+        """Resolve material identities and ranges without reading their bodies."""
+        async with self.records.database.read() as tx:
+            snapshots = await self.capture_in(
+                tx, tuple(item.material for item in items), namespace=namespace
+            )
+        views = tuple(item.view for item in snapshots)
+        return tuple(zip(views, self._selections(items, views), strict=True))
+
     async def read_many(
         self, items: Sequence[MaterialSelection], *, namespace: NamespaceSelector = None
     ) -> tuple[MaterialRead, ...]:
         views = await self.resolve_many(tuple(item.material for item in items), namespace=namespace)
-        batches: list[tuple[ContentSelection, ...]] = []
-        for item, view in zip(items, views, strict=True):
-            selections = item.selections or ((view.body,) if view.body is not None else ())
-            self._validate_selections(view, selections)
-            batches.append(selections)
+        batches = self._selections(items, views)
         contents = await self.artifacts.read_view_many(
             tuple(value for batch in batches for value in batch)
         )
@@ -520,9 +425,15 @@ class Materials:
 
             assert request.delivery is not None and request.key is not None
             evidence = await self.results.get(request.delivery)
-            artifact = await self.results.resolve_output(
-                ResultOutputRef(result=evidence.ref, output="evidence")
+            artifact = next(
+                (item.artifact for item in evidence.outputs if item.name == "evidence"), None
             )
+            if artifact is None:
+                raise NousError(
+                    "content.not_found",
+                    "Result output does not exist",
+                    details={"result": evidence.ref.identifier, "output": "evidence"},
+                )
             delivery = EvidenceDelivery.model_validate_json(
                 await self.artifacts.read_text(artifact)
             )

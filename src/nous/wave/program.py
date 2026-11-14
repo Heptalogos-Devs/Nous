@@ -15,31 +15,18 @@ from nous.common.errors import NousError
 from nous.configuration.metadata import ConfigSequence
 from nous.models.evaluation_contracts import EvaluationScale
 
-from .contracts import CandidateSet, DeliveryBudget, ProgramRunFacts, ProgramRunNode
+from .contracts import (
+    CandidateSet,
+    DeliveryBudget,
+    PortRef,
+    ProgramNode,
+    ProgramRunFacts,
+    WaveProgram,
+)
 from .serialization import content_signature
 
 if TYPE_CHECKING:
     from .configuration import WaveConfig
-
-
-class PortRef(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    node: str = Field(min_length=1)
-    port: str = Field(min_length=1)
-
-
-class ProgramNode(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    id: str = Field(min_length=1)
-    operator: str = Field(min_length=1)
-    inputs: dict[str, PortRef | ConfigSequence[PortRef]] = Field(default_factory=dict)
-    parameters: dict[str, JsonValue] = Field(default_factory=dict)
-
-
-class WaveProgram(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    nodes: ConfigSequence[ProgramNode]
-    outputs: dict[str, PortRef]
 
 
 class EvaluationParameters(BaseModel):
@@ -174,6 +161,8 @@ class CompiledProgram:
     outputs: dict[str, PortRef]
     requirements: frozenset[str]
     signature: str
+    native_plan: dict[str, object]
+    delivery_steps: tuple[ProgramNode, ...]
 
 
 def _error(message: str, **details: object) -> NousError:
@@ -320,6 +309,17 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
             else value.model_copy(update={"node": aliases.get(value.node, value.node)})
             for key, value in node.inputs.items()
         }
+        if node.operator == "rank.fuse":
+            references = inputs["rankings"]
+            assert isinstance(references, tuple)
+            weights = TypeAdapter(list[float]).validate_python(parameters.get("weights") or [])
+            if weights and len(weights) != len(references):
+                raise _error("Fusion weights must match ranking inputs", node=node.id)
+            unique: dict[PortRef, float] = {}
+            for index, reference in enumerate(references):
+                unique.setdefault(reference, weights[index] if weights else 1.0)
+            inputs["rankings"] = tuple(unique)
+            parameters["weights"] = list(unique.values()) if weights else []
         node = node.model_copy(update={"inputs": inputs, "parameters": parameters})
         identity = json.dumps(
             {
@@ -343,6 +343,50 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
         name_: ref.model_copy(update={"node": aliases.get(ref.node, ref.node)})
         for name_, ref in definition.outputs.items()
     }
+    by_id = {node.id: node for node in compiled}
+    locators = [node for node in compiled if node.operator == "passages.locate"]
+    if len(locators) != 1:
+        raise _error("A query must have one localization node", program=name)
+    locator = locators[0]
+    steps: list[ProgramNode] = []
+    current = outputs["evidence"]
+    ports = {
+        "delivery.read": ("evidence", "selected"),
+        "passages.select": ("selected", "passages"),
+        "passages.evaluate": ("passages", "passages"),
+    }
+    while current.node != locator.id:
+        node = by_id[current.node]
+        expected = ports.get(node.operator)
+        if expected is None or current.port != expected[0]:
+            raise _error("Invalid delivery chain", node=node.id)
+        steps.append(node)
+        source = node.inputs[expected[1]]
+        if isinstance(source, tuple):
+            raise _error("Invalid delivery input", node=node.id)
+        current = source
+    if current.port != "passages":
+        raise _error("Invalid localization output", node=locator.id)
+    needed = {locator.id}
+    if "thinking" in outputs:
+        needed.add(outputs["thinking"].node)
+    pending = list(needed)
+    while pending:
+        for source in by_id[pending.pop()].inputs.values():
+            for ref in source if isinstance(source, tuple) else (source,):
+                if ref.node in by_id and ref.node not in needed:
+                    needed.add(ref.node)
+                    pending.append(ref.node)
+    native_nodes = [node for node in compiled if node.id in needed]
+    if any(node.operator in ports for node in native_nodes):
+        raise _error("Localization cannot depend on a delivery stage", node=locator.id)
+    native_outputs: dict[str, object] = {"evidence": {"node": locator.id, "port": "passages"}}
+    if "thinking" in outputs:
+        native_outputs["thinking"] = outputs["thinking"].model_dump(mode="json")
+    native_plan: dict[str, object] = {
+        "nodes": [node.model_dump(mode="json") for node in native_nodes],
+        "outputs": native_outputs,
+    }
     canonical = definition.model_dump_json()
     return CompiledProgram(
         name,
@@ -351,6 +395,8 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
         outputs,
         frozenset(requirements),
         hashlib.sha256(canonical.encode()).hexdigest(),
+        native_plan,
+        tuple(reversed(steps)),
     )
 
 
@@ -364,6 +410,17 @@ def resolve_program(config: WaveConfig, name: str | None = None) -> CompiledProg
             details={"program": selected},
         )
     return compile_program(selected, definition)
+
+
+def delivery_budget(
+    program: CompiledProgram, requested: DeliveryBudget | None = None
+) -> DeliveryBudget | None:
+    """Resolve the actual budget once from the request and selected program."""
+    if requested is not None:
+        return requested
+    node = next((item for item in program.nodes if item.operator == "passages.select"), None)
+    value = node.parameters.get("budget") if node else None
+    return DeliveryBudget.model_validate(value) if value is not None else None
 
 
 def program_run_facts(
@@ -383,193 +440,60 @@ def program_run_facts(
     expression_kind: Literal["term", "any", "all"] | None,
     expression_terms: int,
 ) -> ProgramRunFacts:
-    """Freeze the effective graph and its actual bounded numerical settings."""
+    """Record the compiled graph and the settings that its execution consumes."""
     operators = {node.operator for node in program.nodes}
-    option_names = {
+    names = {
         "top_k",
         "grouping",
         "passages_per_group",
         "candidates_per_group",
         "group_scan_limit",
+        "rrf_k",
         "preference_weight",
         "dedup_threshold",
         "include_counterevidence",
         "explore",
+        "readout",
     }
-    if (
-        operators & {"context.recall", "candidates.union", "rank.context"}
-        or expression_kind is not None
-        or any(
-            node.operator == "rank.fuse" and node.parameters.get("k") is None
-            for node in program.nodes
-        )
-    ):
-        option_names.add("rrf_k")
+    if "ann.search" in operators:
+        names.add("ann_search_effort")
     if "vcp.observe" in operators:
-        option_names.add("pipeline")
-    if any(
-        node.operator == "ann.search" and node.parameters.get("search_effort") is None
-        for node in program.nodes
-    ):
-        option_names.add("ann_search_effort")
+        names.add("pipeline")
     if "dtsc.readout" in operators:
-        option_names.add("dtsc")
+        names.add("dtsc")
     if "vcp.think" in operators:
-        option_names.add("thinking_min_closure")
-    selected_options = {key: value for key, value in options.items() if key in option_names}
-    selected_options["candidate_set"] = (
+        names.add("thinking_min_closure")
+    selected = {key: value for key, value in options.items() if key in names}
+    selected["candidate_set"] = (
         {"count": len(candidate_set.entries), "rank_scope": candidate_set.rank_scope}
         if candidate_set is not None
         else None
     )
-    selected_options["expression"] = (
+    selected["expression"] = (
         {"kind": expression_kind, "terms": expression_terms} if expression_kind else None
     )
     if operators & {"context.recall", "passages.locate", "passages.evaluate"}:
-        selected_options["context"] = dict(context_options)
+        selected["context"] = dict(context_options)
     if "passages.evaluate" in operators:
-        selected_options["evaluation"] = {
+        selected["evaluation"] = {
             "limits": dict(evaluation_options),
             "tasks": dict(evaluation_tasks),
         }
-    readout = TypeAdapter(dict[str, JsonValue]).validate_python(options.get("readout", {}))
-    lane_limits = {
-        "raw_vector": "queryK",
-        "enhanced": "denoisedK",
-        "local": "localFieldK",
-        "transfer": "transferFieldK",
-    }
-    readout_names = {"maxUnionCandidates"}
-    if operators & {"lexical.search", "context.recall"}:
-        readout_names.add("bm25K")
-    if "concept.direct" in operators:
-        readout_names.add("anchorK")
-    for node in program.nodes:
-        if node.operator == "ann.search":
-            vector = node.inputs["vector"]
-            assert isinstance(vector, PortRef)
-            lookup = lane_limits.get(vector.port)
-            if lookup is not None:
-                readout_names.add(lookup)
-    if operators & {"vcp.calibrate", "river.readout"}:
-        selected_options["readout"] = readout
-    else:
-        selected_options["readout"] = {key: readout[key] for key in readout_names if key in readout}
-    nodes: list[ProgramRunNode] = []
-    for node in program.nodes:
-        parameters: dict[str, object] = dict(node.parameters)
-        inputs = dict(node.inputs)
-        if node.operator == "rank.fuse":
-            if parameters.get("k") is None:
-                parameters["k"] = options["rrf_k"]
-            references = node.inputs["rankings"]
-            assert isinstance(references, tuple)
-            configured = TypeAdapter(list[float]).validate_python(parameters.get("weights") or [])
-            if configured and len(configured) != len(references):
-                raise _error("Fusion weights must match ranking inputs", node=node.id)
-            weights = configured or [1.0] * len(references)
-            unique: dict[PortRef, float] = {}
-            for reference, weight in zip(references, weights, strict=True):
-                unique.setdefault(reference, weight)
-            inputs["rankings"] = tuple(unique)
-            parameters["weights"] = list(unique.values())
-        elif node.operator == "passages.select":
-            parameters["budget"] = budget.model_dump(mode="json") if budget else None
-        elif node.operator == "passages.evaluate":
-            method = parameters.get("method")
-            if parameters.get("task") is None:
-                parameters["task"] = "rank-passages" if method == "rank" else "evaluate-passages"
-            if method == "rank":
-                for key in ("numeric_order", "category_order", "purpose", "rubric", "scale"):
-                    parameters.pop(key, None)
-            else:
-                scale = TypeAdapter(dict[str, JsonValue]).validate_python(parameters.get("scale"))
-                parameters.pop("numeric_order" if scale.get("labels") else "category_order", None)
-        elif node.operator in {
-            "ann.search",
-            "lexical.search",
-            "concept.direct",
-            "candidates.union",
-        }:
-            key = "candidate_limit"
-            if parameters.get(key) is None:
-                if node.operator == "ann.search":
-                    vector = node.inputs["vector"]
-                    assert isinstance(vector, PortRef)
-                    lookup = lane_limits.get(vector.port)
-                else:
-                    lookup = {
-                        "lexical.search": "bm25K",
-                        "concept.direct": "anchorK",
-                        "candidates.union": "maxUnionCandidates",
-                    }[node.operator]
-                if lookup is not None:
-                    parameters[key] = readout.get(lookup)
-            if parameters.get("candidates_per_group") is None:
-                parameters["candidates_per_group"] = options["candidates_per_group"]
-            if node.operator == "ann.search" and parameters.get("search_effort") is None:
-                parameters["search_effort"] = options["ann_search_effort"]
-        nodes.append(
-            ProgramRunNode(
-                id=node.id,
-                operator=node.operator,
-                inputs=TypeAdapter(dict[str, JsonValue]).validate_python(
-                    {
-                        key: [ref.model_dump(mode="json") for ref in value]
-                        if isinstance(value, tuple)
-                        else value.model_dump(mode="json")
-                        for key, value in inputs.items()
-                    }
-                ),
-                parameters=TypeAdapter(dict[str, JsonValue]).validate_python(parameters),
-            )
-        )
     facts = {
         "name": program.name,
         "definition_signature": program.signature,
         "requested_program": requested_program,
         "selection": selection,
         "requirements": sorted(program.requirements),
-        "nodes": [node.model_dump(mode="json") for node in nodes],
+        "nodes": [node.model_dump(mode="json") for node in program.nodes],
         "outputs": {key: value.model_dump(mode="json") for key, value in program.outputs.items()},
-        "options": selected_options,
+        "options": selected,
         "budget": budget.model_dump(mode="json") if budget else None,
         "space_id": space_id,
         "space_signature": space_signature,
         "space_definition": space_definition,
     }
     return ProgramRunFacts.model_validate({**facts, "signature": content_signature(facts)})
-
-
-def native_segment(program: CompiledProgram) -> tuple[str, dict[str, object]]:
-    """Extract the snapshot-bound graph through its localization result."""
-    locators = [node for node in program.nodes if node.operator == "passages.locate"]
-    if len(locators) != 1:
-        raise _error("A query must have one localization node", program=program.name)
-    locator = locators[0]
-    by_id = {node.id: node for node in program.nodes}
-    needed = {locator.id}
-    if "thinking" in program.outputs:
-        needed.add(program.outputs["thinking"].node)
-    pending = list(needed)
-    while pending:
-        for value in by_id[pending.pop()].inputs.values():
-            for ref in value if isinstance(value, tuple) else (value,):
-                if ref.node in by_id and ref.node not in needed:
-                    needed.add(ref.node)
-                    pending.append(ref.node)
-    nodes = [node for node in program.nodes if node.id in needed]
-    if any(
-        node.operator in {"passages.evaluate", "passages.select", "delivery.read"} for node in nodes
-    ):
-        raise _error("Localization cannot depend on a delivery stage", node=locator.id)
-    outputs: dict[str, object] = {"evidence": {"node": locator.id, "port": "passages"}}
-    if "thinking" in program.outputs:
-        outputs["thinking"] = program.outputs["thinking"].model_dump(mode="json")
-    return locator.id, {
-        "nodes": [node.model_dump(mode="json") for node in nodes],
-        "outputs": outputs,
-    }
 
 
 def default_programs() -> dict[str, WaveProgram]:
@@ -584,52 +508,45 @@ def default_programs() -> dict[str, WaveProgram]:
     ) -> ProgramNode:
         return ProgramNode(id=id, operator=operator, inputs=inputs, parameters=parameters)
 
-    snap, allowed = ref("snapshot", "handle"), ref("scope", "allowed")
+    snapshot, allowed = ref("snapshot", "handle"), ref("scope", "allowed")
+
+    def search(name: str, source: PortRef) -> ProgramNode:
+        return node(
+            name, "ann.search", {"vector": source, "snapshot": snapshot, "allowed": allowed}
+        )
+
+    def lane(id: str, source: str, name: str) -> ProgramNode:
+        return node(id, "rank.from_lane", {"candidates": ref(source, "candidates")}, lane=name)
+
+    semantic = search("semantic", ref("query", "raw_vector"))
     lexical = node(
         "lexical",
         "lexical.search",
-        {"text": ref("query", "lexical"), "snapshot": snap, "allowed": allowed},
-    )
-    raw = node(
-        "semantic",
-        "ann.search",
-        {"vector": ref("query", "raw_vector"), "snapshot": snap, "allowed": allowed},
+        {"text": ref("query", "lexical"), "snapshot": snapshot, "allowed": allowed},
     )
     observe = node(
-        "observe", "vcp.observe", {"signal": ref("query", "contextual_signal"), "snapshot": snap}
+        "observe",
+        "vcp.observe",
+        {"signal": ref("query", "contextual_signal"), "snapshot": snapshot},
     )
-    enhanced = node(
-        "enhanced",
-        "ann.search",
-        {"vector": ref("observe", "enhanced"), "snapshot": snap, "allowed": allowed},
-    )
-    local = node(
-        "local",
-        "ann.search",
-        {"vector": ref("observe", "local"), "snapshot": snap, "allowed": allowed},
-    )
-    transfer = node(
-        "transfer",
-        "ann.search",
-        {"vector": ref("observe", "transfer"), "snapshot": snap, "allowed": allowed},
-    )
+    fields = [search(name, ref("observe", name)) for name in ("enhanced", "local", "transfer")]
     direct = node(
         "direct",
         "concept.direct",
-        {"observation": ref("observe", "observation"), "snapshot": snap, "allowed": allowed},
+        {"observation": ref("observe", "observation"), "snapshot": snapshot, "allowed": allowed},
     )
-    context_recall = node(
+    context = node(
         "context_recall",
         "context.recall",
-        {"signals": ref("query", "context_lexical"), "snapshot": snap, "allowed": allowed},
+        {"signals": ref("query", "context_lexical"), "snapshot": snapshot, "allowed": allowed},
     )
     union = node(
         "union",
         "candidates.union",
         {
             "sets": tuple(
-                ref(n, "candidates")
-                for n in (
+                ref(name, "candidates")
+                for name in (
                     "semantic",
                     "lexical",
                     "enhanced",
@@ -641,210 +558,122 @@ def default_programs() -> dict[str, WaveProgram]:
             )
         },
     )
-    calibrate = node(
+    calibration = node(
         "calibrate",
         "vcp.calibrate",
         {"observation": ref("observe", "observation"), "candidates": ref("union", "candidates")},
     )
+    shared = [observe, semantic, lexical, *fields, direct, context, union]
 
     def finish(
         stages: list[ProgramNode],
         rank: ProgramNode,
         *,
+        contextual: bool = True,
+        in_union: bool = False,
         text_only: bool = False,
-        context_in_union: bool = False,
-        context_enabled: bool = True,
+        thinking: bool = False,
     ) -> WaveProgram:
-        context_nodes = (
-            []
-            if context_in_union or not context_enabled
-            else [
-                context_recall,
+        steps = [*stages, rank]
+        ranked = ref(rank.id, "ranked")
+        if contextual and not in_union:
+            steps.extend(
+                [
+                    context,
+                    node(
+                        "context",
+                        "rank.context",
+                        {"ranked": ranked, "candidates": ref("context_recall", "candidates")},
+                    ),
+                ]
+            )
+            ranked = ref("context", "ranked")
+        steps.extend(
+            [
                 node(
-                    "context",
-                    "rank.context",
-                    {
-                        "ranked": ref(rank.id, "ranked"),
-                        "candidates": ref("context_recall", "candidates"),
-                    },
+                    "locate",
+                    "passages.locate",
+                    {"ranked": ranked, "intent": ref("query", "intent"), "snapshot": snapshot},
+                    **({"signals": cast(list[JsonValue], ["lexical"])} if text_only else {}),
+                ),
+                node(
+                    "select",
+                    "passages.select",
+                    {"passages": ref("locate", "passages"), "delivery": ref("delivery", "request")},
+                ),
+                node(
+                    "deliver",
+                    "delivery.read",
+                    {"selected": ref("select", "selected"), "materials": ref("scope", "materials")},
                 ),
             ]
         )
-        ranked = (
-            ref(rank.id, "ranked")
-            if context_in_union or not context_enabled
-            else ref("context", "ranked")
-        )
-        return WaveProgram(
-            nodes=tuple(
-                stages
-                + [
-                    rank,
-                    *context_nodes,
-                    node(
-                        "locate",
-                        "passages.locate",
-                        {
-                            "ranked": ranked,
-                            "intent": ref("query", "intent"),
-                            "snapshot": snap,
-                        },
-                        **({"signals": cast(list[JsonValue], ["lexical"])} if text_only else {}),
-                    ),
-                    node(
-                        "select",
-                        "passages.select",
-                        {
-                            "passages": ref("locate", "passages"),
-                            "delivery": ref("delivery", "request"),
-                        },
-                    ),
-                    node(
-                        "deliver",
-                        "delivery.read",
-                        {
-                            "selected": ref("select", "selected"),
-                            "materials": ref("scope", "materials"),
-                        },
-                    ),
-                ]
-            ),
-            outputs={"evidence": ref("deliver", "evidence")},
-        )
+        outputs = {"evidence": ref("deliver", "evidence")}
+        if thinking:
+            steps.append(
+                node(
+                    "think",
+                    "vcp.think",
+                    {
+                        "observation": ref("observe", "observation"),
+                        "stages": ref("query", "stages"),
+                        "ranked": ranked,
+                    },
+                )
+            )
+            outputs["thinking"] = ref("think", "routes")
+        return WaveProgram(nodes=tuple(steps), outputs=outputs)
 
-    text = finish(
-        [lexical],
-        node("rank", "rank.from_lane", {"candidates": ref("lexical", "candidates")}, lane="bm25"),
-        text_only=True,
+    river_rank = node(
+        "rank",
+        "river.readout",
+        {"observation": ref("observe", "observation"), "pool": ref("calibrate", "pool")},
     )
-    lexical_only = finish(
-        [lexical],
-        node("rank", "rank.from_lane", {"candidates": ref("lexical", "candidates")}, lane="bm25"),
-        text_only=True,
-        context_enabled=False,
+    dtsc_rank = node(
+        "rank",
+        "dtsc.readout",
+        {"observation": ref("observe", "observation"), "candidates": ref("union", "candidates")},
     )
-    dense = finish(
-        [raw],
+    hybrid_inputs = [
+        lane("dense_rank", "semantic", "query_knn"),
+        lane("text_rank", "lexical", "bm25"),
+    ]
+    hybrid_rank = node(
+        "rank", "rank.fuse", {"rankings": tuple(ref(item.id, "ranked") for item in hybrid_inputs)}
+    )
+    research_inputs = [
         node(
-            "rank",
-            "rank.from_lane",
-            {"candidates": ref("semantic", "candidates")},
-            lane="query_knn",
-        ),
-    )
-    tagmemo = finish(
-        [observe, enhanced],
-        node(
-            "rank",
-            "rank.from_lane",
-            {"candidates": ref("enhanced", "candidates")},
-            lane="denoised_field_knn",
-        ),
-    )
-    shared = [observe, raw, lexical, enhanced, local, transfer, direct, context_recall, union]
-    river = finish(
-        shared + [calibrate],
-        node(
-            "rank",
+            "river_rank",
             "river.readout",
             {"observation": ref("observe", "observation"), "pool": ref("calibrate", "pool")},
         ),
-        context_in_union=True,
-    )
-    dtsc = finish(
-        shared,
         node(
-            "rank",
-            "dtsc.readout",
+            "cosine_rank",
+            "rank.cosine",
             {
-                "observation": ref("observe", "observation"),
                 "candidates": ref("union", "candidates"),
+                "vector": ref("query", "raw_vector"),
+                "snapshot": snapshot,
             },
         ),
-        context_in_union=True,
+    ]
+    research_rank = node(
+        "rank", "rank.fuse", {"rankings": tuple(ref(item.id, "ranked") for item in research_inputs)}
     )
-    hybrid = finish(
-        [
-            raw,
-            lexical,
-            node(
-                "dense_rank",
-                "rank.from_lane",
-                {"candidates": ref("semantic", "candidates")},
-                lane="query_knn",
-            ),
-            node(
-                "text_rank",
-                "rank.from_lane",
-                {"candidates": ref("lexical", "candidates")},
-                lane="bm25",
-            ),
-        ],
-        node(
-            "rank",
-            "rank.fuse",
-            {"rankings": (ref("dense_rank", "ranked"), ref("text_rank", "ranked"))},
-        ),
-    )
-    research = finish(
-        shared
-        + [
-            calibrate,
-            node(
-                "river_rank",
-                "river.readout",
-                {"observation": ref("observe", "observation"), "pool": ref("calibrate", "pool")},
-            ),
-            node(
-                "cosine_rank",
-                "rank.cosine",
-                {
-                    "candidates": ref("union", "candidates"),
-                    "vector": ref("query", "raw_vector"),
-                    "snapshot": snap,
-                },
-            ),
-        ],
-        node(
-            "rank",
-            "rank.fuse",
-            {"rankings": (ref("river_rank", "ranked"), ref("cosine_rank", "ranked"))},
-        ),
-        context_in_union=True,
-    )
-    fixed = finish(
-        [],
-        node("rank", "rank.from_lane", {"candidates": ref("scope", "candidates")}, lane="provided"),
-    )
-
-    def thinking(program: WaveProgram) -> WaveProgram:
-        locator = next(item for item in program.nodes if item.operator == "passages.locate")
-        ranked = locator.inputs["ranked"]
-        assert isinstance(ranked, PortRef)
-        stage = node(
-            "think",
-            "vcp.think",
-            {
-                "observation": ref("observe", "observation"),
-                "stages": ref("query", "stages"),
-                "ranked": ranked,
-            },
-        )
-        return program.model_copy(
-            update={
-                "nodes": (*program.nodes, stage),
-                "outputs": {**program.outputs, "thinking": ref("think", "routes")},
-            }
-        )
-
     return {
-        "text_only": text,
-        "lexical": lexical_only,
-        "dense": dense,
-        "tagmemo": thinking(tagmemo),
-        "rivermemo": thinking(river),
-        "hybrid": hybrid,
-        "dtsc": thinking(dtsc),
-        "research": thinking(research),
-        "fixed_set": fixed,
+        "text_only": finish([lexical], lane("rank", "lexical", "bm25"), text_only=True),
+        "lexical": finish(
+            [lexical], lane("rank", "lexical", "bm25"), text_only=True, contextual=False
+        ),
+        "dense": finish([semantic], lane("rank", "semantic", "query_knn")),
+        "tagmemo": finish(
+            [observe, fields[0]], lane("rank", "enhanced", "denoised_field_knn"), thinking=True
+        ),
+        "rivermemo": finish([*shared, calibration], river_rank, in_union=True, thinking=True),
+        "hybrid": finish([semantic, lexical, *hybrid_inputs], hybrid_rank),
+        "dtsc": finish(shared, dtsc_rank, in_union=True, thinking=True),
+        "research": finish(
+            [*shared, calibration, *research_inputs], research_rank, in_union=True, thinking=True
+        ),
+        "fixed_set": finish([], lane("rank", "scope", "provided")),
     }

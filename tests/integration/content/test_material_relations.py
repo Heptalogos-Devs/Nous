@@ -137,8 +137,9 @@ def test_result_exposes_only_declared_representation_sources(tmp_path: Path) -> 
                 await runtime.materials.adopt_sources_in(
                     tx,
                     later,
-                    "description",
+                    ("description",),
                     (MaterialSource(key="E1", material=original.ref, selections=(chosen,)),),
+                    namespace=(await runtime.record_reader.namespace_in(tx, None)).ref,
                 )
 
         async with open_instance(instance, environment={}) as runtime:
@@ -291,7 +292,7 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                 await runtime.materials.adopt_sources_in(
                     tx,
                     product,
-                    "markdown",
+                    ("markdown",),
                     (
                         MaterialSource(
                             key="E1",
@@ -300,12 +301,18 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                             name="Research",
                         ),
                     ),
+                    namespace=NamespaceRef(
+                        instance_id=work.ref.instance_id, id=work.ref.namespace_id
+                    ),
                 )
                 await runtime.materials.adopt_sources_in(
                     tx,
                     product,
-                    "other",
+                    ("other",),
                     (MaterialSource(key="E1", material=source.artifact, selections=(source,)),),
+                    namespace=NamespaceRef(
+                        instance_id=work.ref.instance_id, id=work.ref.namespace_id
+                    ),
                 )
             draft = await runtime.app.call(DRAFT_FROM_RESULT, DraftFromResult(result=product.ref))
             assert draft.draft is not None

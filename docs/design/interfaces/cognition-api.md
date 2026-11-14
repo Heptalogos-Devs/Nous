@@ -32,6 +32,8 @@ async with open_instance(instance) as runtime:
 
 `QUERY` 返回 `RetrievalOutcome`，其中 `evidence` 包含查询意图、捕获快照、材料、实际交付片段、有效程序参数及覆盖情况。显式保存或使用 Steward 时，`evidence_ref` 固定正式成果；`materials.read` 可以用该引用与 E 键回读。普通查询先返回内存值；之后可用 `runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=result.evidence))` 保存同一交付，再用于反馈和工作记录。阅读整理通过 `steward.arrange` 处理已保存证据，`feedback.record_query` 使用已保存的证据引用及可选 E 键。
 
+调用方可以用 `QueryRequest(aspects=("取消条件", "关闭顺序"), ...)` 明确关注方面；需要引用先前语境中的对象时，先将问题表述为明确对象，再选择相关 Work 或材料。
+
 需要精简机器输出时，`runtime.app.call_name(name, request, select=("/字段/路径",))` 使用 JSON Pointer 选择序列化后的结果，返回指针到值的对象；空选择返回完整结果。`Application.describe` 始终提供完整操作 Schema。
 
 `DeliveryRequest.budget` 使用 `nous.wave.contracts.DeliveryBudget(amount=..., unit="characters" | "bytes" | "tokens")`。字符和字节预算按实际交付的原文计量，`evidence.delivery_usage` 记录实际用量；没有声明分词器时，token 预算返回能力不可用。每个已找回材料保留排名与 `delivery_status`，没有片段时可以沿结果中的阅读入口继续读取。

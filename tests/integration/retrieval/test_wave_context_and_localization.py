@@ -1,12 +1,16 @@
 """Protect parent-based context mass and snapshot-bound local passage selection."""
 
+import asyncio
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 import nous_native as native
+from nous.content.budget import SelectionBudget
 from nous.content.contracts import ArtifactRef, ContentSelection, SourceSelection
 from nous.content.text import TextView
 from nous.wave.configuration import WaveConfig
@@ -14,6 +18,8 @@ from nous.wave.contracts import (
     CandidateRef,
     DeliveryBudget,
     GroupDescriptor,
+    PortRef,
+    ProgramNode,
     RankEvidence,
     ScoreValue,
     SearchCoverage,
@@ -21,7 +27,7 @@ from nous.wave.contracts import (
     WaveSearchResult,
 )
 from nous.wave.delivery import LocatedGroup, LocatedResult, PassageProposal, select_passages
-from nous.wave.program import PortRef, ProgramNode, compile_program, native_segment, resolve_program
+from nous.wave.program import compile_program, resolve_program
 
 
 def test_context_mass_is_independent_of_parent_fragment_count() -> None:
@@ -159,6 +165,12 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
         )
         snapshot = engine.open(str(tmp_path / "snapshot"), json.dumps(identity))
         assert set(snapshot.capabilities) == {"text", "vectors"}
+        similarities = snapshot.passage_similarities(
+            np.array([0, 1, 2], dtype=np.uint64),
+            references=np.array([0], dtype=np.uint64),
+            aspects=np.array([[0.0, 1.0]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(similarities, [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
         fixed = native.CandidateSet(
             json.dumps(
                 {
@@ -175,8 +187,8 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
             for node in definition.nodes
         )
         program = compile_program("fixed-mixed", definition.model_copy(update={"nodes": nodes}))
-        _, plan = native_segment(program)
-        result = snapshot.execute_program(
+        plan = program.native_plan
+        result = snapshot.execute(
             name=program.name,
             program_json=json.dumps(plan),
             text="needle",
@@ -191,7 +203,7 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
                 }
             ),
         )
-        group = json.loads(result.result_json)["groups"][0]
+        group = json.loads(result)["groups"][0]
         assert group["rank_basis_row"] == 0
         assert group["passages"][0]["row"] == 2
         assert group["passages"][0]["scores"]["lexical"] > 0
@@ -283,7 +295,24 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
         hits=(),
         views={artifact.id: TextView.parse(ContentSelection(artifact=artifact), "abcdef")},
     )
-    tight = select_passages(result, 1, DeliveryBudget(amount=4, unit="characters"))
+
+    def choose(
+        value: LocatedResult, amount: int, unit: Literal["characters", "bytes"] = "characters"
+    ) -> LocatedResult:
+        return asyncio.run(
+            select_passages(
+                value,
+                1,
+                SelectionBudget(value.views, amount=amount, unit=unit),
+                aspect_similarities=None,
+                semantic_similarity=None,
+                aspect_weight=1.0,
+                redundancy_weight=1.0,
+                redundancy_threshold=0.92,
+            )
+        )
+
+    tight = choose(result, 4)
     assert [item.delivery_status for item in tight.groups] == ["selected", "budget_exhausted"]
     assert tight.groups[1].passages == ()
     assert tight.result.coverage.returned_groups == 2
@@ -301,20 +330,16 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
             }
         )
         model_ranked.append(item.model_copy(update={"passages": (passage,)}))
-    reranked = select_passages(
-        result.model_copy(update={"groups": tuple(model_ranked)}),
-        1,
-        DeliveryBudget(amount=4, unit="characters"),
-    )
+    reranked = choose(result.model_copy(update={"groups": tuple(model_ranked)}), 4)
     assert [item.delivery_status for item in reranked.groups] == ["budget_exhausted", "selected"]
-    enough = select_passages(result, 1, DeliveryBudget(amount=6, unit="characters"))
+    enough = choose(result, 6)
     assert [item.delivery_status for item in enough.groups] == ["selected", "selected"]
     assert enough.result.context_summary["delivered_characters"] == 6
     assert enough.groups[1].passages[0].support_context == ()
     overlapping = result.model_copy(
         update={"groups": (result.groups[0], group("overlap", 2, part(1, 5), 0.8))}
     )
-    deduplicated = select_passages(overlapping, 1, DeliveryBudget(amount=5, unit="characters"))
+    deduplicated = choose(overlapping, 5)
     assert [item.delivery_status for item in deduplicated.groups] == ["selected", "selected"]
     assert deduplicated.groups[1].passages[0].fragments == (part(4, 5),)
     assert deduplicated.groups[1].passages[0].scored_ranges == (part(1, 5),)
@@ -334,13 +359,127 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
             "views": {artifact.id: TextView.parse(ContentSelection(artifact=artifact), "甲乙")},
         }
     )
-    chars = select_passages(unicode_result, 1, DeliveryBudget(amount=2, unit="characters"))
-    byte_limited = select_passages(unicode_result, 1, DeliveryBudget(amount=3, unit="bytes"))
+    chars = choose(unicode_result, 2)
+    byte_limited = choose(unicode_result, 3, "bytes")
     assert [group.delivery_status for group in chars.groups] == ["selected", "selected"]
     assert [group.delivery_status for group in byte_limited.groups] == [
         "selected",
         "budget_exhausted",
     ]
+
+    costly = group("costly", 1, part(0, 4), 1.0)
+    concise = group("concise", 2, part(4, 6), 0.8)
+    costly = costly.model_copy(
+        update={"passages": (costly.passages[0].model_copy(update={"support_context": ()}),)}
+    )
+    concise = concise.model_copy(
+        update={"passages": (concise.passages[0].model_copy(update={"support_context": ()}),)}
+    )
+    chosen = choose(result.model_copy(update={"groups": (costly, concise)}), 4)
+    assert [item.delivery_status for item in chosen.groups] == ["budget_exhausted", "selected"]
+
+    candidates = tuple(
+        group(key, index + 1, part(index * 2, index * 2 + 2), relevance)
+        for index, (key, relevance) in enumerate((("a", 1.0), ("b", 0.9), ("c", 0.7)))
+    )
+    candidates = tuple(
+        item.model_copy(
+            update={"passages": (item.passages[0].model_copy(update={"support_context": ()}),)}
+        )
+        for item in candidates
+    )
+    aspect_scores = np.array([[0.9, 0.0], [0.85, 0.0], [0.0, 0.9]], dtype=np.float64)
+    pair_scores = np.array([[1.0, 0.99, 0.1], [0.99, 1.0, 0.1], [0.1, 0.1, 1.0]], dtype=np.float64)
+
+    async def similarity(index: int) -> npt.NDArray[np.float64]:
+        return pair_scores[index]
+
+    covered = asyncio.run(
+        select_passages(
+            result.model_copy(update={"groups": candidates}),
+            1,
+            SelectionBudget(result.views, amount=4, unit="characters"),
+            aspect_similarities=aspect_scores,
+            semantic_similarity=similarity,
+            aspect_weight=1.0,
+            redundancy_weight=1.0,
+            redundancy_threshold=0.92,
+        )
+    )
+    assert [item.delivery_status for item in covered.groups] == [
+        "selected",
+        "budget_exhausted",
+        "selected",
+    ]
+
+
+def test_token_budget_counts_union_with_declared_tokenizer(tmp_path: Path) -> None:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+
+    from nous.application.inputs import StreamInput
+    from nous.content.contracts import ExternalInput
+    from nous.runtime.bootstrap import initialize_instance, open_instance
+    from nous.wave.contracts import WaveBuild, WaveQuery
+    from nous.wave.operations import WAVE_BUILD, WAVE_QUERY
+
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "Hello": 1, "world": 2}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+    artifact = ArtifactRef(id="token-body", identifier="art(tokens)", instance_id="instance")
+    view = TextView.parse(ContentSelection(artifact=artifact), "Hello world")
+    counter = SelectionBudget({artifact.id: view}, amount=2, unit="tokens", tokenizer_path=path)
+    left = ContentSelection(artifact=artifact, selection=SourceSelection(start_byte=0, end_byte=5))
+    right = ContentSelection(
+        artifact=artifact, selection=SourceSelection(start_byte=6, end_byte=11)
+    )
+    assert counter.add((left, right)) == (left, right)
+    assert counter.used == 2
+    assert counter.add((ContentSelection(artifact=artifact),)) is not None
+    assert counter.used == 2
+
+    async def query() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance, environment={})
+        async with open_instance(
+            instance, environment={}, overrides={"wave.query.tokenizer_path": str(path)}
+        ) as runtime:
+            body = await runtime.artifacts.ingest("Hello world", media_type="text/plain")
+            manifest = {
+                "name": "tokens",
+                "documents": [{"key": "doc", "input": {"artifact": body.ref.identifier}}],
+                "candidates": [
+                    {
+                        "kind": "exact",
+                        "key": "whole",
+                        "document": "doc",
+                        "content": {"document": "doc"},
+                    }
+                ],
+            }
+            built = await runtime.app.call(
+                WAVE_BUILD,
+                WaveBuild(manifest=ExternalInput(key="manifest")),
+                inputs={
+                    "manifest": StreamInput((json.dumps(manifest).encode(),), name="manifest.json")
+                },
+            )
+            result = await runtime.app.call(
+                WAVE_QUERY,
+                WaveQuery(
+                    snapshot=built.snapshot.identifier,
+                    text="Hello",
+                    program="lexical",
+                    grouping="document",
+                    delivery_budget=DeliveryBudget(amount=2, unit="tokens"),
+                ),
+            )
+            assert result.groups[0].passages
+            assert result.context_summary["delivered_tokens"] == 2
+            assert result.program_run is not None
+            assert result.program_run.options["tokenizer_digest"] == counter.tokenizer_digest
+
+    asyncio.run(query())
 
 
 def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> None:
@@ -588,7 +727,7 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
                 node for node in fused_result.program_run.nodes if node.operator == "rank.fuse"
             )
             assert fusion.parameters["weights"] == [2.0]
-            assert fusion.inputs["rankings"] == [{"node": "rank", "port": "ranked"}]
+            assert fusion.inputs["rankings"] == (PortRef(node="rank", port="ranked"),)
             assert fused_result.groups[0].basis.ranking_score == pytest.approx(2.0 / 61.0)
             with pytest.raises(NousError) as missing_thinking:
                 await runtime.app.call(

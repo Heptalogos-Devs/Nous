@@ -69,7 +69,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeSnapshot>()?;
     m.add_class::<query::QueryObservation>()?;
     m.add_class::<query::CandidateSet>()?;
-    m.add_class::<query::NativeQueryResult>()?;
     m.add_function(wrap_pyfunction!(schemas_json, m)?)?;
     m.add_function(wrap_pyfunction!(defaults_json, m)?)?;
     m.add_function(wrap_pyfunction!(context::aggregate_context, m)?)?;

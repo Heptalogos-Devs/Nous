@@ -42,6 +42,7 @@ dependencies = [
   "uvicorn>=0.34,<1",
   "uniseg>=0.10.1,<1",
   "jsonpointer>=3.11,<4",
+  "tokenizers>=0.22,<1",
 ]
 
 [project.scripts]

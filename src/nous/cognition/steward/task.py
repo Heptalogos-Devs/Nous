@@ -49,9 +49,9 @@ class ArrangeReadingTask(TaskDefinition):
 
     def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
         brief = ReadingBrief.model_validate(value)
-        unknown = {key for item in brief.items for key in item.evidence_keys} - self._sources(
-            reading
-        ).keys()
+        requested = {item.key for item in brief.context_requests}
+        cited = {key for item in brief.items for key in item.evidence_keys}
+        unknown = (cited | requested) - self._sources(reading).keys()
         if unknown:
             raise ValueError(f"Unknown evidence keys: {sorted(unknown)}")
         return brief.model_dump(mode="json")

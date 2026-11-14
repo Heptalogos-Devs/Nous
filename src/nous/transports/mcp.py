@@ -28,7 +28,7 @@ from nous.presentation.evidence import format_material_read, format_retrieval
 from nous.presentation.json_selection import select_json, validate_json_pointers
 
 from .asgi import BearerAuth, serve_asgi
-from .shared import InlineInput, ServiceAddress, error_value, json_value
+from .shared import InlineInput, ServiceAddress, error_value
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 _AGENT_OPERATIONS = frozenset(
     {
         "retrieval.query",
+        "retrieval.save_evidence",
         "materials.read",
         "materials.follow",
         "steward.arrange",
@@ -236,7 +237,7 @@ def create_mcp_server(
                     )
 
                 value = await app.call_name(params.name, request, observer=observe, select=pointers)
-            structured = {"value": json_value(value)}
+            structured = {"value": select_json(value)}
             if pointers:
                 display = json.dumps(structured["value"], ensure_ascii=False, indent=2)
             elif display is None:

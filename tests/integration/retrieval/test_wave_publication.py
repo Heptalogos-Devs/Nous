@@ -10,39 +10,47 @@ import pytest
 import sqlalchemy as sa
 
 from nous.application.contracts import EventEnvelope, Notice, Progress, Saved
-from nous.cognition.contracts import RecordRevisionRef, RevisionSelection
+from nous.cognition.contracts import NamespaceSelector, RecordRevisionRef, RevisionSelection
 from nous.cognition.feedback import RECORD_QUERY_FEEDBACK, QueryFeedbackRequest
-from nous.cognition.material_contracts import MaterialSelection, ReadMaterial
+from nous.cognition.material_contracts import (
+    CognitiveMaterialView,
+    MaterialRef,
+    MaterialSelection,
+    ReadMaterial,
+)
 from nous.cognition.materials import READ_MATERIAL
 from nous.cognition.retrieval.contracts import (
     ContextSelection,
     DeliveryRequest,
     EvidenceDelivery,
+    QueryAtom,
     QueryAnchor,
     QueryRequest,
     RefreshRetrieval,
     SaveEvidence,
+    Selector,
 )
 from nous.cognition.retrieval.operations import QUERY, REFRESH, SAVE_EVIDENCE
-from nous.cognition.work.contracts import CreateWork, RecordWorkUse, WorkState, WorkView
+from nous.cognition.work.contracts import CreateWork, RecordWorkUse, WorkState
 from nous.cognition.work.operations import CREATE_WORK, RECORD_WORK_USE
-from nous.cognition.work.refs import WorkRevisionRef
 from nous.cognition.writing.contracts import AddNote, AfterWrite, ReadRecord
 from nous.cognition.writing.operations import ADD_NOTE, READ_RECORD
 from nous.common.errors import NousError
-from nous.content.contracts import InlineText, ReadSelections, ResultOutputRef
-from nous.content.operations import READ_SELECTIONS
+from nous.content.contracts import DeleteResult, InlineText, ReadSelections, ResultOutputRef
+from nous.content.operations import DELETE_RESULT, READ_SELECTIONS
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.wave import schema
 from nous.wave.contracts import (
     BuiltProduct,
     CorpusView,
     DeliveryBudget,
+    PortRef,
+    ProgramNode,
     ResolvedBuildProfile,
     WaveCleanup,
 )
 from nous.wave.operations import WAVE_CLEANUP
-from nous.wave.program import PortRef, ProgramNode, default_programs
+from nous.wave.program import default_programs
 
 
 def test_cognitive_passages_feedback_and_safe_cleanup(tmp_path: Path) -> None:
@@ -68,6 +76,7 @@ def test_cognitive_passages_feedback_and_safe_cleanup(tmp_path: Path) -> None:
             group = title.evidence.materials[0]
             assert group.material.ref == record.commit.revision_ref
             assert group.basis is not None
+            assert title.evidence.snapshot is not None
             assert group.basis.candidate.snapshot == title.evidence.snapshot.identifier
 
             found = await runtime.app.call(QUERY, QueryRequest(text="embervault", save=True))
@@ -105,6 +114,7 @@ def test_cognitive_passages_feedback_and_safe_cleanup(tmp_path: Path) -> None:
                 selections=passage.selections,
             )
             old_ref = found.evidence.snapshot
+            assert old_ref is not None
 
             await runtime.app.call(
                 ADD_NOTE,
@@ -114,6 +124,7 @@ def test_cognitive_passages_feedback_and_safe_cleanup(tmp_path: Path) -> None:
             )
             second = await runtime.app.call(QUERY, QueryRequest(text="independent"))
             second_ref = second.evidence.snapshot
+            assert second_ref is not None
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
@@ -130,6 +141,7 @@ def test_cognitive_passages_feedback_and_safe_cleanup(tmp_path: Path) -> None:
                 ),
             )
             current = await runtime.app.call(QUERY, QueryRequest(text="third"))
+            assert current.evidence.snapshot is not None
             async with runtime.wave.snapshots.borrow(second_ref):
                 await runtime.wave.cleanup()
                 assert (await runtime.wave.describe(second_ref)).ref == second_ref
@@ -159,7 +171,7 @@ def test_save_completed_delivery_after_snapshot_cleanup(tmp_path: Path) -> None:
         await initialize_instance(instance, environment={})
         async with open_instance(instance, environment={}) as runtime:
             policy = AfterWrite(annotation="skip")
-            await runtime.app.call(
+            record = await runtime.app.call(
                 ADD_NOTE,
                 AddNote(
                     body=InlineText(
@@ -169,8 +181,62 @@ def test_save_completed_delivery_after_snapshot_cleanup(tmp_path: Path) -> None:
                     after=policy,
                 ),
             )
-            found = await runtime.app.call(QUERY, QueryRequest(text="resource close"))
+            async with runtime.database.read() as tx:
+                before = await tx.connection.scalar(
+                    sa.select(sa.func.count()).select_from(schema.snapshots)
+                )
+            direct = await runtime.app.call(
+                QUERY,
+                QueryRequest(
+                    text=f'@ref("{record.commit.revision_ref.identifier}")',
+                    delivery=DeliveryRequest(budget=DeliveryBudget(amount=8, unit="bytes")),
+                    save=True,
+                ),
+            )
+            assert direct.evidence.snapshot is None and direct.evidence_ref is not None
+            assert not direct.evidence.passages
+            assert direct.evidence.materials[0].delivery_status == "budget_exhausted"
+            assert direct.evidence.continuation[0].relation == "read"
+            assert direct.evidence.delivery_usage is not None
+            assert direct.evidence.delivery_usage.unit == "bytes"
+            assert direct.evidence.delivery_usage.amount == 0
+            async with runtime.database.read() as tx:
+                after = await tx.connection.scalar(
+                    sa.select(sa.func.count()).select_from(schema.snapshots)
+                )
+            assert after == before
+            direct_feedback = await runtime.app.call(
+                RECORD_QUERY_FEEDBACK,
+                QueryFeedbackRequest(evidence=direct.evidence_ref, category="retrieval"),
+            )
+            assert direct_feedback.target.query is not None
+            assert not direct_feedback.target.query.snapshot_available
+            with pytest.raises(NousError) as retained:
+                await runtime.app.call(DELETE_RESULT, DeleteResult(ref=direct.evidence_ref))
+            assert retained.value.code == "content.result_in_use"
+            with pytest.raises(NousError) as anchored_direct:
+                await runtime.app.call(
+                    QUERY,
+                    QueryRequest(
+                        text=f'@ref("{record.commit.revision_ref.identifier}")',
+                        anchor=QueryAnchor(view="anchored"),
+                    ),
+                )
+            assert anchored_direct.value.code == "input.unsupported_query_control"
+            found = await runtime.app.call(
+                QUERY,
+                QueryRequest(
+                    text="resource close",
+                    expression=QueryAtom(
+                        text="",
+                        selectors=(
+                            Selector(kind="ref", value=record.commit.revision_ref.identifier),
+                        ),
+                    ),
+                ),
+            )
             assert found.evidence_ref is None and found.evidence.passages
+            assert found.evidence.snapshot is not None
             passage = found.evidence.passages[0]
             assert isinstance(passage.material, RecordRevisionRef)
             wrong = passage.fragments[0].model_copy(update={"text": "invented"})
@@ -222,20 +288,6 @@ def test_save_completed_delivery_after_snapshot_cleanup(tmp_path: Path) -> None:
                 ),
             )
             assert use.evidence == saved and use.selections[0].material == passage.material
-            direct = await runtime.app.call(
-                QUERY,
-                QueryRequest(
-                    text=f'@ref("{passage.material.identifier}")',
-                    delivery=DeliveryRequest(budget=DeliveryBudget(amount=8, unit="bytes")),
-                ),
-            )
-            delivered = "".join(
-                fragment.text for item in direct.evidence.passages for fragment in item.fragments
-            )
-            assert delivered == "资源"
-            assert direct.evidence.delivery_usage is not None
-            assert direct.evidence.delivery_usage.unit == "bytes"
-            assert direct.evidence.delivery_usage.amount == len(delivered.encode("utf-8")) == 6
         async with open_instance(instance, environment={}) as runtime:
             again = await runtime.app.call(
                 READ_MATERIAL, ReadMaterial(delivery=saved, key=passage.key)
@@ -260,6 +312,7 @@ def test_query_retains_snapshot_while_preparing_work_context(tmp_path: Path) -> 
                 ),
             )
             initial = await runtime.app.call(QUERY, QueryRequest(text="resources"))
+            assert initial.evidence.snapshot is not None
             work = await runtime.app.call(
                 CREATE_WORK,
                 CreateWork(
@@ -267,14 +320,17 @@ def test_query_retains_snapshot_while_preparing_work_context(tmp_path: Path) -> 
                 ),
             )
             entered, release = asyncio.Event(), asyncio.Event()
-            original = runtime.work.read_revision
+            original = runtime.materials.resolve
 
-            async def delayed(ref: WorkRevisionRef) -> WorkView:
-                entered.set()
-                await release.wait()
-                return await original(ref)
+            async def delayed(
+                ref: MaterialRef, *, namespace: NamespaceSelector = None
+            ) -> CognitiveMaterialView:
+                if ref == work.revision_ref:
+                    entered.set()
+                    await release.wait()
+                return await original(ref, namespace=namespace)
 
-            with patch.object(runtime.work, "read_revision", new=delayed):
+            with patch.object(runtime.materials, "resolve", new=delayed):
                 pending = asyncio.create_task(
                     runtime.app.call(
                         QUERY,
@@ -302,6 +358,7 @@ def test_query_retains_snapshot_while_preparing_work_context(tmp_path: Path) -> 
                 finally:
                     release.set()
                 saved = await pending
+            assert saved.evidence.snapshot is not None
             assert saved.evidence.snapshot == initial.evidence.snapshot
             assert saved.evidence_ref is not None and saved.evidence.passages
             removed = await runtime.app.call(WAVE_CLEANUP, WaveCleanup())
@@ -323,10 +380,28 @@ def test_query_retains_snapshot_while_preparing_work_context(tmp_path: Path) -> 
                 ADD_NOTE,
                 AddNote(body=InlineText(text="Another update."), remember=True, after=policy),
             )
-            await runtime.app.call(QUERY, QueryRequest(text="update"))
+            latest = await runtime.app.call(QUERY, QueryRequest(text="update", save=True))
             removed = await runtime.app.call(WAVE_CLEANUP, WaveCleanup())
             assert anchored.evidence_ref is not None
+            assert anchored.evidence.snapshot is not None
             assert anchored.evidence.snapshot.identifier not in removed.snapshots
+            assert latest.evidence_ref is not None
+            await runtime.app.call(
+                CREATE_WORK,
+                CreateWork(
+                    state=WorkState(
+                        title="Protected result",
+                        objective="Keep the evidence reference",
+                        related=(ResultOutputRef(result=latest.evidence_ref, output="evidence"),),
+                    )
+                ),
+            )
+            with pytest.raises(NousError) as in_use:
+                await runtime.app.call(DELETE_RESULT, DeleteResult(ref=latest.evidence_ref))
+            assert in_use.value.code == "content.result_in_use"
+            await runtime.app.call(DELETE_RESULT, DeleteResult(ref=anchored.evidence_ref))
+            removed = await runtime.app.call(WAVE_CLEANUP, WaveCleanup())
+            assert anchored.evidence.snapshot.identifier in removed.snapshots
 
     asyncio.run(scenario())
 

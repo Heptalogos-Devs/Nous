@@ -2,41 +2,34 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, TypeAdapter
 
 from nous.application.contracts import CallContext, EventDeliveryError, Notice, Progress
-from nous.cognition.concept_contracts import ConceptRef
 from nous.cognition.contracts import NamespaceRef
-from nous.cognition.material_contracts import (
-    MaterialRef,
-    MaterialSelection,
-)
+from nous.cognition.material_contracts import MaterialSelection
 from nous.cognition.steward.contracts import ArrangeReading
 from nous.common.errors import NousError
-from nous.common.operations import OperationIssue, report_outcome
+from nous.common.operations import OperationIssue, exception_context, report_outcome
 from nous.content.contracts import (
-    ContentSelection,
     ResultOutputRef,
-    SourceSelection,
-    is_text_media_type,
+    ResultRef,
 )
 from nous.wave.contracts import (
-    ContextFragment,
     DeliveredText,
     DeliveryStatus,
-    SearchCoverage,
+    ProgramRunFacts,
     SelectedContext,
-    SnapshotDescriptor,
     WaveQuery,
     WaveSearchResult,
 )
+from nous.wave.serialization import content_signature
 
 from .binding import QueryBinder, merge_controls
 from .context import ContextPreparer
 from .contracts import (
-    BoundQueryBranch,
     BoundQueryControls,
     CognitiveGroupContext,
     ContinuationLink,
@@ -45,7 +38,6 @@ from .contracts import (
     PassageEvidence,
     QueryAtom,
     QueryControls,
-    QueryExpression,
     QueryIntent,
     QueryRequest,
     RetrievalOutcome,
@@ -79,9 +71,7 @@ class QueryExecutor:
         request: QueryRequest,
         controls: QueryControls,
         namespace: NamespaceRef,
-        snapshot: SnapshotDescriptor,
-        call: CallContext,
-    ) -> tuple[EvidenceDelivery, list[PassageEvidence]]:
+    ) -> EvidenceDelivery:
         if (
             controls.times
             or controls.time_clauses
@@ -116,68 +106,58 @@ class QueryExecutor:
                 )
             ]
         limited = views[: controls.limit] if controls.limit else views
-        budget = request.delivery.budget
-        if budget and budget.unit == "tokens":
-            raise NousError(
-                "wave.capability_unavailable", "A tokenizer is required for a token delivery budget"
+        budget = request.delivery.budget or self.owner.wave.delivery.default_budget()
+        bodies = tuple(view.body for view in limited if view.body is not None)
+        text_artifacts = {
+            body.artifact.id
+            for body, is_text in zip(
+                bodies, await self.owner.artifacts.text_capabilities(bodies), strict=True
             )
-        remaining = budget.amount if budget else None
+            if is_text
+        }
+        counter = await self.owner.wave.delivery.selection_budget(
+            budget,
+            tuple(
+                view.body
+                for view in limited
+                if view.body is not None and view.body.artifact.id in text_artifacts
+            ),
+        )
         materials: list[RetrievedMaterial] = []
         passages: list[PassageEvidence] = []
         continuation: list[ContinuationLink] = []
-        body_truncated = False
         for index, view in enumerate(limited, 1):
             keys: tuple[str, ...] = ()
             status: DeliveryStatus = "no_candidates"
-            if view.body is not None and remaining == 0:
-                body_truncated = True
-                status = "budget_exhausted"
-            if view.body is not None and (remaining is None or remaining > 0):
-                artifact = await self.owner.artifacts.get(view.body.artifact)
-                if is_text_media_type(artifact.media_type):
-                    part = (await self.owner.artifacts.read_selections((view.body,)))[0]
-                    if remaining is None:
-                        text = part.text
-                    elif budget is not None and budget.unit == "bytes":
-                        text = part.text.encode("utf-8")[:remaining].decode(
-                            "utf-8", errors="ignore"
-                        )
-                    else:
-                        text = part.text[:remaining]
-                    if len(text) < len(part.text):
-                        body_truncated = True
-                        if text:
-                            continuation.append(
-                                ContinuationLink(target=view.ref, relation="read_remaining")
-                            )
-                        else:
-                            status = "budget_exhausted"
-                    if text:
-                        key = f"E{len(passages) + 1}"
-                        content = ContentSelection(
-                            artifact=part.content.artifact,
-                            selection=SourceSelection(
-                                start_byte=part.start_byte,
-                                end_byte=part.start_byte + len(text.encode("utf-8")),
+            if view.body is not None and view.body.artifact.id in text_artifacts:
+                selected, truncated = await self.owner.execution.blocking(
+                    counter.fit_prefix, view.body
+                )
+                if selected:
+                    content = await self.owner.artifacts.read_selections(selected)
+                    key = f"E{len(passages) + 1}"
+                    passages.append(
+                        PassageEvidence(
+                            key=key,
+                            material=view.ref,
+                            fragments=tuple(
+                                DeliveredText(content=part.content, text=part.text)
+                                for part in content
                             ),
+                            scored_ranges=tuple(part.content for part in content),
+                            selection_reason="explicit_reference",
                         )
-                        passages.append(
-                            PassageEvidence(
-                                key=key,
-                                material=view.ref,
-                                fragments=(DeliveredText(content=content, text=text),),
-                                scored_ranges=(content,),
-                                selection_reason="explicit_reference",
-                            )
+                    )
+                    keys = (key,)
+                    status = "selected"
+                    if truncated:
+                        continuation.append(
+                            ContinuationLink(target=view.ref, relation="read_remaining")
                         )
-                        keys = (key,)
-                        status = "selected"
-                        if remaining is not None:
-                            remaining -= (
-                                len(text.encode("utf-8"))
-                                if budget is not None and budget.unit == "bytes"
-                                else len(text)
-                            )
+                elif truncated:
+                    status = "budget_exhausted"
+                else:
+                    status = "overlap"
             materials.append(
                 RetrievedMaterial(
                     material=view, rank=index, passage_keys=keys, delivery_status=status
@@ -190,100 +170,46 @@ class QueryExecutor:
                     ContinuationLink(target=item.target, relation=item.kind)
                     for item in view.relations
                 )
-        count = len(materials)
-        coverage = SearchCoverage(
-            requested_groups=controls.limit,
-            returned_groups=count,
-            eligible_groups_known=len(views),
-            allowed_groups=len(views),
-            recall_exhausted=True,
-            truncated=count < len(views) or body_truncated,
-            reason="delivery_budget" if body_truncated else "explicit_reference",
-            lanes={},
-            lane_limit_unit="groups",
-            group_scan_limit=len(views),
-            passages_per_group=1,
-            candidates=0,
-            total_candidates=0,
-            max_union_candidates=0,
-            top_k=controls.limit or max(count, 1),
-            offered_candidates=0,
-            ranked_candidates=0,
-            unique_candidates=0,
-            candidate_limit_reached=False,
-            top_k_truncated=count < len(views),
-        )
         intent = QueryIntent(
             original_text=request.text,
             aspects=request.aspects,
             constraints=BoundQueryControls(controls=controls, namespace=namespace),
             bound_materials=refs,
         )
+        facts: dict[str, JsonValue] = {
+            "name": "direct",
+            "definition_signature": content_signature({"name": "direct"}),
+            "requested_program": None,
+            "selection": "explicit",
+            "requirements": [],
+            "nodes": [],
+            "outputs": {},
+            "options": {},
+            "budget": budget.model_dump(mode="json") if budget else None,
+            "space_id": None,
+            "space_signature": None,
+            "space_definition": None,
+        }
+        program_run = ProgramRunFacts.model_validate(
+            {**facts, "signature": content_signature(facts)}
+        )
+        program_run = self.owner.wave.delivery.budget_facts(program_run, counter)
         return EvidenceDelivery(
             intent=intent,
             formed_at=self.owner.artifacts.clock.utc_now(),
-            snapshot=snapshot.ref,
-            captured_generation=snapshot.captured_generation,
+            snapshot=None,
+            captured_generation=None,
             materials=tuple(materials),
             passages=tuple(passages),
-            coverage=coverage,
             continuation=tuple(continuation),
             program="direct",
+            program_run=program_run,
             budget=budget,
             delivery_usage=DeliveryUsage(
-                unit="bytes" if budget and budget.unit == "bytes" else "characters",
-                amount=sum(
-                    len(fragment.text.encode("utf-8"))
-                    if budget and budget.unit == "bytes"
-                    else len(fragment.text)
-                    for part in passages
-                    for fragment in part.fragments
-                ),
+                unit=budget.unit if budget else "characters",
+                amount=counter.used,
             ),
-        ), passages
-
-    async def _run_branch(
-        self,
-        expression: QueryExpression,
-        inherited: QueryControls,
-        namespace: NamespaceRef,
-        snapshot: str,
-        context: tuple[ContextFragment, ...],
-        request: QueryRequest,
-        call: CallContext,
-    ) -> tuple[
-        WaveSearchResult,
-        tuple[MaterialRef, ...],
-        tuple[ConceptRef, ...],
-        tuple[BoundQueryBranch, ...],
-    ]:
-        controls = merge_controls(inherited, expression.controls)
-        bound, materials, concepts, branches = await self.binder.bind_expression(
-            expression, inherited, namespace, snapshot, call, root=True
         )
-        budget = request.delivery.budget
-        result = await self.owner.wave.query(
-            WaveQuery(
-                snapshot=snapshot,
-                text=request.text
-                if request.expression is not None and request.text.strip()
-                else self.binder.expression_text(expression),
-                expression=bound,
-                program=None,
-                grouping="document",
-                top_k=controls.limit,
-                passages_per_group=call.settings.values.cognition.search.passages_per_record,
-                include_trace=controls.diagnostics,
-                context=context,
-                prefer=controls.prefer,
-                avoid=controls.avoid,
-                sort=controls.sort,
-                explore=controls.explore,
-                delivery_budget=budget,
-            ),
-            call=call,
-        )
-        return result, materials, concepts, branches
 
     async def _thinking_links(self, result: WaveSearchResult) -> tuple[ContinuationLink, ...]:
         if not result.thinking or not result.thinking.get("stages"):
@@ -338,15 +264,38 @@ class QueryExecutor:
         owner = self.owner
         expression = request.expression or parse_nousql(request.text)
         root_controls = merge_controls(request.controls, expression.controls)
+        if isinstance(expression, QueryAtom) and expression.selectors:
+            root_controls = root_controls.model_copy(
+                update={
+                    "selectors": tuple(
+                        dict.fromkeys((*root_controls.selectors, *expression.selectors))
+                    )
+                }
+            )
         steward_policy = request.delivery.steward or call.settings.values.cognition.search.steward
         await call.events.emit(Progress(stage="retrieval", completed=0, total=1))
         target = None
         anchor = request.anchor
+        direct = (
+            isinstance(expression, QueryAtom)
+            and not expression.text.strip()
+            and not (request.expression is not None and request.text.strip())
+            and bool(root_controls.selectors)
+            and all(item.kind == "ref" for item in root_controls.selectors)
+        )
+        if direct and anchor and anchor.view == "anchored":
+            raise NousError(
+                "input.unsupported_query_control",
+                "An explicit material reference cannot use an anchored search view",
+            )
+        prior_ref = anchor.prior_delivery if anchor and not direct else None
+        if isinstance(prior_ref, str):
+            prior_ref = (await owner.results.get(prior_ref)).ref
         if anchor and anchor.view == "anchored":
             snapshot_ref = anchor.snapshot
-            if snapshot_ref is None and anchor.prior_delivery is not None:
+            if snapshot_ref is None and prior_ref is not None:
                 artifact = await owner.results.resolve_output(
-                    ResultOutputRef(result=anchor.prior_delivery, output="evidence")
+                    ResultOutputRef(result=prior_ref, output="evidence")
                 )
                 prior = EvidenceDelivery.model_validate_json(
                     await owner.artifacts.read_text(artifact)
@@ -367,74 +316,95 @@ class QueryExecutor:
             )
         else:
             snapshot = None
-        selected = await owner.resolve_options(
-            request.namespace,
-            None,
-            root_controls.include_review,
-            root_controls.include_exploration,
-            target=target,
-        )
-        if snapshot is None:
-            ns, snapshot, _ = await owner.current_view(selected)
-        else:
+        if direct:
+            namespace = await owner.scope.resolve_for(request.namespace)
             async with owner.database.read() as tx:
-                ns = await owner.scope.get_in(tx, selected.namespace)
-            owner.check_owner(snapshot, ns)
-        async with owner.wave.snapshots.hold_reference(snapshot.ref):
-            retrieval_issues: tuple[OperationIssue, ...] = ()
-            context_selection = request.context
-            if anchor and anchor.prior_delivery is not None:
-                context_selection = context_selection.model_copy(
-                    update={
-                        "prior_deliveries": (
-                            *context_selection.prior_deliveries,
-                            anchor.prior_delivery,
-                        )
-                    }
-                )
-            fragments, used_by_key = await self.context.prepare(
-                context_selection, request.text, ns.ref, anchor.selections if anchor else (), call
+                ns = await owner.scope.get_in(tx, namespace.id)
+        else:
+            selected = await owner.resolve_options(
+                request.namespace,
+                None,
+                root_controls.include_review,
+                root_controls.include_exploration,
+                target=target,
             )
-            direct = (
-                isinstance(expression, QueryAtom)
-                and not expression.text.strip()
-                and bool(root_controls.selectors)
-                and all(item.kind == "ref" for item in root_controls.selectors)
-            )
-            if direct:
-                evidence, passages = await self._direct(
-                    request, root_controls, ns.ref, snapshot, call
-                )
+            if snapshot is None:
+                ns, snapshot, _ = await owner.current_view(selected)
             else:
-                result, bound_materials, bound_concepts, bound_branches = await self._run_branch(
-                    expression,
-                    request.controls,
-                    ns.ref,
-                    snapshot.ref.identifier,
-                    fragments,
-                    request,
-                    call,
+                async with owner.database.read() as tx:
+                    ns = await owner.scope.get_in(tx, selected.namespace)
+                owner.check_owner(snapshot, ns)
+        async with AsyncExitStack() as stack:
+            if snapshot is not None:
+                await stack.enter_async_context(owner.wave.snapshots.hold_reference(snapshot.ref))
+            retrieval_issues: tuple[OperationIssue, ...] = ()
+            if direct:
+                evidence = await self._direct(request, root_controls, ns.ref)
+            else:
+                assert snapshot is not None
+                context_selection = request.context
+                if prior_ref is not None:
+                    context_selection = context_selection.model_copy(
+                        update={
+                            "prior_deliveries": (
+                                *context_selection.prior_deliveries,
+                                prior_ref,
+                            )
+                        }
+                    )
+                fragments, sources_by_key = await self.context.prepare(
+                    context_selection, ns.ref, anchor.selections if anchor else (), call
+                )
+                (
+                    bound,
+                    bound_materials,
+                    bound_concepts,
+                    bound_branches,
+                ) = await self.binder.bind_expression(
+                    expression, request.controls, ns.ref, snapshot.ref.identifier, call, root=True
+                )
+                result = await owner.wave.query(
+                    WaveQuery(
+                        snapshot=snapshot.ref.identifier,
+                        text=request.text
+                        if request.expression is not None and request.text.strip()
+                        else self.binder.expression_text(expression),
+                        expression=bound,
+                        aspects=request.aspects,
+                        grouping="document",
+                        top_k=root_controls.limit,
+                        passages_per_group=call.settings.values.cognition.search.passages_per_record,
+                        include_trace=root_controls.diagnostics,
+                        context=fragments,
+                        prefer=root_controls.prefer,
+                        avoid=root_controls.avoid,
+                        sort=root_controls.sort,
+                        explore=root_controls.explore,
+                        delivery_budget=request.delivery.budget,
+                    ),
+                    call=call,
                 )
                 selected_context = TypeAdapter(tuple[SelectedContext, ...]).validate_python(
                     result.context_summary.get("selected_context", [])
                 )
                 used: list[UsedContext] = []
                 for item in selected_context:
-                    value = used_by_key.get(item.key)
-                    if value is None:
-                        value = UsedContext(
+                    source = sources_by_key.get(item.key)
+                    if source is None and item.content is not None:
+                        source = MaterialSelection(
+                            material=item.content.artifact, selections=(item.content,)
+                        )
+                    used.append(
+                        UsedContext(
                             key=item.key,
-                            source=MaterialSelection(
-                                material=item.content.artifact, selections=(item.content,)
-                            )
-                            if item.content
-                            else None,
+                            source=source,
                             text=item.text,
                             role=item.role,
                             stage=item.stage,
                             parent_key=item.parent_key or item.key,
+                            contribution=item.contribution,
                         )
-                    used.append(value.model_copy(update={"contribution": item.contribution}))
+                    )
                 intent = QueryIntent(
                     original_text=request.text,
                     aspects=request.aspects,
@@ -524,11 +494,7 @@ class QueryExecutor:
                 effective_budget = (
                     result.program_run.budget if result.program_run else request.delivery.budget
                 )
-                usage_unit = (
-                    "bytes"
-                    if effective_budget and effective_budget.unit == "bytes"
-                    else "characters"
-                )
+                usage_unit = effective_budget.unit if effective_budget else "characters"
                 usage_amount = result.context_summary.get(f"delivered_{usage_unit}")
                 evidence = EvidenceDelivery(
                     intent=intent,
@@ -570,6 +536,7 @@ class QueryExecutor:
                     await call.events.emit(Notice(issue=issue))
             if steward_policy in {"optional", "required"}:
                 assert evidence_ref is not None
+                latest_evidence = evidence_ref
                 try:
                     arranged = await owner.steward.arrange(
                         ArrangeReading(
@@ -580,6 +547,7 @@ class QueryExecutor:
                         ),
                         call,
                     )
+                    latest_evidence = arranged.evidence_ref
                     reading, reading_ref = arranged.brief, arranged.reading_ref
                     issues.extend(arranged.issues)
                 except EventDeliveryError:
@@ -587,15 +555,26 @@ class QueryExecutor:
                 except Exception as error:
                     if steward_policy == "required":
                         raise
+                    completed = exception_context(error).get("evidence_ref")
+                    if completed is not None:
+                        latest_evidence = ResultRef.model_validate(completed)
                     issue = OperationIssue(
                         stage="steward",
                         code=error.code if isinstance(error, NousError) else "steward.failed",
                         message=str(error),
-                        completed_refs=(evidence_ref.model_dump(mode="json"),),
+                        completed_refs=(latest_evidence.model_dump(mode="json"),),
                     )
                     issues.append(issue)
-                    report_outcome("partial", issues=issues, completed_refs=(evidence_ref,))
+                    report_outcome("partial", issues=issues, completed_refs=(latest_evidence,))
                     await call.events.emit(Notice(issue=issue))
+                if latest_evidence != evidence_ref:
+                    artifact = await owner.results.resolve_output(
+                        ResultOutputRef(result=latest_evidence, output="evidence")
+                    )
+                    evidence = EvidenceDelivery.model_validate_json(
+                        await owner.artifacts.read_text(artifact)
+                    )
+                    evidence_ref = latest_evidence
             return RetrievalOutcome(
                 evidence=evidence,
                 evidence_ref=evidence_ref,

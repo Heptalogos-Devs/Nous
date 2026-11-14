@@ -1,6 +1,6 @@
 # Nous 设计与开发文档
 
-当前能力见[当前工作](CURRENT.md)，本轮实施安排见[可编排检索与认知使用](plans/composable-retrieval.md)。文稿与运行期维护的使用见[操作说明](development/durable-cognition-walkthrough.md)。
+当前能力见[当前工作](CURRENT.md)，所有权见[架构](ARCHITECTURE.md)。文稿与运行期维护的使用见[操作说明](development/durable-cognition-walkthrough.md)。
 
 ## 全局入口
 

@@ -98,14 +98,14 @@ class CognitiveRetrieval:
         work: WorkOperations,
         steward: StewardOperations,
         time: TimeService,
+        *,
+        evidence_adoption: EvidenceAdoption,
     ):
         self.database, self.execution, self.scope = database, execution, scope
         self.artifacts, self.results, self.wave = artifacts, results, wave
         self.annotations = annotations
         self.materials, self.work, self.steward = materials, work, steward
-        self.evidence_adoption = EvidenceAdoption(
-            database, artifacts, results, materials, scope, wave
-        )
+        self.evidence_adoption = evidence_adoption
         self.time = time
         self.capture = CorpusCapture(scope, materials)
         self.projection = ProjectionBuilder(results, materials)
@@ -389,8 +389,10 @@ class CognitiveRetrieval:
         return await QueryExecutor(self).run(request, call)
 
     async def save_evidence(self, request: SaveEvidence, call: CallContext) -> ResultRef:
+        evidence = request.evidence.model_copy(deep=True)
+        await self.evidence_adoption.validate(evidence)
         return await self.evidence_adoption.save(
-            request.evidence, call, retain_snapshot=request.retain_snapshot
+            evidence, call, retain_snapshot=request.retain_snapshot
         )
 
     async def status(self) -> dict[str, object]:

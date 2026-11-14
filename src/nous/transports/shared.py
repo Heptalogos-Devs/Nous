@@ -60,13 +60,9 @@ class CallRequest(BaseModel):
     select: tuple[str, ...] = ()
 
 
-def json_value(value: object) -> JsonValue:
-    return select_json(value)
-
-
 def json_bytes(value: object) -> bytes:
     return json.dumps(
-        json_value(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        select_json(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
 
 
@@ -124,7 +120,7 @@ async def call_events(
                 timeout=timeout if timeout is not None else payload.timeout,
                 select=payload.select,
             )
-            await queue.put({"kind": "result", "value": json_value(value)})
+            await queue.put({"kind": "result", "value": select_json(value)})
         except Exception as error:
             await queue.put({"kind": "error", "error": error_value(error)})
 

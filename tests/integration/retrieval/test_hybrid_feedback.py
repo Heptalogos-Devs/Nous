@@ -23,11 +23,22 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
         QueryFeedbackRequest,
         ReadFeedback,
     )
-    from nous.cognition.retrieval.contracts import ContextSelection, QueryControls, QueryRequest
+    from nous.cognition.retrieval.contracts import (
+        ContextSelection,
+        EvidenceDelivery,
+        QueryControls,
+        QueryRequest,
+    )
     from nous.cognition.retrieval.operations import QUERY
     from nous.cognition.writing.contracts import AddNote, ReadRecord
     from nous.cognition.writing.operations import ADD_NOTE, READ_RECORD
-    from nous.content.contracts import ContentSelection, ExternalInput, InlineText, SourceSelection
+    from nous.content.contracts import (
+        ContentSelection,
+        ExternalInput,
+        InlineText,
+        ResultOutputRef,
+        SourceSelection,
+    )
     from nous.runtime.bootstrap import open_instance
     from nous.temporal.values import Instant, Interval, Known, TimePoint, parse_explicit_time
     from nous.wave.contracts import (
@@ -205,6 +216,13 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                     READ_FEEDBACK, ReadFeedback(ref=feedback.identifier)
                 )
                 assert stored.target.query is not None
-                assert stored.target.query.intent.context == answer.evidence.intent.context
+                assert stored.target.query.evidence == answer.evidence_ref
+                artifact = await reopened.results.resolve_output(
+                    ResultOutputRef(result=answer.evidence_ref, output="evidence")
+                )
+                delivery = EvidenceDelivery.model_validate_json(
+                    await reopened.artifacts.read_text(artifact)
+                )
+                assert delivery.intent.context == answer.evidence.intent.context
 
         asyncio.run(scenario())

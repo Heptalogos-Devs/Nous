@@ -22,6 +22,6 @@ feedback.read/list/resolve(...) -> 已有意见及处理结果
 
 ## 查看与诊断
 
-反馈列表可以按目标/类别读取。对查询反馈，调用者提供已保存的证据引用与可选 E 键；反馈保存实际问题、参与上下文、快照引用和所选片段的排名依据。快照仍存在时随反馈固定；已经清理时 `snapshot_available` 为 false，所保存的证据和排名依据仍可读取。CLI 使用 `--evidence "res(...)" --passage E1`；见[查询情境](query-use-context.md)。
+反馈列表可以按目标/类别读取。对查询反馈，调用者提供已保存的证据引用与可选 E 键；问题、参与上下文和排名依据从该证据读取。快照仍存在时随反馈固定；已经清理或交付未使用快照时，`snapshot_available` 为 false。CLI 使用 `--evidence "res(...)" --passage E1`；见[查询情境](query-use-context.md)。
 
 完成输出表达“已记录反馈”或“已更正为 revision N”，附可读短引用和检索是否待更新。来源、操作关联与失败原因经共同错误与日志能力返回。

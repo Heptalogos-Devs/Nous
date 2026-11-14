@@ -194,10 +194,3 @@ pub struct QueryObservation {
     pub records_enabled: bool,
     pub diagnostics_json: String,
 }
-#[derive(Clone)]
-pub struct NativeQueryResult {
-    pub rows: Vec<u64>,
-    pub quality: Vec<f64>,
-    pub ranking: Vec<f64>,
-    pub result_json: String,
-}

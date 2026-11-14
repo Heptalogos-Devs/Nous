@@ -39,6 +39,7 @@ from nous.models.generation import GenerationOperations, GenerationRequest
 
 from ..contracts import NamespaceRef, RecordRevisionRef, RecordView, SourceBinding
 from ..material_contracts import MaterialSelection, MaterialSource
+from ..retrieval.contracts import EvidenceDelivery
 from ..sources import PreparedSources
 from ..work.refs import WorkRevisionRef
 from .contracts import (
@@ -205,10 +206,42 @@ class WritingOperations:
         self, base: RecordRevisionRef, refs: Sequence[str], mappings: Mapping[str, str]
     ) -> str:
         views = await self.records.feedback.select_for_edit(refs, base, mappings=mappings)
-        return "\n\n".join(
-            f"[{item.identifier}] {item.category}: {item.value or ''}\n{item.comment or ''}"
-            for item in views
-        )
+        deliveries: dict[ResultRef, EvidenceDelivery] = {}
+        output: list[str] = []
+        for item in views:
+            parts = [f"[{item.identifier}] {item.category}: {item.value or ''}", item.comment or ""]
+            query = item.target.query
+            if query is not None and query.evidence is not None:
+                if query.evidence not in deliveries:
+                    artifact = await self.results.resolve_output(
+                        ResultOutputRef(result=query.evidence, output="evidence")
+                    )
+                    deliveries[query.evidence] = EvidenceDelivery.model_validate_json(
+                        await self.results.artifacts.read_text(artifact)
+                    )
+                delivery = deliveries[query.evidence]
+                parts.append(f"Query: {delivery.intent.original_text}")
+                if query.passage_key is not None:
+                    passage = next(
+                        (value for value in delivery.passages if value.key == query.passage_key),
+                        None,
+                    )
+                    if passage is None:
+                        raise NousError(
+                            "cognition.selection_mismatch", "Feedback evidence key is unavailable"
+                        )
+                    content = await self.results.artifacts.read_selections(passage.selections)
+                    parts.append(
+                        f"Evidence {passage.key}:\n" + "".join(part.text for part in content)
+                    )
+            elif query is not None:
+                facts = query.model_dump(
+                    mode="json", exclude={"evidence", "passage_key", "snapshot_available"}
+                )
+                if facts:
+                    parts.append(json.dumps(facts, ensure_ascii=False))
+            output.append("\n".join(parts))
+        return "\n\n".join(output)
 
     async def _prepare(
         self, request: WriteDraft, call: CallContext

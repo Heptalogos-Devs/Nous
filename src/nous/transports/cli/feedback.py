@@ -43,8 +43,10 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
     typer.echo(f"{tr('Feedback')}: {feedback.identifier}")
     if feedback.target.revision is not None:
         typer.echo(f"{tr('Target')}: {feedback.target.revision.identifier}")
-    elif feedback.target.query is not None:
-        typer.echo(f"{tr('Query')}: {feedback.target.query.intent.original_text}")
+    elif feedback.target.query is not None and (evidence := feedback.target.query.evidence):
+        query = feedback.target.query
+        passage = f" {query.passage_key}" if query.passage_key else ""
+        typer.echo(f"{tr('Query')}: {evidence.identifier}{passage}")
     typer.echo(f"{tr('Category')}: {tr(feedback.category)}")
     if feedback.value is not None:
         typer.echo(f"{tr('Value')}: {tr(feedback.value)}")

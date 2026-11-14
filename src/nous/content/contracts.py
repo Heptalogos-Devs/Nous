@@ -444,6 +444,10 @@ class ReadResult(ContentValue):
     sources: bool = True
 
 
+class DeleteResult(ContentValue):
+    ref: str | ResultRef
+
+
 class ReadSelections(ContentValue):
     selections: tuple[ContentSelection, ...]
     representations: Literal["existing", "none"] = "existing"

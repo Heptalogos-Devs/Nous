@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 from bisect import bisect_left, bisect_right
+from collections.abc import Sequence
 from functools import cached_property
+from typing import Literal
 
 from markdown_it import MarkdownIt
 from pydantic import Field
@@ -367,6 +369,68 @@ class TextView(ContentValue):
         return ContentSelection(
             artifact=self.body.artifact,
             selection=SourceSelection(start_byte=low, end_byte=high),
+        )
+
+    def complete_prefix_ends(self, selection: ContentSelection) -> tuple[int, ...]:
+        """Return original byte boundaries after complete sentences or blocks."""
+        start, end = self.selection_bounds(selection)
+        ends = {block.end for block in self.structure if start < block.end <= end}
+        for low, high in self.paragraph_spans:
+            if low < end and high > start:
+                ends.update(
+                    boundary
+                    for boundary in self._sentence_boundaries(low, high)
+                    if start < boundary <= end
+                )
+        return tuple(sorted(ends))
+
+    def adjacent(
+        self,
+        selections: Sequence[ContentSelection],
+        direction: Literal["before", "after"],
+        *,
+        within: ContentSelection,
+    ) -> ContentSelection | None:
+        """Find one neighboring source block within the selected material."""
+        if not selections:
+            return None
+        bounds = [self.selection_bounds(item) for item in selections]
+        low, high = min(item[0] for item in bounds), max(item[1] for item in bounds)
+        body_low, body_high = self.selection_bounds(within)
+        if not body_low <= low <= high <= body_high:
+            raise NousError("content.invalid_selection", "Selection exceeds the material")
+        blocks = (block for block in self.structure if block.parent_key is None)
+        if direction == "before":
+            candidates = (
+                block
+                for block in blocks
+                if body_low < block.end
+                and block.start < low
+                and self.raw[
+                    max(body_low, block.start) - self.byte_offset : min(low, block.end)
+                    - self.byte_offset
+                ].strip()
+            )
+            block = max(candidates, key=lambda item: item.start, default=None)
+            start, end = (max(body_low, block.start), low) if block else (low, low)
+        else:
+            candidates = (
+                block
+                for block in blocks
+                if high < block.end
+                and block.start < body_high
+                and self.raw[
+                    max(high, block.start) - self.byte_offset : min(body_high, block.end)
+                    - self.byte_offset
+                ].strip()
+            )
+            block = min(candidates, key=lambda item: item.end, default=None)
+            start, end = (high, min(body_high, block.end)) if block else (high, high)
+        if start == end:
+            return None
+        return ContentSelection(
+            artifact=self.body.artifact,
+            selection=SourceSelection(start_byte=start, end_byte=end),
         )
 
     def structural_context(self, selection: ContentSelection) -> tuple[ContentSelection, ...]:

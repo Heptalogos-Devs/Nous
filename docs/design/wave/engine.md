@@ -13,7 +13,7 @@ Rust 核心无 pyo3/numpy 依赖；Python bundle 转成核心自有结构后调�
 ```text
 Engine.build(FrozenAssets, BuildOptions, component_path, cancel) -> BuiltSnapshot
 Engine.open(published_path, expected_identity, cancel) -> Snapshot
-Snapshot.execute_program(program, query_signals, allowed, cancel) -> NativeQueryResult
+Snapshot.execute(program, query_signals, allowed, cancel) -> 定位结果 JSON
 Snapshot.observe(QuerySignals, ObserveOptions, cancel) -> Observation
 Snapshot.think(Observation, Stages, ThinkingOptions, cancel) -> ThinkingResult
 ```

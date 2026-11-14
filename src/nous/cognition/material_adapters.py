@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -101,9 +100,6 @@ class MaterialAdapters:
         results: ResultStore,
         records: RecordReader,
         annotations: AnnotationOperations,
-        sources_many_in: Callable[
-            [ReadTx, Sequence[str]], Awaitable[dict[tuple[str, str], tuple[MaterialSource, ...]]]
-        ],
     ) -> None:
         self.artifacts, self.results, self.records, self.annotations = (
             artifacts,
@@ -111,7 +107,6 @@ class MaterialAdapters:
             records,
             annotations,
         )
-        self.sources_many_in = sources_many_in
 
     @staticmethod
     def artifact_key(ref: ArtifactRef) -> str:
@@ -275,7 +270,10 @@ class MaterialAdapters:
         return tuple(output)
 
     async def capture_outputs(
-        self, tx: ReadTx, refs: tuple[ResultOutputRef, ...]
+        self,
+        tx: ReadTx,
+        refs: tuple[ResultOutputRef, ...],
+        formal: dict[tuple[str, str], tuple[MaterialSource, ...]],
     ) -> tuple[MaterialSnapshot, ...]:
         values = await self.results.get_many_in(tx, [ref.result for ref in refs])
         results = {value.ref.id: value for value in values}
@@ -290,7 +288,6 @@ class MaterialAdapters:
         blobs = await self.artifacts.content.resolve_many_in(
             tx, [item.artifact.id for item in selected]
         )
-        formal = await self.sources_many_in(tx, list(results))
         output: list[MaterialSnapshot] = []
         for ref, item, artifact, blob in zip(refs, selected, artifacts, blobs, strict=True):
             result = results[ref.result.id]
@@ -313,17 +310,7 @@ class MaterialAdapters:
             )
             formal_sources = tuple(formal.get((ref.result.id, ref.output), ()))
             sources = (
-                tuple(
-                    SourceBinding(
-                        key=source.key,
-                        selections=source.selections,
-                        owner_revision=source.material
-                        if isinstance(source.material, RecordRevisionRef)
-                        else None,
-                        name=source.name,
-                    )
-                    for source in formal_sources
-                )
+                ()
                 if formal_sources
                 else tuple(
                     SourceBinding(

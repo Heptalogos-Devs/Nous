@@ -14,19 +14,22 @@ from nous.cognition.material_contracts import ReadMaterial
 from nous.cognition.materials import READ_MATERIAL
 from nous.cognition.retrieval.contracts import (
     DeliveryRequest,
+    DeliveryUsage,
     QueryControls,
     QueryRequest,
+    SaveEvidence,
     Selector,
 )
-from nous.cognition.retrieval.operations import QUERY
+from nous.cognition.retrieval.operations import QUERY, SAVE_EVIDENCE
 from nous.cognition.scope import CREATE_NAMESPACE
 from nous.cognition.steward.contracts import ArrangeReading
 from nous.cognition.steward.operations import ARRANGE
 from nous.cognition.writing.contracts import AddNote, AfterWrite
 from nous.cognition.writing.operations import ADD_NOTE
 from nous.common.errors import NousError
-from nous.content.contracts import InlineText, ResultRef
+from nous.content.contracts import ContentSelection, InlineText, ResultRef, SourceSelection
 from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.wave.contracts import DeliveredText, DeliveryBudget
 from tests.integration.shared.models import configure_models, model_server
 
 
@@ -141,6 +144,8 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                     }
                 ],
             }
+            if len(self.requests) in (2, 4):
+                reading["context_requests"] = [{"key": "E1", "direction": "after"}]
             body = json.dumps(
                 {
                     "id": "reading",
@@ -184,7 +189,9 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                 await runtime.app.call(
                     ADD_NOTE,
                     AddNote(
-                        body=InlineText(text="The worker exits first."),
+                        body=InlineText(
+                            text="The worker exits first.\n\nOnly then may the handle be released.\n"
+                        ),
                         remember=True,
                         after=AfterWrite(annotation="skip"),
                     ),
@@ -215,5 +222,54 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                 sent = json.dumps(Handler.requests[0]["messages"], ensure_ascii=False)
                 assert "release condition" in sent and "compare conditions" in sent
                 assert "include_review" in sent
+
+                body = found.evidence.materials[0].material.body
+                assert body is not None
+                first_text = "The worker exits first."
+                first = ContentSelection(
+                    artifact=body.artifact,
+                    selection=SourceSelection(start_byte=0, end_byte=len(first_text)),
+                )
+                passage = found.evidence.passages[0].model_copy(
+                    update={
+                        "key": "E1",
+                        "fragments": (DeliveredText(content=first, text=first_text),),
+                        "support_context": (),
+                        "scored_ranges": (first,),
+                        "shared_context": (),
+                    }
+                )
+                material = found.evidence.materials[0].model_copy(update={"passage_keys": ("E1",)})
+                evidence = found.evidence.model_copy(
+                    update={
+                        "materials": (material,),
+                        "passages": (passage,),
+                        "program_run": None,
+                        "budget": DeliveryBudget(amount=200, unit="bytes"),
+                        "delivery_usage": DeliveryUsage(unit="bytes", amount=len(first_text)),
+                    }
+                )
+                original = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=evidence))
+                expanded = await runtime.app.call(ARRANGE, ArrangeReading(evidence=original))
+                assert expanded.evidence_ref != original and len(Handler.requests) == 3
+                read = await runtime.app.call(
+                    READ_MATERIAL, ReadMaterial(delivery=expanded.evidence_ref, key="E1")
+                )
+                assert "Only then may the handle be released" in "".join(
+                    item.body_text or "" for item in read.selections
+                )
+                assert original in (await runtime.results.get(expanded.evidence_ref)).dependencies
+                assert (
+                    expanded.evidence_ref
+                    in (await runtime.results.get(expanded.reading_ref)).dependencies
+                )
+
+                limited = evidence.model_copy(
+                    update={"budget": DeliveryBudget(amount=len(first_text), unit="bytes")}
+                )
+                original = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=limited))
+                constrained = await runtime.app.call(ARRANGE, ArrangeReading(evidence=original))
+                assert constrained.evidence_ref == original and len(Handler.requests) == 4
+                assert constrained.issues[0].code == "steward.budget_exhausted"
 
         asyncio.run(scenario())

@@ -101,6 +101,7 @@ def query(
     namespace: str | None = None,
     work: str | None = None,
     context_stage: Annotated[list[str] | None, typer.Option("--context-stage")] = None,
+    aspect: Annotated[list[str] | None, typer.Option("--aspect")] = None,
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
     purpose: str | None = None,
     steward: Literal["off", "optional", "required"] | None = None,
@@ -127,15 +128,9 @@ def query(
         if stages
         else None
     )
-    revision = (
-        application_call(ctx, READ_WORK, ReadWork(ref=work, namespace=namespace)).revision_ref
-        if work
-        else None
-    )
-    prior_ref = _result(ctx, prior) if prior else None
     anchor = (
         QueryAnchor(
-            prior_delivery=prior_ref, snapshot=snapshot, view="anchored" if anchored else "current"
+            prior_delivery=prior, snapshot=snapshot, view="anchored" if anchored else "current"
         )
         if prior or snapshot or anchored
         else None
@@ -147,7 +142,8 @@ def query(
             text=text,
             namespace=namespace,
             controls=QueryControls(limit=limit, diagnostics=explain),
-            context=ContextSelection(work=revision, stages=selected_stages),
+            context=ContextSelection(work=work, stages=selected_stages),
+            aspects=tuple(aspect or ()),
             anchor=anchor,
             save=save,
             delivery=DeliveryRequest(

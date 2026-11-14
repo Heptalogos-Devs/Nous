@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from nous.configuration.metadata import ConfigSequence
 from nous.content.contracts import ArtifactRef, ContentSelection, ExternalInput, SourceSelection
 from nous.models.vector_contracts import SpaceDefinition, VectorRef
 from nous.temporal.values import CognitiveTimes, Interval
@@ -16,6 +17,23 @@ from nous.temporal.values import CognitiveTimes, Interval
 
 class WaveValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PortRef(WaveValue):
+    node: str = Field(min_length=1)
+    port: str = Field(min_length=1)
+
+
+class ProgramNode(WaveValue):
+    id: str = Field(min_length=1)
+    operator: str = Field(min_length=1)
+    inputs: dict[str, PortRef | ConfigSequence[PortRef]] = Field(default_factory=dict)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class WaveProgram(WaveValue):
+    nodes: ConfigSequence[ProgramNode]
+    outputs: dict[str, PortRef]
 
 
 class ManualOwner(WaveValue):
@@ -178,13 +196,6 @@ class CandidateHit(WaveValue):
     passage: PassageDelivery
 
 
-class ProgramRunNode(WaveValue):
-    id: str
-    operator: str
-    inputs: dict[str, JsonValue]
-    parameters: dict[str, JsonValue]
-
-
 class ProgramRunFacts(WaveValue):
     """The effective program and bounded settings for this particular query."""
 
@@ -194,7 +205,7 @@ class ProgramRunFacts(WaveValue):
     requested_program: str | None
     selection: Literal["explicit", "default", "fallback", "exploration"]
     requirements: tuple[str, ...]
-    nodes: tuple[ProgramRunNode, ...]
+    nodes: tuple[ProgramNode, ...]
     outputs: dict[str, JsonValue]
     options: dict[str, JsonValue]
     budget: DeliveryBudget | None
@@ -820,6 +831,7 @@ class WaveQuery(WaveValue):
     passages_per_group: int = Field(default=1, ge=1, le=10000)
     snapshot: str
     text: str = ""
+    aspects: tuple[str, ...] = ()
     expression: WaveExpression | None = None
     vector: VectorRef | ExternalInput | None = None
     candidate_set: CandidateSet | ExternalInput | None = None
@@ -840,6 +852,10 @@ class WaveQuery(WaveValue):
 
     @model_validator(mode="after")
     def unique_context_keys(self) -> WaveQuery:
+        if any(not value.strip() for value in self.aspects) or len(set(self.aspects)) != len(
+            self.aspects
+        ):
+            raise ValueError("aspects must be nonempty and unique")
         if isinstance(self.context, ExternalInput):
             return self
         keys = [item.key for item in self.context]

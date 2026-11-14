@@ -30,11 +30,11 @@ enum Stage {
     Calibrated(Arc<CalibratedPool>),
     Ranked(Arc<RankedCandidates>),
     Links(Value),
-    Result(Arc<NativeQueryResult>),
+    Result(Arc<Value>),
 }
 type Values = BTreeMap<(String, String), Stage>;
 enum ProgramRun {
-    Complete(NativeQueryResult),
+    Complete(Value),
     Ranked(
         RankedCandidates,
         Option<Arc<QueryObservation>>,
@@ -195,7 +195,7 @@ impl Snapshot {
         options_json: &str,
         ghost_vectors: Vec<Vec<f32>>,
         cancel: &CancellationToken,
-    ) -> Result<NativeQueryResult> {
+    ) -> Result<Value> {
         let expression: BoundExpression = serde_json::from_str(expression_json)
             .map_err(|error| failure("wave.invalid_input", error))?;
         let plan: Program = serde_json::from_str(program_json)
@@ -262,7 +262,7 @@ impl Snapshot {
                     .map(Vec::as_slice);
                 match self.run_program(
                     name,
-                    program_json,
+                    &plan,
                     &branch.text,
                     raw,
                     contextual,
@@ -458,9 +458,8 @@ impl Snapshot {
             options.localize_lexical_weight = parameters.lexical_weight;
             options.localize_semantic_weight = parameters.semantic_weight;
         }
-        let mut result =
+        let mut value =
             self.deliver(name, text, &context_allowed, &options, None, cancel, ranked)?;
-        let mut value: Value = serde_json::from_str(&result.result_json)?;
         value["branch_coverage"] = json!(branch_coverage);
         let any_truncated = value["branch_coverage"]
             .as_array()
@@ -480,8 +479,7 @@ impl Snapshot {
         value["coverage"]["offered_candidates"] = Value::Null;
         value["coverage"]["ranked_candidates"] = Value::Null;
         value["coverage"]["unique_candidates"] = Value::Null;
-        result.result_json = value.to_string();
-        Ok(result)
+        Ok(value)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -497,10 +495,12 @@ impl Snapshot {
         ghost_vectors: Vec<Vec<f32>>,
         fixed: Option<&CandidateSet>,
         cancel: &CancellationToken,
-    ) -> Result<NativeQueryResult> {
+    ) -> Result<Value> {
+        let program: Program = serde_json::from_str(program_json)
+            .map_err(|error| failure("wave.invalid_program", error))?;
         match self.run_program(
             name,
-            program_json,
+            &program,
             text,
             raw,
             contextual,
@@ -522,7 +522,7 @@ impl Snapshot {
     fn run_program(
         &self,
         name: &str,
-        program_json: &str,
+        program: &Program,
         text: &str,
         raw: Option<&[f32]>,
         contextual: Option<&[f32]>,
@@ -533,8 +533,6 @@ impl Snapshot {
         cancel: &CancellationToken,
         stop_at_rank: bool,
     ) -> Result<ProgramRun> {
-        let program: Program =
-            serde_json::from_str(program_json).map_err(|e| failure("wave.invalid_program", e))?;
         options.validate_grouping()?;
         QueryControls {
             top_k: options.top_k,
@@ -925,12 +923,7 @@ impl Snapshot {
                         "Fusion weights must match rankings"
                     );
                     let mut rankings = Vec::new();
-                    let mut seen = BTreeSet::new();
                     for (index, reference) in references.iter().enumerate() {
-                        let identity = serde_json::to_string(reference)?;
-                        if !seen.insert(identity) {
-                            continue;
-                        }
                         let Stage::Ranked(ranked) = get(&values, reference)? else {
                             anyhow::bail!("Fusion requires ranked inputs")
                         };
@@ -1011,20 +1004,6 @@ impl Snapshot {
                         Stage::Result(Arc::new(result)),
                     );
                 }
-                "passages.select" => {
-                    let Stage::Result(result) = input(&values, node, "passages")? else {
-                        anyhow::bail!("Selection requires localized passages")
-                    };
-                    let result = result.clone();
-                    put(&mut values, node, "selected", Stage::Result(result));
-                }
-                "delivery.read" => {
-                    let Stage::Result(result) = input(&values, node, "selected")? else {
-                        anyhow::bail!("Delivery requires selected passages")
-                    };
-                    let result = result.clone();
-                    put(&mut values, node, "evidence", Stage::Result(result));
-                }
                 _ => {
                     return Err(failure(
                         "wave.invalid_program",
@@ -1045,9 +1024,7 @@ impl Snapshot {
             let Stage::Links(routes) = get(&values, reference)? else {
                 anyhow::bail!("Thinking output is not routes")
             };
-            let mut value: Value = serde_json::from_str(&result.result_json)?;
-            value["thinking"] = routes.clone();
-            result.result_json = value.to_string();
+            result["thinking"] = routes.clone();
         }
         if options.include_trace {
             let rankings = values
@@ -1067,15 +1044,13 @@ impl Snapshot {
                     _ => None,
                 })
                 .collect::<BTreeMap<_, _>>();
-            let mut value: Value = serde_json::from_str(&result.result_json)?;
-            value["diagnostics"]["ranked_nodes"] = json!(rankings);
-            value["diagnostics"]["observation_count"] = json!(
+            result["diagnostics"]["ranked_nodes"] = json!(rankings);
+            result["diagnostics"]["observation_count"] = json!(
                 values
                     .values()
                     .filter(|value| matches!(value, Stage::Observation(_)))
                     .count()
             );
-            result.result_json = value.to_string();
         }
         Ok(ProgramRun::Complete(result))
     }

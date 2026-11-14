@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, cast
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Literal, cast
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
+from nous.content.budget import SelectionBudget
 from nous.content.contracts import ContentSelection, SourceSelection
 from nous.content.selections import subtract_selection
 from nous.content.text import TextView
+from nous.runtime.execution import ExecutionManager
 
 from .contracts import (
     CandidateHit,
@@ -32,9 +38,8 @@ from .contracts import (
     WaveSearchResult,
 )
 from .mapping import SnapshotRow
-
-if TYPE_CHECKING:
-    import nous_native
+from .program import delivery_budget, resolve_program
+from .serialization import content_signature
 
 
 class _NativeValue(BaseModel):
@@ -145,15 +150,85 @@ class LocatedResult(_NativeValue):
 class WaveDelivery:
     """Interpret Native rows against the exact snapshot and deliver original text."""
 
-    def __init__(self, artifacts: ArtifactStore, instance_id: str) -> None:
+    def __init__(
+        self,
+        artifacts: ArtifactStore,
+        instance_id: str,
+        execution: ExecutionManager,
+        config_root: Path,
+    ) -> None:
         self.artifacts = artifacts
         self.instance_id = instance_id
+        self.execution = execution
+        self.config_root = config_root
+
+    def default_budget(self) -> DeliveryBudget | None:
+        return delivery_budget(resolve_program(self.execution.snapshot.values.wave))
+
+    async def selection_budget(
+        self,
+        budget: DeliveryBudget | None,
+        selections: Sequence[ContentSelection],
+        *,
+        views: Mapping[str, TextView] | None = None,
+        program_run: ProgramRunFacts | None = None,
+    ) -> SelectionBudget:
+        """Prepare shared source-range accounting for a complete delivery."""
+        available = dict(views or {})
+        missing = tuple(
+            dict.fromkeys(
+                value.artifact for value in selections if value.artifact.id not in available
+            )
+        )
+        if missing:
+            loaded = await self.artifacts.text_views(
+                tuple(ContentSelection(artifact=artifact) for artifact in missing)
+            )
+            available.update(
+                {artifact.id: view for artifact, view in zip(missing, loaded, strict=True)}
+            )
+        path = None
+        configured = None
+        tokenizer_digest = None
+        if budget is not None and budget.unit == "tokens":
+            if program_run is not None:
+                configured = program_run.options.get("tokenizer_path")
+                tokenizer_digest = program_run.options.get("tokenizer_digest")
+                if not isinstance(configured, str) or not isinstance(tokenizer_digest, str):
+                    raise NousError("content.tokenizer_unavailable", "Saved delivery has no tokenizer identity")
+            else:
+                configured = self.execution.snapshot.values.wave.query.tokenizer_path
+            if configured is not None:
+                path = Path(configured)
+                path = (self.config_root / path if not path.is_absolute() else path).resolve()
+        return await self.execution.blocking(
+            SelectionBudget,
+            available,
+            amount=budget.amount if budget else None,
+            unit=budget.unit if budget else "characters",
+            tokenizer_path=path,
+            tokenizer_digest=tokenizer_digest,
+            tokenizer_name=configured,
+        )
+
+    @staticmethod
+    def budget_facts(facts: ProgramRunFacts, counter: SelectionBudget) -> ProgramRunFacts:
+        """Keep the tokenizer identity actually used with a saved delivery."""
+        if counter.unit != "tokens":
+            return facts
+        value = facts.model_dump(mode="json", exclude={"signature"})
+        value["options"] = {
+            **value["options"],
+            "tokenizer_path": counter.tokenizer_name,
+            "tokenizer_digest": counter.tokenizer_digest,
+        }
+        return ProgramRunFacts.model_validate({**value, "signature": content_signature(value)})
 
     async def locate(
         self,
         request: WaveQuery,
         row: SnapshotRow,
-        result: nous_native.NativeQueryResult,
+        result: str,
         query_summary: dict[str, object],
         program_run: ProgramRunFacts | None = None,
     ) -> LocatedResult:
@@ -161,7 +236,7 @@ class WaveDelivery:
         candidates = mapping["candidates"]
         concepts = mapping["concepts"]
         try:
-            values = _NativeReadout.model_validate_json(result.result_json)
+            values = _NativeReadout.model_validate_json(result)
         except ValidationError as error:
             raise NousError(
                 "wave.invalid_native_result", "Native returned an invalid query result", cause=error
@@ -492,16 +567,18 @@ class WaveDelivery:
         return result.result.model_copy(update={"groups": groups, "hits": hits})
 
 
-def select_passages(
+async def select_passages(
     result: LocatedResult,
     passages_per_group: int,
-    budget: DeliveryBudget | None,
+    counter: SelectionBudget,
+    *,
+    aspect_similarities: npt.NDArray[np.float64] | None,
+    semantic_similarity: Callable[[int], Awaitable[npt.NDArray[np.float64]]] | None,
+    aspect_weight: float,
+    redundancy_weight: float,
+    redundancy_threshold: float,
 ) -> LocatedResult:
-    """Choose source ranges and count their union without reading delivery text."""
-    if budget is not None and budget.unit == "tokens":
-        raise NousError("wave.capability_unavailable", "A tokenizer is required for token budgets")
-    unit = budget.unit if budget is not None else "characters"
-    maximum = budget.amount if budget is not None else None
+    """Choose the highest incremental relevance and coverage per source cost."""
     groups, hits = list(result.groups), list(result.hits)
     available = [
         (group_index, passage_index, part)
@@ -511,13 +588,13 @@ def select_passages(
     if not available:
         available = [(index, 0, hit.passage) for index, hit in enumerate(hits)]
     selected: dict[tuple[int, int], PassageProposal] = {}
-    covered: list[ContentSelection] = []
-    lengths: dict[ContentSelection, int] = {}
     counts: dict[int, int] = {}
-    used = 0
+    aspect_count = 0 if aspect_similarities is None else aspect_similarities.shape[1]
+    aspect_coverage = np.zeros(aspect_count, dtype=np.float64)
+    nearest = np.full(len(available), -1.0, dtype=np.float64)
 
     def incremental(part: PassageProposal) -> PassageProposal | None:
-        temporary = list(covered)
+        temporary = list(counter.covered)
         fragments: list[ContentSelection] = []
         for content in part.fragments:
             remaining = subtract_selection(content, temporary)
@@ -537,63 +614,101 @@ def select_passages(
             }
         )
 
-    def length(part: PassageProposal) -> int:
-        total = 0
-        for content in (*part.fragments, *part.support_context):
-            if content not in lengths:
-                view = result.views[content.artifact.id]
-                start, end = view.selection_bounds(content)
-                data = view.raw[start - view.byte_offset : end - view.byte_offset]
-                lengths[content] = len(data) if unit == "bytes" else len(data.decode("utf-8"))
-            total += lengths[content]
-        return total
-
-    def priority(part: PassageProposal) -> tuple[int, float, float] | None:
+    def relevance(part: PassageProposal) -> float:
         model_rank = next(
             (value.value for value in part.scores if value.name == "model_rank"), None
         )
-        relevance = next(
-            (value.value for value in part.scores if value.name == "local_relevance"), 1.0
-        )
-        if model_rank is None and relevance <= 0.0:
-            return None
-        return int(model_rank is None), model_rank or 0.0, -relevance
+        local = next((value.value for value in part.scores if value.name == "local_relevance"), 1.0)
+        return 1.0 / model_rank if model_rank is not None and model_rank > 0 else max(0.0, local)
 
-    ranked = sorted(
-        (
-            (score, group_index, passage_index, part)
-            for group_index, passage_index, part in available
-            if (score := priority(part)) is not None
-        ),
-        key=lambda value: value[:3],
-    )
-    while ranked:
-        chosen: tuple[int, int, int, int, PassageProposal, PassageProposal] | None = None
-        for index, (_, group_index, passage_index, part) in enumerate(ranked):
+    remaining = set(range(len(available)))
+    while remaining:
+        best: tuple[float, float, int, int, PassageProposal, float, float, float, int] | None = None
+        for index in sorted(remaining):
+            group_index, passage_index, part = available[index]
             if counts.get(group_index, 0) >= passages_per_group:
                 continue
             item = incremental(part)
             if item is None:
                 continue
-            cost = length(item)
-            if maximum is not None and used + cost > maximum:
+            _, cost = counter.increment((*part.fragments, *part.support_context))
+            if counter.amount is not None and counter.used + cost > counter.amount:
                 continue
-            chosen = index, group_index, passage_index, cost, item, part
+            value = relevance(part)
+            new_aspect = 0.0
+            redundancy = 0.0
+            if aspect_similarities is not None:
+                affinity = np.maximum(aspect_similarities[index], 0.0)
+                new_aspect = float(np.maximum(affinity - aspect_coverage, 0.0).mean())
+            if semantic_similarity is not None and selected:
+                redundancy = max(
+                    0.0,
+                    (float(nearest[index]) - redundancy_threshold) / (1.0 - redundancy_threshold),
+                )
+            gain = value + aspect_weight * new_aspect - redundancy_weight * redundancy
+            if gain <= 0.0:
+                continue
+            candidate = (
+                gain / max(1, cost),
+                value,
+                -index,
+                cost,
+                item,
+                gain,
+                new_aspect,
+                redundancy,
+                index,
+            )
+            if best is None or candidate[:3] > best[:3]:
+                best = candidate
+        if best is None:
             break
-        if chosen is None:
-            break
-        index, group_index, passage_index, cost, item, original = chosen
+        _, _, _, cost, item, gain, new_aspect, redundancy, index = best
+        group_index, passage_index, original = available[index]
         shared: list[ContentSelection] = []
         for content in (*original.fragments, *original.support_context):
             shared.extend(
                 subtract_selection(content, (*item.fragments, *item.support_context, *shared))
             )
-        item = item.model_copy(update={"shared_context": tuple(shared)})
+        scores = (
+            *item.scores,
+            ScoreValue(
+                name="selection_gain", value=gain, scale="utility", producer="passages.select"
+            ),
+            ScoreValue(
+                name="selection_cost",
+                value=float(cost),
+                scale=counter.unit,
+                producer="passages.select",
+            ),
+        )
+        if semantic_similarity is not None:
+            scores += (
+                ScoreValue(
+                    name="semantic_redundancy",
+                    value=redundancy,
+                    scale="normalized_similarity",
+                    producer="passages.select",
+                ),
+            )
+        if aspect_count:
+            scores += (
+                ScoreValue(
+                    name="new_aspect",
+                    value=new_aspect,
+                    scale="cosine_coverage",
+                    producer="passages.select",
+                ),
+            )
+        item = item.model_copy(update={"shared_context": tuple(shared), "scores": scores})
         selected[(group_index, passage_index)] = item
-        used += cost
+        assert counter.add((*original.fragments, *original.support_context)) is not None
         counts[group_index] = counts.get(group_index, 0) + 1
-        covered.extend((*item.fragments, *item.support_context))
-        ranked.pop(index)
+        remaining.remove(index)
+        if aspect_similarities is not None:
+            aspect_coverage = np.maximum(aspect_coverage, aspect_similarities[index])
+        if semantic_similarity is not None and remaining:
+            nearest = np.maximum(nearest, await semantic_similarity(index))
     if groups:
         delivered_groups: list[LocatedGroup] = []
         for group_index, group in enumerate(groups):
@@ -607,14 +722,18 @@ def select_passages(
             elif not group.passages:
                 status = "no_candidates"
             else:
-                eligible = [part for part in group.passages if priority(part) is not None]
-                remaining = [item for part in eligible if (item := incremental(part)) is not None]
+                eligible = [part for part in group.passages if relevance(part) > 0]
+                remaining_parts = [
+                    item for part in eligible if (item := incremental(part)) is not None
+                ]
                 if not eligible:
                     status = "not_selected"
-                elif not remaining:
+                elif not remaining_parts:
                     status = "overlap"
-                elif maximum is not None and all(
-                    used + length(item) > maximum for item in remaining
+                elif counter.amount is not None and all(
+                    counter.used + counter.increment((*item.fragments, *item.support_context))[1]
+                    > counter.amount
+                    for item in remaining_parts
                 ):
                     status = "budget_exhausted"
                 else:
@@ -630,7 +749,7 @@ def select_passages(
             if (index, 0) in selected
         ]
     summary = dict(result.result.context_summary)
-    summary[f"delivered_{unit}"] = used
+    summary[f"delivered_{counter.unit}"] = counter.used
     return result.model_copy(
         update={
             "groups": tuple(groups),

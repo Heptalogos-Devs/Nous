@@ -22,6 +22,7 @@ from nous.content.contracts import (
     InputGroup,
     InputPart,
     ResultFacts,
+    ResultOutputRef,
     SelectedInputs,
     SelectedSource,
     UserProducer,
@@ -505,6 +506,9 @@ class WrittenRecords:
                         "revision_id": revision_id,
                         "key": item.key,
                         "material": item.material.model_dump(mode="json"),
+                        "source_result_id": item.material.result.id
+                        if isinstance(item.material, ResultOutputRef)
+                        else None,
                     }
                     for item in material_sources
                 ],

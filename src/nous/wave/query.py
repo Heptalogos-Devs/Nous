@@ -33,7 +33,6 @@ from .contracts import (
     CandidateSet,
     Concept,
     ContextFragment,
-    DeliveryBudget,
     GroupDescriptor,
     ProgramRunFacts,
     ThinkingStage,
@@ -44,7 +43,13 @@ from .mapping import (
     ConceptMapping,
     SnapshotRow,
 )
-from .program import CompiledProgram, EvaluationParameters, program_run_facts, resolve_program
+from .program import (
+    CompiledProgram,
+    EvaluationParameters,
+    delivery_budget,
+    program_run_facts,
+    resolve_program,
+)
 from .scope import allowed_rows
 from .serialization import encode_json
 
@@ -116,6 +121,7 @@ class QueryPlan:
     candidate_set: nous_native.CandidateSet | None
     summary: dict[str, object]
     program_run: ProgramRunFacts
+    aspect_vectors: npt.NDArray[np.float32] | None = None
     expression: dict[str, object] | None = None
     branch_raw_vectors: npt.NDArray[np.float32] | None = None
     branch_contextual_vectors: npt.NDArray[np.float32] | None = None
@@ -329,6 +335,7 @@ class WaveQueries:
         selected_context = [
             {
                 **resolved_fragments[item.key],
+                "text": resolved_texts[item.key],
                 "decayed_weight": item.decayed_weight,
                 "role_weight": item.role_weight,
                 "contribution": item.contribution,
@@ -539,6 +546,20 @@ class WaveQueries:
             else None,
             context_cache=context_cache,
         )
+        aspect_vectors = None
+        if request.aspects:
+            space_id = row["space_id"]
+            if space_id is not None and "vectors" in capabilities:
+                definition = resolved_space(self.execution.snapshot, space_id)
+                if definition.model_dump(mode="json") != row["space_definition"]:
+                    raise NousError(
+                        "wave.space_mismatch", "Snapshot and configured vector space differ"
+                    )
+                aspect_vectors = await self.embedding.encode_query(request.aspects, space_id)
+            query_summary["aspects"] = list(request.aspects)
+            query_summary["aspect_status"] = (
+                "encoded" if aspect_vectors is not None else "unavailable"
+            )
         concepts = mapping["concepts"]
         keys = {item["key"]: index for index, item in enumerate(concepts)}
         core_rows = [keys[key] for key in cast(list[str], query_summary.get("core_keys", []))]
@@ -653,19 +674,7 @@ class WaveQueries:
             "context": query_summary.get("context_options"),
             "query_origin": query_summary.get("query_origin"),
         }
-        selection_node = next(
-            (node for node in program.nodes if node.operator == "passages.select"), None
-        )
-        configured_budget = selection_node.parameters.get("budget") if selection_node else None
-        budget = request.delivery_budget or (
-            DeliveryBudget.model_validate(configured_budget)
-            if configured_budget is not None
-            else None
-        )
-        if budget is not None and budget.unit == "tokens":
-            raise NousError(
-                "wave.capability_unavailable", "A tokenizer is required for token budgets"
-            )
+        budget = delivery_budget(program, request.delivery_budget)
         signature = row["identity"].get("space_signature")
         evaluation_tasks: dict[str, object] = {}
         for node in program.nodes:
@@ -867,6 +876,7 @@ class WaveQueries:
             native_candidates,
             query_summary,
             program_run,
+            aspect_vectors,
             expression_plan,
             np.stack(branch_raw).astype(np.float32) if branch_raw else None,
             np.stack(branch_contextual).astype(np.float32) if branch_contextual else None,

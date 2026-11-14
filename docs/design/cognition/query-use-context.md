@@ -12,7 +12,7 @@ Wave 在一次快照借用中执行选定程序。`EvidenceDelivery` 包含意�
 
 ## 反馈与实际使用
 
-`feedback.record_query` 接收已保存的证据引用及可选 E 键。反馈固定当时的意图、快照引用、组排名、排名依据和实际选择，评价整次交付时不指定 E 键。快照仍存在时，反馈与快照保留关系在同一事务提交；快照已清理时，反馈的 `snapshot_available` 标记为 false。评价不修改正文或 VCP 质量分。
+`feedback.record_query` 接收已保存的证据引用及可选 E 键；意图、排名依据和实际选择由该证据提供。评价整次交付时不指定 E 键。快照仍存在时，反馈与快照保留关系在同一事务提交；快照已清理或交付未使用快照时，`snapshot_available` 为 false。评价不修改正文或 VCP 质量分。
 
 `work.record_use` 单独记录在某个精确工作修订中实际使用的选区、用途和可选决定。没有被选择使用的候选不产生使用事实。工作状态及后续情境见[持续工作](work-context.md)和[情境路由](context-routing.md)。
 

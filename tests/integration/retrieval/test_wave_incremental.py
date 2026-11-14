@@ -91,6 +91,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             assert new_view.body_artifact == old_view.body_artifact
             title = await runtime.app.call(QUERY, QueryRequest(text="uniqueheading"))
             assert title.evidence.materials[0].material.ref == renamed.commit.revision_ref
+            assert title.evidence.snapshot is not None
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
@@ -119,6 +120,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 renamed.commit.revision_ref.model_dump_json(),
                 long.commit.revision_ref.model_dump_json(),
             }
+            assert after_archive.evidence.snapshot is not None
             async with runtime.database.read() as tx:
                 archived_summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
@@ -161,6 +163,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             assert [group.material.ref for group in after_recall_change.evidence.materials] == [
                 renamed.commit.revision_ref
             ]
+            assert after_recall_change.evidence.snapshot is not None
             async with runtime.database.read() as tx:
                 recall_summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(
@@ -199,6 +202,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 if passage.material == long.commit.revision_ref
                 for fragment in passage.fragments
             )
+            assert fresh.evidence.snapshot is not None
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
                     sa.select(schema.snapshots.c.build_summary).where(

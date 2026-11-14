@@ -41,6 +41,8 @@ $all("资源关闭", "取消") $sort(recorded,desc)
 
 `QueryRequest.context` 可以指定精确 Work 修订、情境片段或已保存的交付；`anchor` 指定材料选区、先前交付及当前或锚定视图。原问题保持独立查询信号，实际采用的情境及来源见 `QueryIntent`。
 
+建议调用者在提问前将上下文中的代词换成明确对象，并按需要通过 `QueryRequest.aspects` 或重复的 `--aspect` 提供需要覆盖的方面；原问题和各方面会一同用于定位与选段。
+
 `--save` 保存 `EvidenceDelivery`；普通查询返回后也可用 `save-evidence` 采用此前输出的 JSON。后续用结果引用与 E 键读取原文。`read` 可展开完整材料、指定块和来源；`follow` 返回可继续使用的正式关系。`arrange` 使用已保存的证据生成面向新用途的阅读稿。
 
 需要精简 JSON 时，在命令前使用全局 `--select` 指定 JSON Pointer，例如 `nous --json --select /evidence/passages query "资源关闭"`。每个所选路径及其值保留在返回对象中；完整结果与操作 Schema 仍可直接获取。

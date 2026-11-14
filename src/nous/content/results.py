@@ -35,56 +35,47 @@ _JSON = TypeAdapter(dict[str, JsonValue])
 _PRODUCER = TypeAdapter(ProducerFacts)
 
 
-async def backfill_representation_origins_in(tx: WriteTx) -> None:
-    """Index already-declared origins of existing representation outputs."""
-    rows = (
-        (
-            await tx.connection.execute(
-                sa.select(schema.output_mappings)
-                .select_from(
-                    schema.output_mappings.join(
-                        schema.outputs,
-                        sa.and_(
-                            schema.output_mappings.c.result_id == schema.outputs.c.result_id,
-                            schema.output_mappings.c.output_name == schema.outputs.c.name,
-                        ),
-                    )
-                )
-                .where(
-                    schema.outputs.c.representation_kind.is_not(None),
-                    schema.outputs.c.role != "diagnostic",
-                )
-                .order_by(
-                    schema.output_mappings.c.result_id,
-                    schema.output_mappings.c.output_name,
-                    schema.output_mappings.c.ordinal,
-                )
-            )
-        )
-        .mappings()
-        .all()
-    )
-    seen: dict[tuple[str, str], list[ContentSelection]] = {}
-    for row in rows:
-        key = (str(row["result_id"]), str(row["output_name"]))
-        origins = seen.setdefault(key, [])
-        for value in row["origins"]:
-            origin = ContentSelection.model_validate(value)
-            if origin not in origins:
-                origins.append(origin)
-    values = [
-        {
-            "result_id": result_id,
-            "output_name": output,
-            "ordinal": ordinal,
-            "artifact_id": origin.artifact.id,
-            "selector": origin.selection.model_dump(mode="json"),
+async def upgrade_mapping_origins_in(tx: WriteTx) -> None:
+    """Normalize existing output-mapping origins once in the same transaction."""
+
+    def columns(connection: sa.Connection) -> set[str]:
+        return {
+            item["name"] for item in sa.inspect(connection).get_columns("content_output_mappings")
         }
-        for (result_id, output), origins in seen.items()
-        for ordinal, origin in enumerate(origins)
-    ]
-    if values:
-        await tx.connection.execute(schema.representation_origins.insert(), values)
+
+    if "origins" not in await tx.connection.run_sync(columns):
+        return
+    invalid = await tx.connection.scalar(
+        sa.text(
+            "SELECT 1 FROM content_output_mappings "
+            "WHERE COALESCE(json_type(origins), '') != 'array' OR json_array_length(origins) = 0 LIMIT 1"
+        )
+    )
+    if invalid:
+        raise NousError("content.invalid_mapping", "A saved output mapping has no valid origins")
+    invalid = await tx.connection.scalar(
+        sa.text(
+            "SELECT 1 FROM content_output_mappings AS mapping, json_each(mapping.origins) AS origin "
+            "LEFT JOIN content_artifacts AS artifact "
+            "ON artifact.id = json_extract(origin.value, '$.artifact.id') "
+            "WHERE artifact.id IS NULL "
+            "OR artifact.identifier IS NOT json_extract(origin.value, '$.artifact.identifier') "
+            "OR json_extract(origin.value, '$.artifact.instance_id') "
+            "IS NOT (SELECT instance_id FROM instance_metadata) "
+            "OR COALESCE(json_type(origin.value, '$.selection'), '') != 'object' LIMIT 1"
+        )
+    )
+    if invalid:
+        raise NousError("content.invalid_mapping", "A saved output mapping has an invalid source")
+    await tx.connection.exec_driver_sql(
+        "INSERT INTO content_output_mapping_origins "
+        "(result_id, output_name, mapping_ordinal, ordinal, artifact_id, selector) "
+        "SELECT mapping.result_id, mapping.output_name, mapping.ordinal, CAST(origin.key AS INTEGER), "
+        "json_extract(origin.value, '$.artifact.id'), json_extract(origin.value, '$.selection') "
+        "FROM content_output_mappings AS mapping, json_each(mapping.origins) AS origin"
+    )
+    await tx.connection.exec_driver_sql("DROP TABLE IF EXISTS processing_representation_origins")
+    await tx.connection.exec_driver_sql("ALTER TABLE content_output_mappings DROP COLUMN origins")
 
 
 @dataclass(frozen=True)
@@ -502,6 +493,7 @@ class ResultStore:
         if mappings:
             ordinals: dict[str, int] = {}
             rows: list[dict[str, object]] = []
+            origins: list[dict[str, object]] = []
             for mapping in mappings:
                 ordinal = ordinals.get(mapping.output_name, 0)
                 ordinals[mapping.output_name] = ordinal + 1
@@ -512,10 +504,21 @@ class ResultStore:
                         "ordinal": ordinal,
                         "selection": mapping.selection.model_dump(mode="json"),
                         "relation": mapping.relation,
-                        "origins": [item.model_dump(mode="json") for item in mapping.origins],
                     }
                 )
+                origins.extend(
+                    {
+                        "result_id": object_id,
+                        "output_name": mapping.output_name,
+                        "mapping_ordinal": ordinal,
+                        "ordinal": index,
+                        "artifact_id": origin.artifact.id,
+                        "selector": origin.selection.model_dump(mode="json"),
+                    }
+                    for index, origin in enumerate(mapping.origins)
+                )
             await tx.connection.execute(schema.output_mappings.insert(), rows)
+            await tx.connection.execute(schema.mapping_origins.insert(), origins)
         if facts.selections:
             await tx.connection.execute(
                 schema.named_selections.insert(),
@@ -529,28 +532,6 @@ class ResultStore:
                     for ordinal, item in enumerate(facts.selections)
                 ],
             )
-        represented: dict[str, list[ContentSelection]] = {}
-        for mapping in mappings:
-            output = outputs_by_name[mapping.output_name]
-            if output.representation_kind is None or output.role == "diagnostic":
-                continue
-            origins = represented.setdefault(mapping.output_name, [])
-            for origin in mapping.origins:
-                if origin not in origins:
-                    origins.append(origin)
-        relation_rows = [
-            {
-                "result_id": object_id,
-                "output_name": name,
-                "ordinal": ordinal,
-                "artifact_id": source.artifact.id,
-                "selector": source.selection.model_dump(mode="json"),
-            }
-            for name, origins in represented.items()
-            for ordinal, source in enumerate(origins)
-        ]
-        if relation_rows:
-            await tx.connection.execute(schema.representation_origins.insert(), relation_rows)
         if dependencies:
             await tx.connection.execute(
                 schema.dependencies.insert(),
@@ -585,6 +566,27 @@ class ResultStore:
             result = await self.adopt_in(tx, facts=facts, prepared_outputs=prepared)
         record_completed(result.ref)
         return result
+
+    async def delete_in(self, tx: WriteTx, ref: str | ResultRef) -> ResultRef:
+        """Remove one completed result; database references protect downstream facts."""
+        result = await self.get_in(tx, ref)
+        for table in (
+            schema.origins,
+            schema.parts,
+            schema.inputs,
+            schema.selected_targets,
+            schema.selected_sources,
+            schema.material_sources,
+            schema.mapping_origins,
+            schema.output_mappings,
+            schema.outputs,
+            schema.named_selections,
+            schema.dependencies,
+            schema.results,
+        ):
+            column = table.c.id if table is schema.results else table.c.result_id
+            await tx.connection.execute(table.delete().where(column == result.ref.id))
+        return result.ref
 
     async def resolve_output(self, ref: ResultOutputRef) -> ArtifactRef:
         """Resolve the named output without consulting its original producer."""

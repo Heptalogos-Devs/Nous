@@ -108,7 +108,7 @@ fn simultaneous_snapshot_readers_do_not_acquire_writer_lock() -> Result<()> {
                         None,
                         token,
                     )?;
-                    assert_eq!(result.rows.len(), 3);
+                    assert_eq!(result["hits"].as_array().unwrap().len(), 3);
                     Ok(())
                 })
             })
@@ -142,7 +142,7 @@ fn simultaneous_snapshot_readers_do_not_acquire_writer_lock() -> Result<()> {
             None,
             &token,
         )?;
-        let raw: serde_json::Value = serde_json::from_str(&result.result_json)?;
+        let raw = result;
         assert_eq!(raw["coverage"]["ranked_candidates"], 3);
         rankings.push(raw["diagnostics"]["ranked_nodes"]["rank.ranked"]["hits"].clone());
     }
@@ -180,7 +180,7 @@ fn simultaneous_snapshot_readers_do_not_acquire_writer_lock() -> Result<()> {
             None,
             &token,
         )?;
-        let raw: serde_json::Value = serde_json::from_str(&result.result_json)?;
+        let raw = result;
         assert_eq!(raw["coverage"]["ranked_candidates"], 3);
         dense_rankings.push(raw["diagnostics"]["ranked_nodes"]["rank.ranked"]["hits"].clone());
     }

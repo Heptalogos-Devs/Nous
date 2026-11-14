@@ -40,8 +40,15 @@ from nous.cognition.feedback import (
     FeedbackOperations,
     upgrade_query_feedback_in,
 )
+from nous.cognition.feedback_schema import feedback as feedback_table
 from nous.cognition.maintenance.operations import MAINTAIN_RECORD, MaintenanceOperations
-from nous.cognition.materials import FOLLOW_MATERIAL, READ_MATERIAL, Materials
+from nous.cognition.materials import (
+    FOLLOW_MATERIAL,
+    READ_MATERIAL,
+    Materials,
+    upgrade_material_source_refs_in,
+)
+from nous.cognition.retrieval.adoption import EvidenceAdoption
 from nous.cognition.retrieval.operations import QUERY, REFRESH, SAVE_EVIDENCE, CognitiveRetrieval
 from nous.cognition.schema import source_materials
 from nous.cognition.scope import (
@@ -55,7 +62,7 @@ from nous.cognition.scope import initialize_in as initialize_namespaces_in
 from nous.cognition.sources import SourceResolver
 from nous.cognition.steward.operations import ARRANGE, StewardOperations
 from nous.cognition.steward.task import steward_tasks
-from nous.cognition.work.contracts import WorkAttributes
+from nous.cognition.work import schema as work_schema
 from nous.cognition.work.operations import (
     CREATE_WORK,
     LIST_WORK_USES,
@@ -65,7 +72,7 @@ from nous.cognition.work.operations import (
     SET_ACTIVE_WORK,
     WorkOperations,
 )
-from nous.cognition.work.refs import WorkRevisionRef
+from nous.cognition.work.reading import WorkReader
 from nous.cognition.writing.drafts import DraftStore
 from nous.cognition.writing.generation import (
     DRAFT_FROM_RESULT,
@@ -97,14 +104,15 @@ from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
 from nous.content.operations import (
     ACCEPT_CONTENT,
+    DELETE_RESULT,
     EXPORT_CONTENT,
     READ_ARTIFACT,
     READ_RESULT,
     READ_SELECTIONS,
     ContentOperations,
 )
-from nous.content.results import ResultStore, backfill_representation_origins_in
-from nous.content.schema import material_sources, named_selections, representation_origins
+from nous.content.results import ResultStore, upgrade_mapping_origins_in
+from nous.content.schema import mapping_origins, material_sources, named_selections
 from nous.media.analysis import ANALYZE_MEDIA, INSPECT_MEDIA, MediaAnalysis
 from nous.media.preparation import MediaPreparer
 from nous.models.embedding_store import EmbeddingSpaceRegistry
@@ -120,7 +128,7 @@ from nous.observability.assembly import LoggingSession, Observability
 from nous.observability.diagnostics import recent_content_preparations, recent_problems
 from nous.observability.instrumentation import get_logger, operation
 from nous.storage.content import ContentStore
-from nous.storage.database import Database
+from nous.storage.database import Database, WriteTx
 from nous.temporal.domains import TimeService, bind_domains, check_domains
 from nous.temporal.values import Clock
 from nous.wave.operations import (
@@ -153,9 +161,10 @@ async def _upgrade_additive_tables(database: Database) -> None:
     additions = (
         *work_metadata.tables.values(),
         named_selections,
-        representation_origins,
+        mapping_origins,
         material_sources,
         source_materials,
+        feedback_table,
     )
     addition_names = {table.name for table in additions}
     baseline = sa.MetaData()
@@ -177,8 +186,10 @@ async def _upgrade_additive_tables(database: Database) -> None:
                 checkfirst=True,
             )
         )
-        if representation_origins.name not in present:
-            await backfill_representation_origins_in(tx)
+        await upgrade_material_source_refs_in(tx)
+        if work_schema.result_dependencies.name not in present:
+            await WorkOperations.backfill_result_dependencies_in(tx)
+        await upgrade_mapping_origins_in(tx)
         await upgrade_query_feedback_in(tx)
     await database.check_schema(BUSINESS_METADATA)
 
@@ -600,23 +611,18 @@ async def open_instance(
                 annotations = AnnotationOperations(
                     database, execution, record_reader, concepts, generation
                 )
-                materials = Materials(artifacts, results, record_reader, annotations)
+                work_reader = WorkReader(database, execution, namespaces, artifacts)
+                materials = Materials(artifacts, results, record_reader, annotations, work_reader)
                 work = WorkOperations(
-                    database, execution, namespaces, artifacts, results, materials, clock
+                    database,
+                    execution,
+                    namespaces,
+                    artifacts,
+                    results,
+                    materials,
+                    clock,
+                    work_reader,
                 )
-                materials.register(
-                    WorkRevisionRef,
-                    "work",
-                    WorkAttributes,
-                    key=work.material_key,
-                    kinds=("work",),
-                    namespace=work.material_namespace,
-                    capture_in=work.capture_materials_in,
-                    current_in=work.current_materials_in,
-                    prepare=work.prepare_material,
-                )
-                materials.register_identifier("work", work.resolve_identifier)
-                steward = StewardOperations(generation, results, materials)
                 wave = WaveOperations(
                     database,
                     execution,
@@ -629,6 +635,8 @@ async def open_instance(
                     preparer,
                     evaluation,
                 )
+                evidence_adoption = EvidenceAdoption(database, artifacts, results, materials, wave)
+                steward = StewardOperations(generation, results, materials, evidence_adoption, wave)
                 cognitive_retrieval = CognitiveRetrieval(
                     database,
                     execution,
@@ -641,6 +649,7 @@ async def open_instance(
                     work,
                     steward,
                     time_service,
+                    evidence_adoption=evidence_adoption,
                 )
                 written_records = WrittenRecords(
                     database,
@@ -706,7 +715,11 @@ async def open_instance(
                     writing=writing,
                     state="ready",
                 )
-                content_operations = ContentOperations(results, artifacts)
+
+                async def release_result(tx: WriteTx, result_id: str) -> None:
+                    await wave.release_in(tx, owner_kind="result", owner_id=result_id)
+
+                content_operations = ContentOperations(results, artifacts, release_result)
                 runtime_operations = RuntimeOperations(execution, runtime.check)
                 configuration_calls = OfflineCalls(
                     configuration,
@@ -719,6 +732,7 @@ async def open_instance(
                     BoundOperation(ACCEPT_CONTENT, content_operations.accept),
                     BoundOperation(READ_ARTIFACT, content_operations.read_artifact),
                     BoundOperation(READ_RESULT, content_operations.read_result),
+                    BoundOperation(DELETE_RESULT, content_operations.delete_result),
                     BoundOperation(READ_SELECTIONS, content_operations.read_selections),
                     BoundOperation(EXPORT_CONTENT, content_operations.export_offer),
                     BoundOperation(CHECK_RUNTIME, runtime_operations.check),
@@ -743,7 +757,7 @@ async def open_instance(
                     BoundOperation(FOLLOW_MATERIAL, materials.follow_request),
                     BoundOperation(ARRANGE, steward.arrange),
                     BoundOperation(CREATE_WORK, work.create),
-                    BoundOperation(READ_WORK, work.read),
+                    BoundOperation(READ_WORK, work_reader.read),
                     BoundOperation(REVISE_WORK, work.revise),
                     BoundOperation(SET_ACTIVE_WORK, work.set_active),
                     BoundOperation(RECORD_WORK_USE, work.record_use),

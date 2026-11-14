@@ -319,6 +319,7 @@ def test_cleanup_retries_unreferenced_component_after_delete_failure(tmp_path: P
                 ADD_NOTE, AddNote(body=InlineText(text="old unique"), remember=True, after=policy)
             )
             old = await runtime.app.call(QUERY, QueryRequest(text="old"))
+            assert old.evidence.snapshot is not None
             row = await runtime.wave.snapshots.resolve(old.evidence.snapshot)
             component = runtime.paths.resolve_owned("index", row["index_location"])
             await runtime.app.call(

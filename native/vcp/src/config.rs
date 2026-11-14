@@ -134,6 +134,12 @@ impl LocateParameters {
 #[serde(default, deny_unknown_fields)]
 pub struct SelectParameters {
     pub budget: Option<DeliveryBudget>,
+    #[schemars(range(min = 0.0))]
+    pub aspect_weight: f64,
+    #[schemars(range(min = 0.0))]
+    pub redundancy_weight: f64,
+    #[schemars(range(min = -1.0, max = 0.999999))]
+    pub redundancy_threshold: f64,
 }
 
 impl Default for SelectParameters {
@@ -143,6 +149,9 @@ impl Default for SelectParameters {
                 amount: 2048,
                 unit: DeliveryUnit::Characters,
             }),
+            aspect_weight: 1.0,
+            redundancy_weight: 1.0,
+            redundancy_threshold: 0.92,
         }
     }
 }

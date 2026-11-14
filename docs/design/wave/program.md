@@ -8,7 +8,7 @@ Wave 把一次查询表示为带类型的算子图。配置 `wave.default_progra
 
 Native 在一次快照借用中执行数值子图到局部定位。观测、CandidateSet、CalibratedPool 和 RankedSet 在该借用内共享，RiverMemo 消费绑定同一观测的校准池，DTSC 消费明确候选集。Python 将行映射为原文范围，按图执行可选模型评价和预算选择；模型工作使用共同的评价 owner。结果保留原问题、实际程序、评分尺度、组排名与局部片段。
 
-每次执行返回 `ProgramRunFacts`：实际程序、选择来源、参与节点及其默认值已展开的参数、相关运行设置、预算和空间绑定。`definition_signature` 标识声明配方，`signature` 标识本次有效执行设置；两者都不参与资产构建身份。该事实随 EvidenceDelivery 保存，完整 trace 是独立可选项。固定候选与表达式的使用状态在执行摘要中标明，表达式内容和约束留在 QueryIntent。
+每次执行返回 `ProgramRunFacts`：实际程序、选择来源、编译后的节点、相关运行设置、生效预算和空间绑定。节点采用的共享设置与节点参数一起保存。`definition_signature` 标识声明配方，`signature` 标识本次有效执行设置；两者都不参与资产构建身份。该事实随 EvidenceDelivery 保存，完整 trace 是独立可选项。固定候选与表达式的使用状态在执行摘要中标明，表达式内容和约束留在 QueryIntent。
 
 `passages.evaluate` 的 `method` 选择 `rank` 或 `evaluate`，`policy` 选择失败时继续还是中断；`task` 指向共同模型任务。评价可声明 `purpose`、`rubric` 和 `scale`。数值评价通过 `numeric_order` 选择 `higher` 或 `lower` 优先；分类量表只约束允许值，只有另行填写覆盖全部类别的 `category_order` 才按给定次序选择，省略时保留判断而不排序。
 

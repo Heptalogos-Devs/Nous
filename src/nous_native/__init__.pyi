@@ -23,9 +23,6 @@ from ._core import (
     NativeError as NativeError,
 )
 from ._core import (
-    NativeQueryResult as NativeQueryResult,
-)
-from ._core import (
     NativeSnapshot as NativeSnapshot,
 )
 from ._core import (

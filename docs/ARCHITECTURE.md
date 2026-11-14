@@ -33,7 +33,7 @@ Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、�
 
 Journal 的事务保存核心负责正文和来源；完整 RecordOperations 用例在同一 WriteTx 中组织修订、草稿采用及反馈关联。提交后由维护 owner 执行或启动标注与刷新。NamespaceRef 表示稳定域身份，见[维护架构](design/cognition/maintenance-architecture.md)。
 
-认知查询绑定自然语言、NousQL 条件、正式材料与阶段情境，形成 QueryIntent。WaveProgram 编译及执行拥有观测共享、候选联合与校准、排序和独立局部定位。any/all 与情境分支在候选和排名阶段组合，最终按原问题定位并使用整次交付预算。认知层不另行计算检索分数，也不根据已经交付的片段重排材料。
+认知查询绑定自然语言、NousQL 条件、正式材料与阶段情境，形成 QueryIntent。明确引用的直接读取只访问对应材料，不构建检索视图。检索查询通过 WaveProgram 共享观测、组合候选与校准、排名和局部定位；编译器一次确定数值计划和异步交付步骤。any/all 与情境分支在候选和排名阶段组合，最终按原问题定位。原文范围的字符、字节和声明 tokenizer 计量由内容层提供，检索、直读和邻文补齐共用。
 
 EvidenceDelivery 固定实际交付的材料、原文与精确范围。Steward 消费已保存证据，按用途生成独立的 Markdown 阅读稿；query/read/follow 与后续研究由外部 Agent 组织。阅读稿进入草稿和正式文稿时，由写作 owner 读取共同材料关系并采用。
 
@@ -45,7 +45,7 @@ EvidenceDelivery 固定实际交付的材料、原文与精确范围。Steward �
 | 配置修改的绑定与资源采用 | ConfigurationOperations，调用相应 owner |
 | 不可变字节及 owner/slot 引用 | ContentStore |
 | 原件、派生物与实际处理输入输出 | ArtifactStore、ResultStore |
-| 领域材料读取、结构字段 schema 与结果的正式材料来源 | 共同材料 owner，按正式引用类型登记领域读取者 |
+| 领域材料读取、结构字段 schema 与结果的正式材料来源 | 共同材料按固定引用类型调用领域 reader；WorkReader 拥有工作修订读取与捕获，Work 写入操作复用它和共同材料校验 |
 | 原件、离散选择、slot、role 和已确认类型 | SelectedInputs 与内容 owner；路线从原选择规划实际表示 |
 | 当前调用的语言任务与完成结果 | models.generation；领域任务解释结果，多阶段由 MediaAnalysis 组织 |
 | 模型请求、尝试、流与响应 | ModelExecutor，协议适配由成熟依赖承担 |

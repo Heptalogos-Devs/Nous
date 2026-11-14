@@ -132,7 +132,6 @@ output_mappings = sa.Table(
     sa.Column("ordinal", sa.Integer, primary_key=True),
     sa.Column("selection", sa.JSON, nullable=False),
     sa.Column("relation", sa.String, nullable=False),
-    sa.Column("origins", sa.JSON, nullable=False),
     sa.ForeignKeyConstraint(
         ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
     ),
@@ -149,19 +148,25 @@ named_selections = sa.Table(
     sa.UniqueConstraint("result_id", "key"),
 )
 
-representation_origins = sa.Table(
-    "processing_representation_origins",
+mapping_origins = sa.Table(
+    "content_output_mapping_origins",
     metadata,
     sa.Column("result_id", sa.String, primary_key=True),
     sa.Column("output_name", sa.String, primary_key=True),
+    sa.Column("mapping_ordinal", sa.Integer, primary_key=True),
     sa.Column("ordinal", sa.Integer, primary_key=True),
     sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
     sa.Column("selector", sa.JSON, nullable=False),
     sa.ForeignKeyConstraint(
-        ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
+        ["result_id", "output_name", "mapping_ordinal"],
+        [
+            "content_output_mappings.result_id",
+            "content_output_mappings.output_name",
+            "content_output_mappings.ordinal",
+        ],
     ),
 )
-sa.Index("ix_processing_representation_origin", representation_origins.c.artifact_id)
+sa.Index("ix_content_output_mapping_origin", mapping_origins.c.artifact_id)
 
 material_sources = sa.Table(
     "processing_material_sources",
@@ -173,6 +178,7 @@ material_sources = sa.Table(
     sa.Column("kind", sa.String, nullable=False),
     sa.Column("name", sa.String),
     sa.Column("material", sa.JSON, nullable=False),
+    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.Column("selections", sa.JSON, nullable=False),
     sa.ForeignKeyConstraint(
         ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
