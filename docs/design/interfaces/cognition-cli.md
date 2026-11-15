@@ -57,12 +57,18 @@ nous save-evidence query.json
 nous query "取消任务后如何释放资源？" --save
 nous read "res(实际结果引用)" --part E1
 nous follow "jrn(实际文稿引用)@2" --relation current_basis
+nous read --selection ./remaining-selection.json
 nous query "这些决定现在仍适用吗？" --work "work(实际工作引用)"
 nous query "取消后如何关闭资源？" --aspect "取消条件" --aspect "关闭顺序"
+nous read "材料引用" --structure
 nous arrange "res(实际结果引用)" --purpose "列出结论及适用条件"
+nous arrange --material "材料引用" --question "这份材料说明了什么？"
+nous arrange --selection - --question "整理这个选区" < selection.json
 ```
 
-`--steward optional` 请求有来源的阅读整理，整理不可用时保留已保存的原文和问题；`--steward required` 要求完成整理。整理结果和原文证据分别保存。用 `--budget` 和 `--budget-unit characters`、`bytes` 或 `tokens` 指定原文预算；token 预算需要在 `wave.query.tokenizer_path` 配置本地 tokenizer JSON。`--explain` 展开诊断。已找回的材料会保留在结果目录中；预算不足或未选出正文时，结果显示原因并提供阅读材料的入口。工作使用记录可引用本次 E 片段，也可引用随后阅读的正式来源选区。
+`--steward optional` 请求有来源的阅读整理，整理不可用时保留已保存的原文和问题；`--steward required` 要求完成整理。整理结果和原文证据分别保存。用 `--budget` 和 `--budget-unit characters`、`bytes` 或 `tokens` 指定原文预算；token 预算需要在 `content.tokenizer_path` 配置本地 tokenizer JSON。`--explain` 展开诊断。已找回的材料会保留在结果目录中；预算不足或未选出正文时，结果显示原因并提供阅读材料的入口。工作使用记录可引用本次 E 片段，也可引用随后阅读的正式来源选区。
+
+预算截断后的继续读取项包含精确 `MaterialSelection`。可将该值保存为 JSON 文件，再通过 `read --selection` 读取剩余范围；`read --selection -` 从标准输入读取相同格式。
 
 需要覆盖多个方面时可重复指定 `--aspect`。查询引用上下文中的对象时，建议在问题中写出明确对象，再提供相关 Work 或材料作为情境。
 
@@ -85,7 +91,7 @@ nous work create "资源关闭研究" "整理取消和关闭的依据"
 nous work read "work(实际工作引用)"
 nous work revise "work(实际工作引用)@1" ./work-state.json --body ./work.md
 nous work set-active "work(实际工作引用)@2" ./selections.json
-nous work record-use "work(实际工作引用)@3" "res(实际结果引用)" ./used-selections.json "形成关闭顺序的决定"
+nous work record-use "work(实际工作引用)@3" ./used-selections.json "形成关闭顺序的决定" --evidence "res(实际结果引用)"
 nous work uses "work(实际工作引用)"
 nous feedback record --evidence "res(实际结果引用)" --passage E1 --category retrieval --value positive
 ```

@@ -27,7 +27,7 @@
 
 ## 正式中间结果
 
-一次 QueryObservation 持有相同 snapshot 的查询信号、Pyramid、Sense、双场、原始 Concept 向量池与候选所需诊断。search 内只运行一次核心 pipeline，RiverMemo 与 Thinking 共用它。观测是 Rust-owned Arc 对象，通过 Python 生命周期显式释放，不建立 TTL 字符串句柄服务。
+一次 QueryObservation 持有相同 snapshot 的查询信号、Pyramid、Sense、双场、原始 Concept 向量池与候选所需诊断。一次数值图执行中，RiverMemo 与 Thinking 复用图中声明的观测；中间观测由 Rust 持有并随本次执行释放。
 
 Thinking 需要完整有效前驱 transitions。记录缺失或被裁剪时返回明确不可用；允许其余查询结果仍可交付，但不得伪造路线。路径检查使用 hop、previous_id 与真实 source/target 关系，排除立即回流。
 

@@ -1,36 +1,31 @@
 """Immutable cognitive queries, actual preparation context and delivered selections."""
 
 from datetime import datetime
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, NotRequired
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue
+from typing_extensions import TypedDict
 
-from nous.cognition.concept_contracts import ConceptRef
-from nous.cognition.material_contracts import (
-    CognitiveMaterialView,
-    MaterialAttributes,
-    MaterialRef,
-    MaterialSelection,
-)
+from nous.cognition.material_contracts import MaterialSelection
 from nous.cognition.steward.contracts import ReadingBrief
-from nous.cognition.work.refs import WorkRevisionRef
+from nous.common.material_refs import WorkRevisionRef
 from nous.common.operations import OperationIssue
-from nous.content.contracts import ContentSelection, ResultRef
+from nous.content.contracts import (
+    ContentReadView,
+    ContentSelection,
+    DeliveryBudget,
+    MaterialRef,
+    MaterialSource,
+    ResultRef,
+)
 from nous.content.selections import union_selections
 from nous.wave.contracts import (
     CandidateFilter,
-    CandidateRef,
     ContextFragment,
-    DeliveredText,
-    DeliveryBudget,
     DeliveryStatus,
-    ProgramRunFacts,
-    RankEvidence,
-    ScoreValue,
-    SearchCoverage,
     SnapshotRef,
+    ThinkingRoute,
     TimeCondition,
-    WaveBranchCoverage,
 )
 
 from ..contracts import (
@@ -43,11 +38,8 @@ from ..contracts import (
 
 class CognitiveGroupContext(CognitiveValue):
     material: MaterialRef
-    kind: str
-    purpose: str | None
     sources: tuple[ContentSelection, ...]
     needs_review: bool
-    attributes: MaterialAttributes
 
 
 class RefreshRetrieval(CognitiveValue):
@@ -170,78 +162,54 @@ class UsedContext(CognitiveValue):
     contribution: float | None = None
 
 
-class BoundQueryBranch(CognitiveValue):
-    path: tuple[int, ...]
-    controls: QueryControls
-    materials: tuple[MaterialRef, ...] = ()
-    concepts: tuple[ConceptRef, ...] = ()
-
-
-class BoundQueryControls(CognitiveValue):
-    controls: QueryControls
-    namespace: NamespaceRef
-    branches: tuple[BoundQueryBranch, ...] = ()
-
-
 class QueryIntent(CognitiveValue):
     original_text: str
     aspects: tuple[str, ...] = ()
-    constraints: BoundQueryControls
+    namespace: NamespaceRef
+    controls: QueryControls | None = None
     context: tuple[UsedContext, ...] = ()
-    bound_materials: tuple[MaterialRef, ...] = ()
-    bound_concepts: tuple[ConceptRef, ...] = ()
     expression: QueryExpression | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def read_saved_intent(cls, value: object) -> object:
-        if isinstance(value, dict):
-            data = cast(dict[str, object], value)
-            if "resolved_text" in data and data["resolved_text"] is None:
-                return {key: item for key, item in data.items() if key != "resolved_text"}
-        return cast(object, value)
+
+class EvidencePassage(CognitiveValue):
+    key: str = Field(min_length=1)
+    views: tuple[ContentReadView, ...]
+    shared: tuple[ContentSelection, ...] = Field(default=(), exclude_if=lambda value: not value)
+    assessment: dict[str, JsonValue] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
-class PassageEvidence(CognitiveValue):
-    key: str
+class EvidenceMaterial(CognitiveValue):
     material: MaterialRef
-    candidate: CandidateRef | None = None
-    fragments: tuple[DeliveredText, ...]
-    support_context: tuple[DeliveredText, ...] = ()
-    scored_ranges: tuple[ContentSelection, ...] = ()
-    shared_context: tuple[ContentSelection, ...] = ()
-    scores: tuple[ScoreValue, ...] = ()
-    assessment: dict[str, JsonValue] | None = None
-    selection_reason: str
+    title: str | None = None
+    passages: tuple[EvidencePassage, ...] = ()
+    rank: int | None = Field(default=None, ge=1)
+    score: float | None = None
+    score_kind: str | None = None
+    delivery_status: DeliveryStatus | None = None
+    needs_review: bool | None = None
 
-    @property
-    def selections(self) -> tuple[ContentSelection, ...]:
-        """Return every original range needed to read this evidence item independently."""
-        return union_selections(
-            (
-                *self.scored_ranges,
-                *(part.content for part in self.fragments),
-                *(part.content for part in self.support_context),
-                *self.shared_context,
+    def sources(self) -> tuple[MaterialSource, ...]:
+        return tuple(
+            MaterialSource(
+                key=part.key,
+                material=self.material,
+                selections=union_selections((*(view.source for view in part.views), *part.shared)),
+                name=self.title,
             )
+            for part in self.passages
         )
 
 
-class RetrievedMaterial(CognitiveValue):
-    material: CognitiveMaterialView
-    rank: int = Field(ge=1)
-    basis: RankEvidence | None = None
-    passage_keys: tuple[str, ...]
-    delivery_status: DeliveryStatus
-
-
 class ContinuationLink(CognitiveValue):
-    target: MaterialRef
+    selection: MaterialSelection
     relation: str
     via: tuple[MaterialRef, ...] = ()
     stage: str | None = None
+    branch: str | None = None
     score: float | None = None
-    route: dict[str, str | None] = Field(default_factory=dict)
+    route: ThinkingRoute | None = None
 
 
 class DeliveryUsage(CognitiveValue):
@@ -249,22 +217,35 @@ class DeliveryUsage(CognitiveValue):
     amount: int = Field(ge=0)
 
 
+class QueryCoverage(TypedDict):
+    truncated: bool
+    recall_exhausted: bool
+    matched: NotRequired[bool]
+    reason: NotRequired[str]
+
+
 class EvidenceDelivery(CognitiveValue):
     intent: QueryIntent
     formed_at: datetime | None = None
-    snapshot: SnapshotRef | None
-    captured_generation: int | None
-    materials: tuple[RetrievedMaterial, ...]
-    passages: tuple[PassageEvidence, ...]
-    coverage: SearchCoverage | None = None
-    branch_coverage: tuple[WaveBranchCoverage, ...] = ()
-    continuation: tuple[ContinuationLink, ...] = ()
-    program: str
-    program_run: ProgramRunFacts | None = None
+    snapshot: SnapshotRef | None = None
+    captured_generation: int | None = None
+    materials: tuple[EvidenceMaterial, ...] = ()
+    coverage: QueryCoverage | None = None
+    branch_coverage: dict[str, QueryCoverage] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    continuation: tuple[ContinuationLink, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    program: str | None = None
+    unavailable_capabilities: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    fallback_from: str | None = None
     budget: DeliveryBudget | None = None
     delivery_usage: DeliveryUsage | None = None
     evaluation: dict[str, JsonValue] | None = None
-    issues: tuple[OperationIssue, ...] = ()
+    issues: tuple[OperationIssue, ...] = Field(default=(), exclude_if=lambda value: not value)
     diagnostics: dict[str, JsonValue] | None = None
 
 

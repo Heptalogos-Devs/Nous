@@ -85,7 +85,7 @@ Path("edits.json").write_text(
 )
 ```
 
-patch/replace 的 `--sources` 接收 SourceChanges JSON（preserve、add、remove）。缺省保留旧目录；add 只列新增 SourceBinding，remove 列旧键。replace --source 等逻辑来源在同一操作内分配不与旧目录冲突的 N 槽；--clear-sources 明确清空目录，正文仍必须通过真实引用校验。
+patch/replace 的 `--sources` 接收 SourceChanges JSON（preserve、add、remove）。缺省保留旧目录；add 只列新增 MaterialSource，remove 列旧键。replace --source 等逻辑来源在同一操作内分配不与旧目录冲突的 N 槽；--clear-sources 明确清空目录，正文仍必须通过真实引用校验。
 
 `journal draft revise "drf(…)" --file complete.md [--sources source-changes.json]` 保存修改后的完整新草稿；随后使用返回的草稿引用执行 adopt。草稿读取默认显示差异，--body 读取完整正文。
 

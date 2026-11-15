@@ -48,8 +48,6 @@ projection_units = sa.Table(
     sa.Column("signature", sa.String, primary_key=True),
     sa.Column("input_signature", sa.String, nullable=False, index=True),
     sa.Column("layout_signature", sa.String, nullable=True, index=True),
-    sa.Column("capture_stamp", sa.String, nullable=True, index=True),
-    sa.Column("projection", sa.JSON, nullable=True),
     sa.Column("document_key", sa.String, nullable=False, index=True),
     sa.Column("document", sa.JSON, nullable=False),
     sa.Column("roots", sa.JSON, nullable=False),

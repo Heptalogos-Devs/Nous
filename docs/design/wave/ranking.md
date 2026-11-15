@@ -27,7 +27,7 @@ RiverMemo 未触发条件 RRF 时，`score_kind` 为 `rivermemo_quality`；触�
 
 `rank.fuse` 在文档分组时让每个输入排名对同一材料组至多贡献一次，未出现在某一路的组在该路贡献为零。等权 RRF 会奖励跨路重合：例如 k=60、两路各取前20组时，两路都排第20的组得分为 `2/80=0.025`，高于只在一路排名第1的 `1/61≈0.01639`。这种次序来自名次政策，是否有利于某项任务取决于该任务的候选与权重。
 
-重复引用同一个排名节点只计算一次；不同节点即使来自同一观测或具有相关输入，仍按各自声明权重贡献，不因此成为独立事实支持。`ProgramRunFacts` 保存实际参与节点的输入引用、展开后的权重和 k，必要时可沿图查看共同祖先；详细候选读出由 trace 保留。
+重复引用同一个排名节点只计算一次；不同节点即使来自同一观测或具有相关输入，仍按各自声明权重贡献，不因此成为独立事实支持。表达式内容保存在查询意图中，详细候选读出由 trace 保留。
 
 默认 dense 使用原问题向量召回；有明确检索情境时，情境词项分支按实际质量贡献融合。缺少向量时入口按配置使用 text_only。hybrid、research、RiverMemo、DTSC 和 TagMemo 作为可配置程序。融合记录其输入来源和权重，程序名和 score_kind 分别表示执行配方和实际数学单位。
 
@@ -48,7 +48,7 @@ WaveHit:
   channels, concept_matches, evidence_roots
   folded_refs, counterevidence_refs
 WaveResult:
-  snapshot_ref, hits, query_summary, algorithm_versions
+  snapshot_ref, hits, query_summary
   scope, coverage, diagnostics?
 ```
 

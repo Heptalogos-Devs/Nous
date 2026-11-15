@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -12,58 +12,95 @@ from nous.cognition.contracts import NamespaceRef
 from nous.cognition.material_contracts import MaterialSelection
 from nous.cognition.steward.contracts import ArrangeReading
 from nous.common.errors import NousError
-from nous.common.operations import OperationIssue, exception_context, report_outcome
-from nous.content.contracts import (
-    ResultOutputRef,
-    ResultRef,
-)
+from nous.common.operations import OperationIssue, report_outcome
+from nous.content.contracts import ResultRef
 from nous.wave.contracts import (
-    DeliveredText,
-    DeliveryStatus,
-    ProgramRunFacts,
-    SelectedContext,
+    SearchCoverage,
     WaveQuery,
     WaveSearchResult,
 )
-from nous.wave.serialization import content_signature
 
+from .adoption import read_saved_evidence
 from .binding import QueryBinder, merge_controls
 from .context import ContextPreparer
 from .contracts import (
-    BoundQueryControls,
     CognitiveGroupContext,
     ContinuationLink,
     DeliveryUsage,
     EvidenceDelivery,
-    PassageEvidence,
+    EvidenceMaterial,
+    EvidencePassage,
     QueryAtom,
     QueryControls,
+    QueryCoverage,
     QueryIntent,
     QueryRequest,
     RetrievalOutcome,
-    RetrievedMaterial,
+    SaveEvidence,
     UsedContext,
 )
 from .nousql import parse_nousql
 
 if TYPE_CHECKING:
+    from nous.cognition.concepts import ConceptOperations
+    from nous.cognition.materials import Materials
+    from nous.cognition.scope import NamespaceOperations
+    from nous.cognition.steward.operations import StewardOperations
+    from nous.cognition.work.operations import WorkOperations
+    from nous.content.artifacts import ArtifactStore
+    from nous.content.results import ResultStore
+    from nous.storage.database import Database
+    from nous.temporal.domains import TimeService
+    from nous.wave.operations import WaveOperations
+
+    from .adoption import EvidenceAdoption
     from .operations import CognitiveRetrieval
 
 
-class QueryExecutor:
-    """Turn one query into an evidence delivery, preserving its completed outputs."""
+def _coverage(value: SearchCoverage) -> QueryCoverage:
+    summary: QueryCoverage = {
+        "truncated": value.truncated,
+        "recall_exhausted": value.recall_exhausted,
+    }
+    if value.ranked_candidates is not None:
+        summary["matched"] = value.ranked_candidates > 0
+    elif value.returned_groups:
+        summary["matched"] = True
+    if value.reason is not None:
+        summary["reason"] = value.reason
+    return summary
 
-    def __init__(self, owner: CognitiveRetrieval):
-        self.owner = owner
-        self.binder = QueryBinder(
-            owner.materials,
-            owner.annotations.concepts,
-            owner.wave,
-            owner.time,
-            owner.artifacts.clock.utc_now(),
-        )
-        self.context = ContextPreparer(
-            owner.work, owner.scope, owner.materials, owner.results, owner.artifacts
+
+class QueryExecutor:
+    """Own the complete query and evidence-adoption operations."""
+
+    def __init__(
+        self,
+        database: Database,
+        scope: NamespaceOperations,
+        artifacts: ArtifactStore,
+        results: ResultStore,
+        wave: WaveOperations,
+        concepts: ConceptOperations,
+        materials: Materials,
+        work: WorkOperations,
+        steward: StewardOperations,
+        time: TimeService,
+        views: CognitiveRetrieval,
+        adoption: EvidenceAdoption,
+    ) -> None:
+        self.database, self.scope = database, scope
+        self.results, self.wave = results, wave
+        self.concepts, self.materials, self.steward = concepts, materials, steward
+        self.time, self.views, self.adoption = time, views, adoption
+        self.context = ContextPreparer(work, scope, materials, results, artifacts)
+
+    async def save_evidence(self, request: SaveEvidence, call: CallContext) -> ResultRef:
+        evidence = request.evidence.model_copy(deep=True)
+        evidence = await self.adoption.validate(evidence)
+        sources = tuple(source for item in evidence.materials for source in item.sources())
+        return await self.adoption.save(
+            evidence, call, sources=sources, retain_snapshot=request.retain_snapshot
         )
 
     async def _direct(
@@ -84,156 +121,75 @@ class QueryExecutor:
                 "input.unsupported_query_control",
                 "Direct material selection does not accept these controls",
             )
-        refs = tuple(
-            dict.fromkeys(
-                [
-                    await self.owner.materials.resolve_identifier(
-                        selector.value, namespace=namespace
-                    )
-                    for selector in controls.selectors
-                ]
-            )
-        )
-        views = list(await self.owner.materials.resolve_many(refs, namespace=namespace))
-        if controls.return_types:
-            views = [
-                view
-                for view in views
-                if view.kind in controls.return_types
-                or (
-                    "cognition" in controls.return_types
-                    and view.kind in self.owner.materials.searchable_kinds()
-                )
-            ]
-        limited = views[: controls.limit] if controls.limit else views
-        budget = request.delivery.budget or self.owner.wave.delivery.default_budget()
-        bodies = tuple(view.body for view in limited if view.body is not None)
-        text_artifacts = {
-            body.artifact.id
-            for body, is_text in zip(
-                bodies, await self.owner.artifacts.text_capabilities(bodies), strict=True
-            )
-            if is_text
-        }
-        counter = await self.owner.wave.delivery.selection_budget(
+        budget = request.delivery.budget
+        batch = await self.materials.read_budgeted(
+            tuple(selector.value for selector in controls.selectors),
             budget,
-            tuple(
-                view.body
-                for view in limited
-                if view.body is not None and view.body.artifact.id in text_artifacts
-            ),
+            namespace=namespace,
+            return_types=controls.return_types,
+            limit=controls.limit,
         )
-        materials: list[RetrievedMaterial] = []
-        passages: list[PassageEvidence] = []
-        continuation: list[ContinuationLink] = []
-        for index, view in enumerate(limited, 1):
-            keys: tuple[str, ...] = ()
-            status: DeliveryStatus = "no_candidates"
-            if view.body is not None and view.body.artifact.id in text_artifacts:
-                selected, truncated = await self.owner.execution.blocking(
-                    counter.fit_prefix, view.body
+        materials: list[EvidenceMaterial] = []
+        continuation = [
+            ContinuationLink(selection=item, relation="read_remaining") for item in batch.remaining
+        ]
+        passage_number = 0
+        for reading in batch.readings:
+            view = reading.material
+            passages: tuple[EvidencePassage, ...] = ()
+            if reading.selections or reading.shared:
+                passage_number += 1
+                passages = (
+                    EvidencePassage(
+                        key=f"E{passage_number}", views=reading.selections, shared=reading.shared
+                    ),
                 )
-                if selected:
-                    content = await self.owner.artifacts.read_selections(selected)
-                    key = f"E{len(passages) + 1}"
-                    passages.append(
-                        PassageEvidence(
-                            key=key,
-                            material=view.ref,
-                            fragments=tuple(
-                                DeliveredText(content=part.content, text=part.text)
-                                for part in content
-                            ),
-                            scored_ranges=tuple(part.content for part in content),
-                            selection_reason="explicit_reference",
-                        )
-                    )
-                    keys = (key,)
-                    status = "selected"
-                    if truncated:
-                        continuation.append(
-                            ContinuationLink(target=view.ref, relation="read_remaining")
-                        )
-                elif truncated:
-                    status = "budget_exhausted"
-                else:
-                    status = "overlap"
             materials.append(
-                RetrievedMaterial(
-                    material=view, rank=index, passage_keys=keys, delivery_status=status
-                )
+                EvidenceMaterial(material=view.ref, title=view.title, passages=passages)
             )
-            if not keys:
-                continuation.append(ContinuationLink(target=view.ref, relation="read"))
             if controls.explore:
                 continuation.extend(
-                    ContinuationLink(target=item.target, relation=item.kind)
-                    for item in view.relations
+                    ContinuationLink(
+                        selection=MaterialSelection(material=item.target), relation=item.kind
+                    )
+                    for item in await self.materials.follow_view(view)
                 )
         intent = QueryIntent(
             original_text=request.text,
             aspects=request.aspects,
-            constraints=BoundQueryControls(controls=controls, namespace=namespace),
-            bound_materials=refs,
+            namespace=namespace,
+            controls=request.controls if request.controls != QueryControls() else None,
+            expression=request.expression,
         )
-        facts: dict[str, JsonValue] = {
-            "name": "direct",
-            "definition_signature": content_signature({"name": "direct"}),
-            "requested_program": None,
-            "selection": "explicit",
-            "requirements": [],
-            "nodes": [],
-            "outputs": {},
-            "options": {},
-            "budget": budget.model_dump(mode="json") if budget else None,
-            "space_id": None,
-            "space_signature": None,
-            "space_definition": None,
-        }
-        program_run = ProgramRunFacts.model_validate(
-            {**facts, "signature": content_signature(facts)}
-        )
-        program_run = self.owner.wave.delivery.budget_facts(program_run, counter)
         return EvidenceDelivery(
             intent=intent,
-            formed_at=self.owner.artifacts.clock.utc_now(),
-            snapshot=None,
-            captured_generation=None,
+            formed_at=self.time.clock.utc_now(),
             materials=tuple(materials),
-            passages=tuple(passages),
             continuation=tuple(continuation),
-            program="direct",
-            program_run=program_run,
             budget=budget,
-            delivery_usage=DeliveryUsage(
-                unit=budget.unit if budget else "characters",
-                amount=counter.used,
-            ),
+            delivery_usage=DeliveryUsage(unit=batch.unit, amount=batch.used),
         )
 
     async def _thinking_links(self, result: WaveSearchResult) -> tuple[ContinuationLink, ...]:
         if not result.thinking or not result.thinking.get("stages"):
             return ()
-        stages = TypeAdapter(list[dict[str, object]]).validate_python(result.thinking["stages"])
-        rows: list[tuple[str, dict[str, object]]] = []
-        for stage in stages:
-            for entry in TypeAdapter(list[dict[str, object]]).validate_python(
-                stage.get("results", [])
-            ):
-                rows.append((str(stage.get("name", "")), entry))
+        rows = [
+            (stage["name"], stage.get("branch"), entry)
+            for stage in result.thinking.get("stages", ())
+            for entry in stage["results"]
+        ]
         keys = tuple(
             dict.fromkeys(
-                str(key)
-                for _, entry in rows
+                key
+                for _, _, entry in rows
                 for key in (
-                    entry.get("candidate"),
-                    *TypeAdapter(list[str]).validate_python(entry.get("parents", [])),
+                    entry["candidate"],
+                    *entry["parents"],
                 )
-                if key is not None
             )
         )
-        descriptors = await self.owner.wave.describe_candidates(result.snapshot, keys)
-        groups = await self.owner.wave.describe_groups(
+        descriptors = await self.wave.describe_candidates(result.snapshot, keys)
+        groups = await self.wave.describe_groups(
             result.snapshot, tuple(dict.fromkeys(item.group_key for item in descriptors))
         )
         references = {
@@ -243,25 +199,24 @@ class QueryExecutor:
             for item in descriptors
         }
         links: list[ContinuationLink] = []
-        for stage, entry in rows:
-            candidate = str(entry.get("candidate"))
-            parents = TypeAdapter(list[str]).validate_python(entry.get("parents", []))
-            route = TypeAdapter(dict[str, str | None]).validate_python(entry.get("route") or {})
-            score = entry.get("score")
+        for stage, branch, entry in rows:
             links.append(
                 ContinuationLink(
-                    target=references[candidate],
-                    relation=str(entry.get("relation") or "thinking"),
-                    via=tuple(dict.fromkeys(references[key] for key in parents)),
+                    selection=MaterialSelection(material=references[entry["candidate"]]),
+                    relation=entry["relation"],
+                    via=tuple(dict.fromkeys(references[key] for key in entry["parents"])),
                     stage=stage,
-                    score=float(score) if isinstance(score, int | float) else None,
-                    route=route,
+                    branch=branch,
+                    score=entry["score"],
+                    route=entry["route"],
                 )
             )
         return tuple(links)
 
     async def run(self, request: QueryRequest, call: CallContext) -> RetrievalOutcome:
-        owner = self.owner
+        binder = QueryBinder(
+            self.materials, self.concepts, self.wave, self.time, self.time.clock.utc_now()
+        )
         expression = request.expression or parse_nousql(request.text)
         root_controls = merge_controls(request.controls, expression.controls)
         if isinstance(expression, QueryAtom) and expression.selectors:
@@ -290,23 +245,17 @@ class QueryExecutor:
             )
         prior_ref = anchor.prior_delivery if anchor and not direct else None
         if isinstance(prior_ref, str):
-            prior_ref = (await owner.results.get(prior_ref)).ref
+            prior_ref = (await self.results.refs((prior_ref,)))[0]
         if anchor and anchor.view == "anchored":
             snapshot_ref = anchor.snapshot
             if snapshot_ref is None and prior_ref is not None:
-                artifact = await owner.results.resolve_output(
-                    ResultOutputRef(result=prior_ref, output="evidence")
-                )
-                prior = EvidenceDelivery.model_validate_json(
-                    await owner.artifacts.read_text(artifact)
-                )
-                snapshot_ref = prior.snapshot
+                snapshot_ref = (await read_saved_evidence(self.results, prior_ref)).snapshot
             if snapshot_ref is None:
                 raise NousError(
                     "input.snapshot_required",
                     "An anchored query requires a snapshot or prior delivery",
                 )
-            snapshot = await owner.wave.describe(snapshot_ref)
+            snapshot = await self.wave.describe(snapshot_ref)
             from nous.wave.contracts import CognitionOwner
 
             if not isinstance(snapshot.owner, CognitionOwner):
@@ -316,32 +265,47 @@ class QueryExecutor:
             )
         else:
             snapshot = None
+        snapshot_issue: OperationIssue | None = None
+        selected = None
         if direct:
-            namespace = await owner.scope.resolve_for(request.namespace)
-            async with owner.database.read() as tx:
-                ns = await owner.scope.get_in(tx, namespace.id)
+            namespace = await self.scope.resolve_for(request.namespace)
+            async with self.database.read() as tx:
+                ns = await self.scope.get_in(tx, namespace.id)
         else:
-            selected = await owner.resolve_options(
+            selected = await self.views.resolve_options(
                 request.namespace,
                 None,
                 root_controls.include_review,
                 root_controls.include_exploration,
                 target=target,
+                explore=root_controls.explore,
             )
             if snapshot is None:
-                ns, snapshot, _ = await owner.current_view(selected)
+                ns, snapshot, current_generation = await self.views.current_view(selected)
+                if snapshot.captured_generation != current_generation:
+                    snapshot_issue = OperationIssue(
+                        stage="retrieval",
+                        code="cognition.snapshot_changed",
+                        message="Material changed; results reflect an earlier view. Search again for the latest material.",
+                        details={
+                            "captured_generation": snapshot.captured_generation,
+                            "observed_generation": current_generation,
+                        },
+                        retryable=True,
+                    )
             else:
-                async with owner.database.read() as tx:
-                    ns = await owner.scope.get_in(tx, selected.namespace)
-                owner.check_owner(snapshot, ns)
+                async with self.database.read() as tx:
+                    ns = await self.scope.get_in(tx, selected.namespace)
+                self.views.check_owner(snapshot, ns)
         async with AsyncExitStack() as stack:
             if snapshot is not None:
-                await stack.enter_async_context(owner.wave.snapshots.hold_reference(snapshot.ref))
+                await stack.enter_async_context(self.wave.snapshots.hold_reference(snapshot.ref))
             retrieval_issues: tuple[OperationIssue, ...] = ()
+            steward_context: tuple[dict[str, str], ...] = ()
             if direct:
                 evidence = await self._direct(request, root_controls, ns.ref)
             else:
-                assert snapshot is not None
+                assert snapshot is not None and selected is not None
                 context_selection = request.context
                 if prior_ref is not None:
                     context_selection = context_selection.model_copy(
@@ -355,20 +319,15 @@ class QueryExecutor:
                 fragments, sources_by_key = await self.context.prepare(
                     context_selection, ns.ref, anchor.selections if anchor else (), call
                 )
-                (
-                    bound,
-                    bound_materials,
-                    bound_concepts,
-                    bound_branches,
-                ) = await self.binder.bind_expression(
+                bound = await binder.bind_expression(
                     expression, request.controls, ns.ref, snapshot.ref.identifier, call, root=True
                 )
-                result = await owner.wave.query(
+                result = await self.wave.query(
                     WaveQuery(
                         snapshot=snapshot.ref.identifier,
                         text=request.text
                         if request.expression is not None and request.text.strip()
-                        else self.binder.expression_text(expression),
+                        else binder.expression_text(expression),
                         expression=bound,
                         aspects=request.aspects,
                         grouping="document",
@@ -383,22 +342,27 @@ class QueryExecutor:
                         delivery_budget=request.delivery.budget,
                     ),
                     call=call,
+                    selection=selected.selection,
                 )
-                selected_context = TypeAdapter(tuple[SelectedContext, ...]).validate_python(
-                    result.context_summary.get("selected_context", [])
+                selected_context = result.selected_context
+                steward_context = tuple(
+                    {"role": item.role, "text": item.text} for item in selected_context if item.text
                 )
                 used: list[UsedContext] = []
                 for item in selected_context:
                     source = sources_by_key.get(item.key)
-                    if source is None and item.content is not None:
+                    if item.content is not None:
                         source = MaterialSelection(
-                            material=item.content.artifact, selections=(item.content,)
+                            material=source.material
+                            if source is not None
+                            else item.content.artifact,
+                            selections=(item.content,),
                         )
                     used.append(
                         UsedContext(
                             key=item.key,
                             source=source,
-                            text=item.text,
+                            text=None if item.content is not None else item.text,
                             role=item.role,
                             stage=item.stage,
                             parent_key=item.parent_key or item.key,
@@ -408,40 +372,31 @@ class QueryExecutor:
                 intent = QueryIntent(
                     original_text=request.text,
                     aspects=request.aspects,
-                    constraints=BoundQueryControls(
-                        controls=root_controls.model_copy(
-                            update={
-                                "times": await self.binder.time_conditions(root_controls),
-                                "time_clauses": (),
-                            }
-                        ),
-                        namespace=ns.ref,
-                        branches=bound_branches,
-                    ),
+                    namespace=ns.ref,
+                    controls=request.controls if request.controls != QueryControls() else None,
                     context=tuple(used),
-                    bound_materials=bound_materials,
-                    bound_concepts=bound_concepts,
-                    expression=expression,
+                    expression=request.expression,
                 )
-                materials: list[RetrievedMaterial] = []
-                passages: list[PassageEvidence] = []
+                materials: list[EvidenceMaterial] = []
+                group_diagnostics: list[JsonValue] = []
+                passage_diagnostics: dict[str, JsonValue] = {}
+                passage_number = 0
                 continuation: list[ContinuationLink] = []
                 contexts = tuple(
                     CognitiveGroupContext.model_validate(hit.group.context) for hit in result.groups
                 )
-                views = await owner.materials.resolve_many(
+                views = await self.materials.resolve_many(
                     tuple(context.material for context in contexts), namespace=ns.ref
                 )
                 for hit, context, view in zip(result.groups, contexts, views, strict=True):
-                    view = view.model_copy(update={"attributes": context.attributes})
-                    keys: list[str] = []
+                    reading_parts: list[EvidencePassage] = []
                     for passage in hit.passages:
+                        actual_views = (*passage.fragments, *passage.support_context)
                         if (
                             any(
                                 content.artifact != view.body.artifact
                                 for content in (
-                                    *(fragment.content for fragment in passage.fragments),
-                                    *(fragment.content for fragment in passage.support_context),
+                                    *(fragment.source for fragment in actual_views),
                                     *passage.scored_ranges,
                                     *passage.shared_context,
                                 )
@@ -453,79 +408,121 @@ class QueryExecutor:
                                 "cognition.selection_mismatch",
                                 "Delivered content does not belong to its material",
                             )
-                        key = f"E{len(passages) + 1}"
-                        keys.append(key)
-                        passages.append(
-                            PassageEvidence(
+                        passage_number += 1
+                        key = f"E{passage_number}"
+                        reading_parts.append(
+                            EvidencePassage(
                                 key=key,
-                                material=view.ref,
-                                candidate=passage.candidate,
-                                fragments=passage.fragments,
-                                support_context=passage.support_context,
-                                scored_ranges=passage.scored_ranges,
-                                shared_context=passage.shared_context,
-                                scores=passage.scores,
+                                views=actual_views,
+                                shared=passage.shared_context,
                                 assessment=passage.assessment,
-                                selection_reason=passage.reason,
                             )
                         )
+                        if root_controls.diagnostics:
+                            passage_diagnostics[key] = passage.model_dump(
+                                mode="json",
+                                exclude={
+                                    "fragments",
+                                    "support_context",
+                                    "shared_context",
+                                    "assessment",
+                                },
+                            )
                     materials.append(
-                        RetrievedMaterial(
-                            material=view,
+                        EvidenceMaterial(
+                            material=view.ref,
+                            title=view.title,
+                            passages=tuple(reading_parts),
                             rank=hit.rank,
-                            basis=hit.basis,
-                            passage_keys=tuple(keys),
+                            score=hit.basis.ranking_score,
+                            score_kind=hit.basis.score_kind,
                             delivery_status=hit.delivery_status,
+                            needs_review=context.needs_review,
                         )
                     )
-                    if not keys:
-                        continuation.append(ContinuationLink(target=view.ref, relation="read"))
+                    if root_controls.diagnostics:
+                        group_diagnostics.append(
+                            {"rank": hit.rank, "basis": hit.basis.model_dump(mode="json")}
+                        )
+                    if not reading_parts:
+                        continuation.append(
+                            ContinuationLink(
+                                selection=MaterialSelection(material=view.ref), relation="read"
+                            )
+                        )
                     if root_controls.explore:
                         continuation.extend(
-                            ContinuationLink(target=item.target, relation=item.kind)
-                            for item in view.relations
+                            ContinuationLink(
+                                selection=MaterialSelection(material=item.target),
+                                relation=item.kind,
+                            )
+                            for item in await self.materials.follow_view(view)
                         )
                 if root_controls.explore:
                     continuation.extend(await self._thinking_links(result))
                 retrieval_issues = tuple(
                     TypeAdapter(OperationIssue).validate_python(issue) for issue in result.issues
                 )
+                if snapshot_issue is not None:
+                    retrieval_issues = (*retrieval_issues, snapshot_issue)
                 evaluation = result.context_summary.get("evaluation")
-                effective_budget = (
-                    result.program_run.budget if result.program_run else request.delivery.budget
-                )
+                effective_budget = result.budget
                 usage_unit = effective_budget.unit if effective_budget else "characters"
                 usage_amount = result.context_summary.get(f"delivered_{usage_unit}")
+                branches = {item.name: _coverage(item.coverage) for item in result.branch_coverage}
+                if len(branches) < 2 or all(
+                    value == next(iter(branches.values())) for value in branches.values()
+                ):
+                    branches = {}
                 evidence = EvidenceDelivery(
                     intent=intent,
-                    formed_at=owner.artifacts.clock.utc_now(),
+                    formed_at=self.time.clock.utc_now(),
                     snapshot=snapshot.ref,
                     captured_generation=snapshot.captured_generation,
                     materials=tuple(materials),
-                    passages=tuple(passages),
-                    coverage=result.coverage,
-                    branch_coverage=result.branch_coverage,
+                    coverage=_coverage(result.coverage),
+                    branch_coverage=branches,
                     continuation=tuple(continuation),
                     program=result.program,
-                    program_run=result.program_run,
+                    unavailable_capabilities=result.unavailable_capabilities
+                    if result.fallback_from
+                    else (),
+                    fallback_from=result.fallback_from,
                     budget=effective_budget,
                     delivery_usage=DeliveryUsage(unit=usage_unit, amount=usage_amount)
                     if isinstance(usage_amount, int) and not isinstance(usage_amount, bool)
                     else None,
-                    evaluation=TypeAdapter(dict[str, JsonValue]).validate_python(evaluation)
+                    evaluation=cast(dict[str, JsonValue], evaluation)
                     if isinstance(evaluation, dict)
                     else None,
                     issues=retrieval_issues,
-                    diagnostics=result.diagnostics,
+                    diagnostics={
+                        **(result.diagnostics or {}),
+                        "groups": group_diagnostics,
+                        "passages": passage_diagnostics,
+                        "coverage": result.coverage.model_dump(mode="json"),
+                        "branch_coverage": [
+                            item.model_dump(mode="json") for item in result.branch_coverage
+                        ],
+                    }
+                    if root_controls.diagnostics
+                    else None,
                 )
             await call.events.emit(Progress(stage="retrieval", completed=1, total=1))
             evidence_ref = None
+            sources = ()
             if request.save or steward_policy in {"optional", "required"}:
-                evidence_ref = await owner.evidence_adoption.save(
-                    evidence, call, retain_snapshot=bool(anchor and anchor.view == "anchored")
+                sources = tuple(
+                    source for material in evidence.materials for source in material.sources()
+                )
+                evidence_ref = await self.adoption.save(
+                    evidence,
+                    call,
+                    sources=sources,
+                    retain_snapshot=bool(anchor and anchor.view == "anchored"),
                 )
             reading = reading_ref = None
-            issues = list(retrieval_issues)
+            issues: list[OperationIssue] = []
             if retrieval_issues:
                 report_outcome(
                     "partial",
@@ -536,45 +533,53 @@ class QueryExecutor:
                     await call.events.emit(Notice(issue=issue))
             if steward_policy in {"optional", "required"}:
                 assert evidence_ref is not None
-                latest_evidence = evidence_ref
                 try:
-                    arranged = await owner.steward.arrange(
+                    arranged = await self.steward.arrange_sources(
                         ArrangeReading(
                             evidence=evidence_ref,
+                            namespace=ns.ref,
+                            question=evidence.intent.original_text,
+                            aspects=evidence.intent.aspects,
+                            context=steward_context,
                             purpose=request.delivery.purpose,
                             detail=request.delivery.detail,
                             output_language=request.delivery.output_language,
                         ),
+                        sources,
                         call,
                     )
-                    latest_evidence = arranged.evidence_ref
                     reading, reading_ref = arranged.brief, arranged.reading_ref
-                    issues.extend(arranged.issues)
                 except EventDeliveryError:
                     raise
                 except Exception as error:
                     if steward_policy == "required":
                         raise
-                    completed = exception_context(error).get("evidence_ref")
-                    if completed is not None:
-                        latest_evidence = ResultRef.model_validate(completed)
                     issue = OperationIssue(
                         stage="steward",
                         code=error.code if isinstance(error, NousError) else "steward.failed",
                         message=str(error),
-                        completed_refs=(latest_evidence.model_dump(mode="json"),),
+                        details=(
+                            {
+                                **error.details,
+                                **(
+                                    {"retry_after": error.retry_after}
+                                    if error.retry_after is not None
+                                    else {}
+                                ),
+                            }
+                            if isinstance(error, NousError)
+                            else {}
+                        ),
+                        retryable=error.retryable if isinstance(error, NousError) else False,
+                        completed_refs=(evidence_ref.model_dump(mode="json"),),
                     )
                     issues.append(issue)
-                    report_outcome("partial", issues=issues, completed_refs=(latest_evidence,))
+                    report_outcome(
+                        "partial",
+                        issues=(*retrieval_issues, *issues),
+                        completed_refs=(evidence_ref,),
+                    )
                     await call.events.emit(Notice(issue=issue))
-                if latest_evidence != evidence_ref:
-                    artifact = await owner.results.resolve_output(
-                        ResultOutputRef(result=latest_evidence, output="evidence")
-                    )
-                    evidence = EvidenceDelivery.model_validate_json(
-                        await owner.artifacts.read_text(artifact)
-                    )
-                    evidence_ref = latest_evidence
             return RetrievalOutcome(
                 evidence=evidence,
                 evidence_ref=evidence_ref,

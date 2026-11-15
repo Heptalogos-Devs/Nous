@@ -140,10 +140,11 @@ class TranscriptionOperations:
                 selected_inputs=SelectedInputs(
                     sources=(
                         SelectedSource(
-                            slot_key=group.slot_key,
-                            role=group.role,
+                            key=group.slot_key,
+                            kind=group.role,
+                            material=origins[0].artifact,
                             selections=origins,
-                            display_name=source.name,
+                            name=source.name,
                         ),
                     )
                 ),
@@ -152,7 +153,6 @@ class TranscriptionOperations:
                     mode="json"
                 ),
                 parameters={
-                    "cache_key": key,
                     "usage": generated.usage,
                     "attempts": generated.attempts,
                 },
@@ -176,6 +176,7 @@ class TranscriptionOperations:
                         representation_kind="transcript",
                     )
                 },
+                cache_key=key,
             )
 
     async def language_sources(

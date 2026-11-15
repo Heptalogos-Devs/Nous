@@ -123,11 +123,22 @@ def application_call[Q, R](
 
         async def invoke(app: Application, execution: ExecutionManager) -> R:
             if prepare is not None:
+                captured = app.parse(cast(OperationDefinition[object, object], operation), request)
                 async with execution.request(operation.name, timeout=timeout) as context:
                     prepared, bindings = await prepare(
-                        request, inputs or {}, context.settings.values.content.text_read_max_bytes
+                        cast(Q, captured.value),
+                        inputs or {},
+                        context.settings.values.content.text_read_max_bytes,
                     )
-                    return await app.call(operation, prepared, inputs=bindings, observer=observer)
+                    parsed = app.parse(
+                        cast(OperationDefinition[object, object], operation), prepared
+                    )
+                    return cast(
+                        R,
+                        await app.call_parsed(
+                            parsed, execution=context, inputs=bindings, observer=observer
+                        ),
+                    )
             return await app.call(
                 operation, request, inputs=inputs, observer=observer, timeout=timeout
             )
@@ -193,7 +204,7 @@ def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
 def emit_content_view(view: ContentReadView) -> None:
     """Render the shared content view for text and media using existing representations."""
     language = language_for(current_options.get())
-    typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.identifier}")
+    typer.echo(f"{view.name} · {view.media_type} · {view.source.artifact.identifier}")
     if view.detected_media_type and view.detected_media_type != view.media_type:
         typer.echo(f"{translate('Detected type', language)}: {view.detected_media_type}")
     selection = view.source.selection.model_dump(

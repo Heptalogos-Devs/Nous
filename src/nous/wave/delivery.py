@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from pathlib import Path
-from typing import Literal, cast
+from collections.abc import Awaitable, Callable
+from typing import Literal, NotRequired, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from typing_extensions import TypedDict
 
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
@@ -16,30 +16,32 @@ from nous.content.budget import SelectionBudget
 from nous.content.contracts import ContentSelection, SourceSelection
 from nous.content.selections import subtract_selection
 from nous.content.text import TextView
-from nous.runtime.execution import ExecutionManager
 
 from .contracts import (
+    BranchThinkingUnavailable,
     CandidateHit,
     CandidateRef,
     ChannelScore,
-    DeliveredText,
-    DeliveryBudget,
     DeliveryStatus,
     GroupDescriptor,
     GroupHit,
     PassageDelivery,
-    ProgramRunFacts,
     RankEvidence,
     ScoreValue,
     SearchCoverage,
+    SelectedContext,
     SnapshotRef,
+    ThinkingReadout,
+    ThinkingResult,
+    ThinkingRoute,
+    ThinkingStageResult,
+    ThinkingUnavailable,
     WaveBranchCoverage,
     WaveQuery,
     WaveSearchResult,
 )
-from .mapping import SnapshotRow
-from .program import delivery_budget, resolve_program
-from .serialization import content_signature
+from .mapping import CandidateMapping, SnapshotRow
+from .program import ProgramSelection
 
 
 class _NativeValue(BaseModel):
@@ -96,6 +98,37 @@ class _NativeGroup(_NativeValue):
     passages: tuple[_NativePassage, ...]
 
 
+class _NativeThinkingRoute(TypedDict):
+    sourceId: int
+    targetId: int
+    previousId: int | None
+    hop: int
+    flow: float
+    wormhole: bool
+    immediateReturn: bool
+
+
+class _NativeThinkingResult(TypedDict):
+    row: int
+    parents: tuple[int, ...]
+    score: float
+    relation: str
+    chosen_path: int | None
+    route: _NativeThinkingRoute | None
+
+
+class _NativeThinkingStage(TypedDict):
+    name: str
+    results: tuple[_NativeThinkingResult, ...]
+    branch: NotRequired[str]
+
+
+class _NativeThinking(TypedDict):
+    stages: NotRequired[tuple[_NativeThinkingStage, ...]]
+    unavailable: NotRequired[ThinkingUnavailable]
+    branch_unavailable: NotRequired[tuple[BranchThinkingUnavailable, ...]]
+
+
 class _NativeReadout(_NativeValue):
     """Native row identities and score fields terminate at the Wave query seam."""
 
@@ -109,8 +142,7 @@ class _NativeReadout(_NativeValue):
     rank_scope: str
     coverage: SearchCoverage
     branch_coverage: tuple[WaveBranchCoverage, ...] = ()
-    algorithm_versions: dict[str, str]
-    thinking: dict[str, JsonValue] | None
+    thinking: _NativeThinking | None
     diagnostics: dict[str, JsonValue] | None
 
 
@@ -154,89 +186,24 @@ class WaveDelivery:
         self,
         artifacts: ArtifactStore,
         instance_id: str,
-        execution: ExecutionManager,
-        config_root: Path,
     ) -> None:
         self.artifacts = artifacts
         self.instance_id = instance_id
-        self.execution = execution
-        self.config_root = config_root
-
-    def default_budget(self) -> DeliveryBudget | None:
-        return delivery_budget(resolve_program(self.execution.snapshot.values.wave))
-
-    async def selection_budget(
-        self,
-        budget: DeliveryBudget | None,
-        selections: Sequence[ContentSelection],
-        *,
-        views: Mapping[str, TextView] | None = None,
-        program_run: ProgramRunFacts | None = None,
-    ) -> SelectionBudget:
-        """Prepare shared source-range accounting for a complete delivery."""
-        available = dict(views or {})
-        missing = tuple(
-            dict.fromkeys(
-                value.artifact for value in selections if value.artifact.id not in available
-            )
-        )
-        if missing:
-            loaded = await self.artifacts.text_views(
-                tuple(ContentSelection(artifact=artifact) for artifact in missing)
-            )
-            available.update(
-                {artifact.id: view for artifact, view in zip(missing, loaded, strict=True)}
-            )
-        path = None
-        configured = None
-        tokenizer_digest = None
-        if budget is not None and budget.unit == "tokens":
-            if program_run is not None:
-                configured = program_run.options.get("tokenizer_path")
-                tokenizer_digest = program_run.options.get("tokenizer_digest")
-                if not isinstance(configured, str) or not isinstance(tokenizer_digest, str):
-                    raise NousError("content.tokenizer_unavailable", "Saved delivery has no tokenizer identity")
-            else:
-                configured = self.execution.snapshot.values.wave.query.tokenizer_path
-            if configured is not None:
-                path = Path(configured)
-                path = (self.config_root / path if not path.is_absolute() else path).resolve()
-        return await self.execution.blocking(
-            SelectionBudget,
-            available,
-            amount=budget.amount if budget else None,
-            unit=budget.unit if budget else "characters",
-            tokenizer_path=path,
-            tokenizer_digest=tokenizer_digest,
-            tokenizer_name=configured,
-        )
-
-    @staticmethod
-    def budget_facts(facts: ProgramRunFacts, counter: SelectionBudget) -> ProgramRunFacts:
-        """Keep the tokenizer identity actually used with a saved delivery."""
-        if counter.unit != "tokens":
-            return facts
-        value = facts.model_dump(mode="json", exclude={"signature"})
-        value["options"] = {
-            **value["options"],
-            "tokenizer_path": counter.tokenizer_name,
-            "tokenizer_digest": counter.tokenizer_digest,
-        }
-        return ProgramRunFacts.model_validate({**value, "signature": content_signature(value)})
 
     async def locate(
         self,
         request: WaveQuery,
         row: SnapshotRow,
-        result: str,
+        result: object,
         query_summary: dict[str, object],
-        program_run: ProgramRunFacts | None = None,
+        selected_context: tuple[SelectedContext, ...],
+        selection: ProgramSelection,
     ) -> LocatedResult:
         mapping = row["mapping"]
         candidates = mapping["candidates"]
         concepts = mapping["concepts"]
         try:
-            values = _NativeReadout.model_validate_json(result)
+            values = _NativeReadout.model_validate(result)
         except ValidationError as error:
             raise NousError(
                 "wave.invalid_native_result", "Native returned an invalid query result", cause=error
@@ -311,7 +278,7 @@ class WaveDelivery:
                     ChannelScore(channel=name, rank=ranks.get(name), score=scores.get(name))
                     for name in names
                 ),
-                details=TypeAdapter(dict[str, JsonValue]).validate_python(explanation),
+                details=cast(dict[str, JsonValue], explanation),
             )
 
         if values.grouping == "document":
@@ -430,43 +397,76 @@ class WaveDelivery:
                 LocatedHit(basis=ranking(hit), passage=next(deliveries))
                 for hit in raw_hits.values()
             ]
-        thinking = values.thinking
-        if isinstance(thinking, dict):
-            thinking = cast(dict[str, object], thinking)
-            for stage_value in cast(list[dict[str, object]], thinking.get("stages", [])):
-                for item in cast(list[dict[str, object]], stage_value.get("results", [])):
-                    candidate = candidates[cast(int, item.pop("row"))]
-                    item["candidate"] = candidate["key"]
-                    chosen = item.get("chosen_path")
-                    item["chosen_path"] = (
-                        candidate["paths"][cast(int, chosen)] if chosen is not None else None
-                    )
-                    item["parents"] = [
-                        candidates[index]["key"]
-                        for index in cast(list[int], item.get("parents", []))
-                    ]
-                    route = item.get("route")
-                    if isinstance(route, dict):
-                        route = cast(dict[str, object], route)
-                        for field, output_field in (
-                            ("sourceId", "source"),
-                            ("targetId", "target"),
-                            ("previousId", "previous"),
-                        ):
-                            concept_id = route.pop(field, None)
-                            if concept_id is None:
-                                route[output_field] = None
-                                continue
-                            if (
-                                not isinstance(concept_id, int)
-                                or isinstance(concept_id, bool)
-                                or not 1 <= concept_id <= len(concepts)
-                            ):
-                                raise NousError(
-                                    "wave.invalid_native_result",
-                                    "Thinking route references an unknown concept",
-                                )
-                            route[output_field] = concepts[concept_id - 1]["key"]
+        thinking: ThinkingReadout | None = None
+        if values.thinking is not None:
+            native_thinking = values.thinking
+            thinking = ThinkingReadout()
+            if "unavailable" in native_thinking:
+                thinking["unavailable"] = native_thinking["unavailable"]
+            if "branch_unavailable" in native_thinking:
+                thinking["branch_unavailable"] = native_thinking["branch_unavailable"]
+            if "stages" in native_thinking:
+                stages: list[ThinkingStageResult] = []
+
+                def candidate_at(index: int) -> CandidateMapping:
+                    if not 0 <= index < len(candidates):
+                        raise NousError(
+                            "wave.invalid_native_result",
+                            "Thinking route references an unknown candidate",
+                        )
+                    return candidates[index]
+
+                def concept_at(index: int | None) -> str | None:
+                    if index is None:
+                        return None
+                    if not 1 <= index <= len(concepts):
+                        raise NousError(
+                            "wave.invalid_native_result",
+                            "Thinking route references an unknown concept",
+                        )
+                    return concepts[index - 1]["key"]
+
+                for stage in native_thinking["stages"]:
+                    results: list[ThinkingResult] = []
+                    for item in stage["results"]:
+                        candidate = candidate_at(item["row"])
+                        chosen = item["chosen_path"]
+                        if chosen is not None and not 0 <= chosen < len(candidate["paths"]):
+                            raise NousError(
+                                "wave.invalid_native_result",
+                                "Thinking route references an unknown path",
+                            )
+                        native_route = item["route"]
+                        route: ThinkingRoute | None = None
+                        if native_route is not None:
+                            route = ThinkingRoute(
+                                source=concept_at(native_route["sourceId"]),
+                                target=concept_at(native_route["targetId"]),
+                                previous=concept_at(native_route["previousId"]),
+                                hop=native_route["hop"],
+                                flow=native_route["flow"],
+                                wormhole=native_route["wormhole"],
+                                immediateReturn=native_route["immediateReturn"],
+                            )
+                        results.append(
+                            ThinkingResult(
+                                candidate=candidate["key"],
+                                parents=tuple(
+                                    candidate_at(index)["key"] for index in item["parents"]
+                                ),
+                                score=item["score"],
+                                relation=item["relation"],
+                                chosen_path=cast(dict[str, JsonValue], candidate["paths"][chosen])
+                                if chosen is not None
+                                else None,
+                                route=route,
+                            )
+                        )
+                    mapped = ThinkingStageResult(name=stage["name"], results=tuple(results))
+                    if "branch" in stage:
+                        mapped["branch"] = stage["branch"]
+                    stages.append(mapped)
+                thinking["stages"] = tuple(stages)
         search_groups: list[LocatedGroup] = []
         for group in values.groups:
             descriptor = GroupDescriptor.model_validate(mapping["groups"][group.group_key])
@@ -495,7 +495,9 @@ class WaveDelivery:
                 instance_id=self.instance_id, id=row["id"], identifier=row["identifier"]
             ),
             program=values.program,
-            program_run=program_run,
+            program_selection=selection.source,
+            unavailable_capabilities=selection.unavailable_capabilities,
+            fallback_from=selection.fallback_from,
             score_kind=values.score_kind,
             used_lanes=values.used_lanes,
             skipped_lanes=values.skipped_lanes,
@@ -503,16 +505,11 @@ class WaveDelivery:
             groups=(),
             grouping=values.grouping,
             rank_scope=values.rank_scope,
-            context_summary=TypeAdapter(dict[str, JsonValue]).validate_python(query_summary),
-            cue_summary=tuple({"label": cue.label, "is_core": cue.is_core} for cue in request.cues),
-            algorithm_versions=values.algorithm_versions,
-            scope={
-                "source_roots": len(mapping["roots"]),
-                "candidate_filter": request.candidate_filter is not None,
-            },
+            context_summary=cast(dict[str, JsonValue], query_summary),
+            selected_context=selected_context,
             coverage=values.coverage,
             branch_coverage=values.branch_coverage,
-            thinking=TypeAdapter(dict[str, JsonValue] | None).validate_python(thinking),
+            thinking=thinking,
             diagnostics=values.diagnostics if request.include_trace else None,
         )
         return LocatedResult(
@@ -527,17 +524,13 @@ class WaveDelivery:
             else [hit.passage for hit in result.hits]
         )
         refs = tuple(ref for part in proposals for ref in (*part.fragments, *part.support_context))
-        values = iter(await self.artifacts.read_selections(refs) if refs else ())
+        values = iter(
+            await self.artifacts.read_view_many(refs, representations="none") if refs else ()
+        )
 
         def deliver(part: PassageProposal) -> PassageDelivery:
-            fragments = tuple(
-                DeliveredText(content=item.content, text=item.text)
-                for item in (next(values) for _ in part.fragments)
-            )
-            support = tuple(
-                DeliveredText(content=item.content, text=item.text)
-                for item in (next(values) for _ in part.support_context)
-            )
+            fragments = tuple(next(values) for _ in part.fragments)
+            support = tuple(next(values) for _ in part.support_context)
             return PassageDelivery(
                 candidate=part.candidate,
                 scored_ranges=part.scored_ranges,

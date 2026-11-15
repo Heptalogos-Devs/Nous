@@ -1,41 +1,37 @@
 """Shared, exact identities and reading values for cognitive material."""
 
-from pydantic import Field, JsonValue, model_validator
+from typing import Literal
 
-from nous.cognition.concept_contracts import AnnotationView
-from nous.cognition.contracts import (
-    CognitiveValue,
-    NamespaceRef,
-    NamespaceSelector,
-    RecordRevisionRef,
-    SourceBinding,
-)
-from nous.cognition.work.refs import WorkRevisionRef
+from pydantic import Field, model_validator
+
+from nous.cognition.contracts import CognitiveValue, NamespaceSelector
+from nous.common.material_refs import RecordRevisionRef, WorkRevisionRef
 from nous.content.contracts import (
     ArtifactRef,
     ContentReadView,
     ContentSelection,
-    ResultOutputRef,
+    MaterialRef,
+    MaterialSource,
     ResultRef,
 )
 from nous.temporal.values import CognitiveTimes
 
-type MaterialRef = RecordRevisionRef | ArtifactRef | ResultOutputRef | WorkRevisionRef
+
+def material_kind(
+    ref: MaterialRef,
+) -> Literal["note", "journal", "work", "artifact", "result_output"]:
+    if isinstance(ref, RecordRevisionRef):
+        return ref.record_ref.kind
+    if isinstance(ref, WorkRevisionRef):
+        return "work"
+    if isinstance(ref, ArtifactRef):
+        return "artifact"
+    return "result_output"
 
 
 class MaterialSelection(CognitiveValue):
     material: MaterialRef
     selections: tuple[ContentSelection, ...] = ()
-
-
-class MaterialSource(CognitiveValue):
-    """One task-local source key bound to an exact formal material and ranges."""
-
-    key: str = Field(min_length=1)
-    material: MaterialRef
-    selections: tuple[ContentSelection, ...] = Field(min_length=1)
-    kind: str = Field(default="source", min_length=1)
-    name: str | None = None
 
 
 class MaterialRelation(CognitiveValue):
@@ -52,65 +48,33 @@ class MaterialSection(CognitiveValue):
     structural_context: tuple[ContentSelection, ...] = ()
 
 
-class MaterialAttributes(CognitiveValue):
-    schema_key: str = Field(min_length=1)
-    values: dict[str, JsonValue]
-
-
 class CognitiveMaterialView(CognitiveValue):
     ref: MaterialRef
-    kind: str
     title: str | None = None
+    media_type: str | None = None
     body: ContentSelection | None = None
-    sections: tuple[MaterialSection, ...] = ()
-    sources: tuple[SourceBinding, ...] = ()
+    sections: tuple[MaterialSection, ...] | None = None
     material_sources: tuple[MaterialSource, ...] = ()
     relations: tuple[MaterialRelation, ...] = ()
     times: CognitiveTimes | None = None
-    attributes: MaterialAttributes
 
-
-class MaterialRoot(CognitiveValue):
-    """One formal independent source identity and its original witness."""
-
-    key: str = Field(min_length=1)
-    artifact: ArtifactRef
-
-
-class MaterialIndex(CognitiveValue):
-    """Owner facts used to select and project this material for retrieval."""
-
-    key: str = Field(min_length=1)
-    group_key: str = Field(min_length=1)
-    namespace: NamespaceRef | None = None
-    available: bool = True
-    opt_in: str | None = None
-    purpose: str | None = None
-    needs_review: bool = False
-    annotation: AnnotationView | None = None
-    interpretation: bool = False
-    root: MaterialRoot | None = None
-    provenance: ArtifactRef | None = None
-    support_relations: tuple[MaterialRelation, ...] = ()
-
-
-class MaterialSnapshot(CognitiveValue):
-    """Owner facts and immutable body identity captured in one read transaction."""
-
-    view: CognitiveMaterialView
-    body_digest: str | None
-    index: MaterialIndex
-
-
-class MaterialSourceRead(CognitiveValue):
-    source: MaterialSource
-    views: tuple[ContentReadView, ...]
+    @property
+    def kind(self) -> str:
+        return material_kind(self.ref)
 
 
 class MaterialRead(CognitiveValue):
     material: CognitiveMaterialView
     selections: tuple[ContentReadView, ...]
-    sources: tuple[MaterialSourceRead, ...] = ()
+    shared: tuple[ContentSelection, ...] = ()
+    sources: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
+
+
+class MaterialReadBatch(CognitiveValue):
+    readings: tuple[MaterialRead, ...]
+    remaining: tuple[MaterialSelection, ...] = ()
+    used: int = Field(ge=0)
+    unit: Literal["characters", "bytes", "tokens"]
 
 
 class ReadMaterial(CognitiveValue):
@@ -120,6 +84,7 @@ class ReadMaterial(CognitiveValue):
     key: str | None = None
     namespace: NamespaceSelector = None
     blocks: tuple[str, ...] = ()
+    structure: bool = False
     sources: bool = False
 
     @model_validator(mode="after")

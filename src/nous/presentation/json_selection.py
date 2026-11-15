@@ -1,14 +1,13 @@
 """Select fields from serialized operation results using JSON Pointer."""
 
 from collections.abc import Sequence
+from typing import cast
 
 from jsonpointer import JsonPointer, JsonPointerException, resolve_pointer
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import JsonValue
 from pydantic_core import to_jsonable_python
 
 from nous.common.errors import NousError
-
-_JSON = TypeAdapter(JsonValue)
 
 
 def validate_json_pointers(pointers: Sequence[str]) -> tuple[str, ...]:
@@ -28,14 +27,16 @@ def validate_json_pointers(pointers: Sequence[str]) -> tuple[str, ...]:
 
 def select_json(value: object, pointers: Sequence[str] = ()) -> JsonValue:
     """Return the complete JSON value or the values at the requested pointers."""
-    document = _JSON.validate_python(to_jsonable_python(value, round_trip=False))
+    document = cast(
+        JsonValue, to_jsonable_python(value, round_trip=False, exclude_none=not pointers)
+    )
     if not pointers:
         return document
     result: dict[str, JsonValue] = {}
-    for pointer in validate_json_pointers(pointers):
+    for pointer in dict.fromkeys(pointers):
         try:
-            result[pointer] = _JSON.validate_python(resolve_pointer(document, pointer))
-        except (JsonPointerException, ValidationError, TypeError, ValueError) as error:
+            result[pointer] = cast(JsonValue, resolve_pointer(document, pointer))
+        except (JsonPointerException, TypeError, ValueError) as error:
             raise NousError(
                 "input.invalid_selection",
                 "JSON pointer does not identify a result field",

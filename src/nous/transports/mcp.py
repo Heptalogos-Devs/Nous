@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mcp.server import Server, ServerRequestContext
 from mcp.types import (
@@ -22,7 +22,8 @@ from nous.application.inputs import StreamInput
 from nous.cognition.material_contracts import MaterialRead
 from nous.cognition.retrieval.contracts import RetrievalOutcome
 from nous.common.errors import NousError
-from nous.content.contracts import ExportOffer
+from nous.content.contracts import ExportContent
+from nous.content.operations import EXPORT_CONTENT
 from nous.presentation import select_language
 from nous.presentation.evidence import format_material_read, format_retrieval
 from nous.presentation.json_selection import select_json, validate_json_pointers
@@ -192,6 +193,7 @@ def create_mcp_server(
             display: str | None = None
             if params.name == "content.upload":
                 item = InlineInput.model_validate(arguments)
+                parsed = app.parse("content.accept", {"key": "content", "name": item.name})
                 if len(item.data) > ((max_inline_bytes + 2) // 3) * 4:
                     raise NousError(
                         "input.too_large",
@@ -203,24 +205,22 @@ def create_mcp_server(
                         "input.too_large",
                         "Content exceeds the MCP inline limit; use a streaming transport",
                     )
-                value = await app.call_name(
-                    "content.accept",
-                    {"key": "content", "name": item.name},
+                value = await app.call_parsed(
+                    parsed,
                     inputs={"content": StreamInput((data,), name=item.name, source=item.source)},
                     select=pointers,
                 )
             elif params.name == "content.download":
                 ref = TypeAdapter(str).validate_python(arguments.get("ref"))
-                offer = ExportOffer.model_validate(
-                    await app.call_name("content.export_offer", {"ref": ref})
-                )
+                offer = await app.call(EXPORT_CONTENT, ExportContent(ref=ref))
                 data = await artifacts.read_bytes(offer.artifact_ref, max_bytes=max_inline_bytes)
                 value = {
                     "artifact": offer.artifact_ref.model_dump(mode="json"),
                     "media_type": offer.media_type,
                     "data": base64.b64encode(data).decode("ascii"),
                 }
-                value = select_json(value, pointers)
+                if pointers:
+                    value = select_json(value, pointers)
                 display = f"{offer.suggested_name}: {len(data)} bytes"
             else:
                 if params.name not in operations:
@@ -237,7 +237,7 @@ def create_mcp_server(
                     )
 
                 value = await app.call_name(params.name, request, observer=observe, select=pointers)
-            structured = {"value": select_json(value)}
+            structured = {"value": cast(JsonValue, value) if pointers else select_json(value)}
             if pointers:
                 display = json.dumps(structured["value"], ensure_ascii=False, indent=2)
             elif display is None:

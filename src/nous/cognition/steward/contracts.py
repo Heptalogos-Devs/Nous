@@ -4,8 +4,8 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from nous.cognition.contracts import CognitiveValue
-from nous.common.operations import OperationIssue
+from nous.cognition.contracts import CognitiveValue, NamespaceSelector
+from nous.cognition.material_contracts import MaterialSelection
 from nous.content.contracts import ResultRef
 
 
@@ -21,19 +21,18 @@ class ReadingItem(CognitiveValue):
         return self
 
 
-class ReadingContextRequest(CognitiveValue):
-    key: str = Field(min_length=1)
-    direction: Literal["before", "after"]
-
-
 class ReadingBrief(CognitiveValue):
     title: str | None = None
     items: tuple[ReadingItem, ...]
-    context_requests: tuple[ReadingContextRequest, ...] = ()
 
 
 class ArrangeReading(CognitiveValue):
-    evidence: ResultRef
+    evidence: str | ResultRef | None = None
+    materials: tuple[str | MaterialSelection, ...] = ()
+    namespace: NamespaceSelector = None
+    question: str | None = None
+    aspects: tuple[str, ...] | None = None
+    context: tuple[dict[str, str], ...] | None = None
     purpose: str | None = None
     detail: Literal["concise", "normal", "expanded"] = "normal"
     output_language: str | None = None
@@ -41,7 +40,6 @@ class ArrangeReading(CognitiveValue):
 
 
 class ReadingOutcome(CognitiveValue):
-    evidence_ref: ResultRef
+    evidence_ref: ResultRef | None
     reading_ref: ResultRef
     brief: ReadingBrief
-    issues: tuple[OperationIssue, ...] = ()

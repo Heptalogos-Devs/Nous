@@ -100,6 +100,8 @@ required_sources 使用本清单的 documents key；冻结时沿真实来源解�
 
 当前 Python 冻结与持久引用由 `wave/assets.py` 和 `wave/snapshots.py` 负责。候选路径通过 candidate→paths→steps 两级偏移传入；精确选区、块和短说明保留在 Python 映射中。关联的 edge→group 数组与 group→roots CSR 独立存放，同一组的共同前提只冻结一次；关联 metadata 保存 key、relation 与 group 的 key/kind。
 
+候选准备复用依据正文输入、标题、候选声明、来源序列与证据根；材料所属者和时间留在快照元数据，不使候选准备失效。Native 组件身份由实际冻结数据、向量空间定义和构建参数决定；空间的配置名称不改变索引内容。
+
 AnnotationSet 使用 `content.annotations.read_annotation` 读取，正文和 parser profile 由共同 TextView 校验。`annotation_concepts` 可将标注 local key 显式映射到清单 Concept key；缺省按同一 key 查找。未知 key 返回错误，不按 label 合并。快照固定标注 Artifact 引用及其解析后的精确路径。
 
 文稿范围与候选范围都使用同一 SourceSelection；候选、支持依据和原位置通过文稿范围的 `restrict(selected)` 组合，坐标继续相对于原 Artifact。继承完整来源序列使用共同 `is_whole` 判定。Wave 不定义第二套坐标类型或转换规则。

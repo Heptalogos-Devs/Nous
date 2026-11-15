@@ -83,10 +83,8 @@ class ContentOperations:
         self.release_result = release_result
 
     async def read_result(self, request: ReadResult, call: CallContext) -> ResultView:
-        return ResultView.model_validate(
-            await self.results.read_view(
-                request.ref, sources=request.sources, details=request.details
-            )
+        return await self.results.read_view(
+            request.ref, sources=request.sources, details=request.details
         )
 
     async def delete_result(self, request: DeleteResult, call: CallContext) -> ResultRef:

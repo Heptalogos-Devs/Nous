@@ -1,76 +1,38 @@
 """Resolve exact cognitive materials through their domain owners."""
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
-
-import sqlalchemy as sa
-from pydantic import JsonValue
+from typing import TYPE_CHECKING
 
 from nous.application.contracts import CallContext, define_operation
-from nous.cognition.contracts import (
-    NamespaceRef,
-    NamespaceSelector,
-    RecordRevisionRef,
-)
-from nous.cognition.material_adapters import (
-    ArtifactAttributes,
-    MaterialAdapters,
-    RecordAttributes,
-    ResultOutputAttributes,
-)
+from nous.cognition.contracts import NamespaceRef, NamespaceSelector
+from nous.cognition.material_adapters import MaterialAdapters
 from nous.cognition.material_contracts import (
     CognitiveMaterialView,
     FollowMaterial,
     MaterialRead,
-    MaterialRef,
+    MaterialReadBatch,
     MaterialRelation,
     MaterialSection,
     MaterialSelection,
-    MaterialSnapshot,
-    MaterialSource,
-    MaterialSourceRead,
     ReadMaterial,
     RelationRead,
 )
-from nous.cognition.schema import source_materials
-from nous.cognition.work.contracts import WorkAttributes
-from nous.cognition.work.refs import WorkRevisionRef
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type, split_revision
+from nous.common.material_refs import RecordRevisionRef, WorkRevisionRef
 from nous.content.contracts import (
     ArtifactRef,
+    ContentReadView,
     ContentSelection,
-    ProcessingResult,
+    DeliveryBudget,
+    MaterialRef,
+    MaterialSource,
     ResultOutputRef,
     is_text_media_type,
 )
-from nous.content.schema import material_sources
-from nous.storage.database import ReadTx, WriteTx
-
-
-async def upgrade_material_source_refs_in(tx: WriteTx) -> None:
-    """Protect existing explicitly saved result-output identities with foreign keys."""
-
-    def columns_for(connection: sa.Connection, name: str) -> set[str]:
-        return {item["name"] for item in sa.inspect(connection).get_columns(name)}
-
-    for table in (material_sources, source_materials):
-        columns = await tx.connection.run_sync(columns_for, table.name)
-        if "source_result_id" in columns:
-            continue
-        await tx.connection.exec_driver_sql(
-            f'ALTER TABLE "{table.name}" ADD COLUMN source_result_id VARCHAR '
-            "REFERENCES processing_results(id)"
-        )
-        await tx.connection.exec_driver_sql(
-            f"UPDATE \"{table.name}\" SET source_result_id = json_extract(material, '$.result.id') "
-            "WHERE json_extract(material, '$.result.kind') = 'result' "
-            "AND json_extract(material, '$.output') IS NOT NULL"
-        )
-
+from nous.storage.database import ReadTx
 
 if TYPE_CHECKING:
-    from nous.cognition.annotation.operations import AnnotationOperations
     from nous.cognition.work.reading import WorkReader
     from nous.cognition.writing.reading import RecordReader
     from nous.content.artifacts import ArtifactStore
@@ -99,11 +61,10 @@ class Materials:
         artifacts: ArtifactStore,
         results: ResultStore,
         records: RecordReader,
-        annotations: AnnotationOperations,
         work: WorkReader,
     ):
         self.artifacts, self.results, self.records, self.work = artifacts, results, records, work
-        self.adapters = MaterialAdapters(artifacts, results, records, annotations)
+        self.adapters = MaterialAdapters(artifacts, results, records)
 
     def key(self, ref: MaterialRef) -> str:
         if isinstance(ref, ArtifactRef):
@@ -117,17 +78,6 @@ class Materials:
     def searchable_kinds(self) -> tuple[str, ...]:
         return ("journal", "note", "work")
 
-    def describe(self) -> dict[str, dict[str, JsonValue]]:
-        return {
-            key: cast(dict[str, JsonValue], attributes.model_json_schema())
-            for key, attributes in (
-                ("artifact", ArtifactAttributes),
-                ("result_output", ResultOutputAttributes),
-                ("record", RecordAttributes),
-                ("work", WorkAttributes),
-            )
-        }
-
     async def resolve_identifier(
         self, target: str | MaterialRef, *, namespace: NamespaceSelector = None
     ) -> MaterialRef:
@@ -137,24 +87,19 @@ class Materials:
         identifier, _ = split_revision(base)
         prefix = identifier_type(identifier)
         if prefix in {"note", "jrn"} and not separator:
-            record = await self.records.read(
-                target, namespace=namespace.id if isinstance(namespace, NamespaceRef) else namespace
-            )
-            return record.revision_ref
+            selected = namespace.id if isinstance(namespace, NamespaceRef) else namespace
+            async with self.records.database.read() as tx:
+                record, revision, _ = await self.records.resolve_in(tx, target, selected)
+            return self.records.revision_ref(record, revision)
         if prefix == "art" and not separator and base == identifier:
             return (await self.artifacts.get(identifier)).ref
         if prefix == "res" and base == identifier:
-            result = await self.results.get(identifier)
-            if not separator:
-                evidence = [item for item in result.outputs if item.name == "evidence"]
-                primary = [item for item in result.outputs if item.role == "primary"]
-                choices = evidence or primary
-                if len(choices) != 1:
-                    raise NousError("material.output_required", "Choose a named result output")
-                output_name = choices[0].name
-            if not output_name:
+            if separator and not output_name:
                 raise NousError("material.output_required", "Choose a named result output")
-            return ResultOutputRef(result=result.ref, output=output_name)
+            result, _ = await self.results.resolve_output(
+                identifier, output_name if separator else None
+            )
+            return result
         if prefix == "work" and not separator:
             return await self.work.resolve_identifier(target, namespace=namespace)
         raise NousError("material.invalid_reference", "Material reference is not recognized")
@@ -165,8 +110,13 @@ class Materials:
         return (await self.resolve_many((ref,), namespace=namespace))[0]
 
     async def capture_in(
-        self, tx: ReadTx, refs: Sequence[MaterialRef], *, namespace: NamespaceSelector = None
-    ) -> tuple[MaterialSnapshot, ...]:
+        self,
+        tx: ReadTx,
+        refs: Sequence[MaterialRef],
+        *,
+        namespace: NamespaceSelector = None,
+        structure: bool = False,
+    ) -> tuple[CognitiveMaterialView, ...]:
         """Capture exact domain facts together in the caller's read transaction."""
         selected = (
             (await self.records.namespace_in(tx, namespace)).ref
@@ -193,17 +143,22 @@ class Materials:
                 raise NousError(
                     "cognition.namespace_mismatch", "Material belongs to another namespace"
                 )
-        formal = await self.sources_many_in(tx, tuple(ref.result.id for ref in outputs))
         captured = (
             *(await self.adapters.capture_records(tx, records) if records else ()),
-            *(await self.work.capture_materials_in(tx, works) if works else ()),
+            *(
+                await self.work.capture_materials_in(tx, works, structure=structure)
+                if works
+                else ()
+            ),
             *(await self.adapters.capture_artifacts(tx, artifacts) if artifacts else ()),
-            *(await self.adapters.capture_outputs(tx, outputs, formal) if outputs else ()),
+            *(await self.adapters.capture_outputs(tx, outputs) if outputs else ()),
         )
-        by_ref = {item.view.ref: item for item in captured}
+        by_ref = {item.ref: item for item in captured}
         return tuple(by_ref[ref] for ref in refs)
 
-    async def current_in(self, tx: ReadTx, namespace: NamespaceRef) -> tuple[MaterialSnapshot, ...]:
+    async def current_in(
+        self, tx: ReadTx, namespace: NamespaceRef
+    ) -> tuple[CognitiveMaterialView, ...]:
         """Capture current records and Work in one consistent namespace view."""
         selected = (await self.records.namespace_in(tx, namespace)).ref
         return (
@@ -214,116 +169,9 @@ class Materials:
     async def resolve_many(
         self, refs: Sequence[MaterialRef], *, namespace: NamespaceSelector = None
     ) -> tuple[CognitiveMaterialView, ...]:
-        """Resolve owner facts together, then prepare text structure outside the transaction."""
+        """Resolve material facts without reading their content."""
         async with self.records.database.read() as tx:
-            snapshots = await self.capture_in(tx, refs, namespace=namespace)
-        views = [snapshot.view for snapshot in snapshots]
-        text_indices: list[int] = []
-        for index, view in enumerate(views):
-            if isinstance(view.ref, WorkRevisionRef):
-                views[index] = await self.work.prepare_material(view)
-            elif view.body is not None:
-                media_type = view.attributes.values.get("media_type", "text/markdown")
-                if isinstance(media_type, str) and is_text_media_type(media_type):
-                    text_indices.append(index)
-        text_views = await self.artifacts.text_views(
-            tuple(cast(ContentSelection, views[index].body) for index in text_indices)
-        )
-        for index, text_view in zip(text_indices, text_views, strict=True):
-            sections = tuple(
-                MaterialSection(
-                    key=block.key,
-                    heading_path=block.heading_path,
-                    selection=block.selection,
-                    structural_context=text_view.structural_context(block.selection),
-                )
-                for block in text_view.blocks
-                if block.parent_key is None
-            )
-            views[index] = views[index].model_copy(update={"sections": sections})
-        return tuple(views)
-
-    async def adopt_sources_in(
-        self,
-        tx: WriteTx,
-        result: ProcessingResult,
-        output_names: tuple[str, ...],
-        sources: Sequence[MaterialSource],
-        *,
-        namespace: NamespaceRef,
-    ) -> None:
-        """Adopt task selections and their formal identities with the named outputs."""
-        if not set(output_names).issubset(item.name for item in result.outputs):
-            raise NousError("content.not_found", "Material source output does not exist")
-        named = {item.key: item.sources for item in result.selections}
-        if len({item.key for item in sources}) != len(sources):
-            raise NousError("material.duplicate_source", "Material source keys must be unique")
-        if any(named.get(item.key) != item.selections for item in sources):
-            raise NousError(
-                "material.invalid_source", "Material source differs from the task's named selection"
-            )
-        await self.validate_sources_in(tx, sources, namespace=namespace)
-        if sources:
-            await tx.connection.execute(
-                material_sources.insert(),
-                [
-                    {
-                        "result_id": result.ref.id,
-                        "output_name": output_name,
-                        "ordinal": ordinal,
-                        "key": source.key,
-                        "kind": source.kind,
-                        "name": source.name,
-                        "material": source.material.model_dump(mode="json"),
-                        "source_result_id": source.material.result.id
-                        if isinstance(source.material, ResultOutputRef)
-                        else None,
-                        "selections": [item.model_dump(mode="json") for item in source.selections],
-                    }
-                    for output_name in output_names
-                    for ordinal, source in enumerate(sources)
-                ],
-            )
-
-    async def sources_in(self, tx: ReadTx, ref: ResultOutputRef) -> tuple[MaterialSource, ...]:
-        await self.results.resolve_output_in(tx, ref)
-        return (await self.sources_many_in(tx, (ref.result.id,))).get(
-            (ref.result.id, ref.output), ()
-        )
-
-    async def sources_many_in(
-        self, tx: ReadTx, result_ids: Sequence[str]
-    ) -> dict[tuple[str, str], tuple[MaterialSource, ...]]:
-        """Read the formal material sources of completed result outputs."""
-        values: dict[tuple[str, str], list[MaterialSource]] = {}
-        identifiers = list(dict.fromkeys(result_ids))
-        for offset in range(0, len(identifiers), 800):
-            rows = (
-                await tx.connection.execute(
-                    sa.select(material_sources)
-                    .where(material_sources.c.result_id.in_(identifiers[offset : offset + 800]))
-                    .order_by(
-                        material_sources.c.result_id,
-                        material_sources.c.output_name,
-                        material_sources.c.ordinal,
-                    )
-                )
-            ).mappings()
-            for row in rows:
-                key = (str(row["result_id"]), str(row["output_name"]))
-                values.setdefault(key, []).append(
-                    MaterialSource.model_validate(
-                        {
-                            name: row[name]
-                            for name in ("key", "kind", "name", "material", "selections")
-                        }
-                    )
-                )
-        return {key: tuple(sources) for key, sources in values.items()}
-
-    async def sources_for(self, ref: ResultOutputRef) -> tuple[MaterialSource, ...]:
-        async with self.results.database.read() as tx:
-            return await self.sources_in(tx, ref)
+            return await self.capture_in(tx, refs, namespace=namespace)
 
     @staticmethod
     def _validate_selections(
@@ -353,8 +201,17 @@ class Materials:
         snapshots = await self.capture_in(
             tx, tuple(item.material for item in sources), namespace=namespace
         )
-        for source, snapshot in zip(sources, snapshots, strict=True):
-            self._validate_selections(snapshot.view, source.selections)
+        self.validate_captured_sources(sources, snapshots)
+
+    @classmethod
+    def validate_captured_sources(
+        cls, sources: Sequence[MaterialSource], views: Sequence[CognitiveMaterialView]
+    ) -> None:
+        """Check selections against material identities already captured by this owner."""
+        for source, view in zip(sources, views, strict=True):
+            if source.material != view.ref:
+                raise NousError("material.invalid_selection", "Source material does not match")
+            cls._validate_selections(view, source.selections)
 
     @classmethod
     def _selections(
@@ -375,25 +232,197 @@ class Materials:
             snapshots = await self.capture_in(
                 tx, tuple(item.material for item in items), namespace=namespace
             )
-        views = tuple(item.view for item in snapshots)
-        return tuple(zip(views, self._selections(items, views), strict=True))
+        return tuple(zip(snapshots, self._selections(items, snapshots), strict=True))
 
     async def read_many(
-        self, items: Sequence[MaterialSelection], *, namespace: NamespaceSelector = None
+        self,
+        items: Sequence[MaterialSelection],
+        *,
+        namespace: NamespaceSelector = None,
+        include_sources: bool = False,
+        structure: bool = False,
+        blocks: tuple[str, ...] = (),
     ) -> tuple[MaterialRead, ...]:
-        views = await self.resolve_many(tuple(item.material for item in items), namespace=namespace)
-        batches = self._selections(items, views)
-        contents = await self.artifacts.read_view_many(
-            tuple(value for batch in batches for value in batch)
-        )
-        offset = 0
-        result: list[MaterialRead] = []
-        for view, batch in zip(views, batches, strict=True):
-            result.append(
-                MaterialRead(material=view, selections=contents[offset : offset + len(batch)])
+        return (
+            await self._read_many(
+                items,
+                namespace=namespace,
+                include_sources=include_sources,
+                structure=structure,
+                blocks=blocks,
             )
-            offset += len(batch)
-        return tuple(result)
+        ).readings
+
+    async def read_budgeted(
+        self,
+        targets: Sequence[str | MaterialRef | MaterialSelection],
+        budget: DeliveryBudget | None,
+        *,
+        namespace: NamespaceSelector = None,
+        return_types: tuple[str, ...] = (),
+        limit: int | None = None,
+    ) -> MaterialReadBatch:
+        """Read explicit materials with a shared budget and exact unread ranges."""
+        items: list[MaterialSelection] = []
+        for target in targets:
+            if isinstance(target, MaterialSelection):
+                item = target
+            else:
+                item = MaterialSelection(
+                    material=await self.resolve_identifier(target, namespace=namespace)
+                )
+            if item not in items:
+                items.append(item)
+        return await self._read_many(
+            items,
+            namespace=namespace,
+            budget=budget,
+            return_types=return_types,
+            limit=limit,
+            count_usage=True,
+        )
+
+    async def _read_many(
+        self,
+        items: Sequence[MaterialSelection],
+        *,
+        namespace: NamespaceSelector = None,
+        budget: DeliveryBudget | None = None,
+        return_types: tuple[str, ...] = (),
+        limit: int | None = None,
+        include_sources: bool = False,
+        count_usage: bool = False,
+        structure: bool = False,
+        blocks: tuple[str, ...] = (),
+    ) -> MaterialReadBatch:
+        async with self.records.database.read() as tx:
+            views = await self.capture_in(
+                tx, tuple(item.material for item in items), namespace=namespace, structure=structure
+            )
+        block_view = None
+        if blocks:
+            if len(items) != 1 or views[0].body is None:
+                raise NousError("material.no_content", "Material has no text body")
+            block_view = await self.artifacts.text_view(views[0].body)
+            items = (
+                MaterialSelection(
+                    material=items[0].material,
+                    selections=tuple(block_view.block(key).selection for key in blocks),
+                ),
+            )
+        selected = [
+            (item, view)
+            for item, view in zip(items, views, strict=True)
+            if not return_types
+            or view.kind in return_types
+            or ("cognition" in return_types and view.kind in self.searchable_kinds())
+        ]
+        if limit is not None:
+            selected = selected[:limit]
+        ranges = self._selections(
+            tuple(item for item, _ in selected), tuple(view for _, view in selected)
+        )
+        body_selections = tuple(item for group in ranges for item in group)
+        sources = (
+            tuple(source for _, view in selected for source in view.material_sources)
+            if include_sources
+            else ()
+        )
+        source_selections = tuple(item for source in sources for item in source.selections)
+        counter = await self.artifacts.selection_budget(budget, ()) if budget is not None else None
+        used = 0
+        if counter is None:
+            content = await self.artifacts.read_view_many(
+                (*body_selections, *source_selections),
+                representations="metadata" if count_usage else "existing",
+            )
+            body_views = content[: len(body_selections)]
+            source_views = content[len(body_selections) :]
+            if count_usage:
+                deliveries, used = await self.artifacts.deduplicate_views(body_views)
+            else:
+                deliveries = ()
+        else:
+            deliveries = await self.artifacts.read_budgeted_views(body_selections, counter)
+            body_views = ()
+            source_views = (
+                await self.artifacts.read_view_many(source_selections) if source_selections else ()
+            )
+        readings: list[MaterialRead] = []
+        remaining: list[MaterialSelection] = []
+        offset = source_offset = 0
+        for (_, view), group in zip(selected, ranges, strict=True):
+            original_parts = body_views[offset : offset + len(group)] if counter is None else ()
+            if counter is None and not count_usage:
+                parts = body_views[offset : offset + len(group)]
+                shared: tuple[ContentSelection, ...] = ()
+                unread: tuple[ContentSelection, ...] = ()
+            else:
+                chosen = deliveries[offset : offset + len(group)]
+                parts = tuple(part for item in chosen for part in item.views)
+                shared = tuple(part for item in chosen for part in item.shared)
+                unread = tuple(part for item in chosen for part in item.remaining)
+            offset += len(group)
+            if unread:
+                remaining.append(MaterialSelection(material=view.ref, selections=unread))
+            source_content: dict[str, tuple[ContentReadView, ...]] = {}
+            if include_sources:
+                for source in view.material_sources:
+                    count = len(source.selections)
+                    source_content[source.key] = source_views[source_offset : source_offset + count]
+                    source_offset += count
+            if (
+                structure
+                and not isinstance(view.ref, WorkRevisionRef)
+                and view.body is not None
+                and view.media_type is not None
+                and is_text_media_type(view.media_type)
+            ):
+                text_view = block_view or (
+                    counter.views.get(view.body.artifact.id) if counter is not None else None
+                )
+                full_part = (
+                    original_parts[0]
+                    if group == (view.body,) and not unread and len(original_parts) == 1
+                    else None
+                )
+                if text_view is None and full_part is not None and full_part.body_text is not None:
+                    blob = await self.artifacts.blob(view.body.artifact)
+                    text_view, _ = await self.artifacts.text_cache.view(
+                        view.body.artifact,
+                        blob,
+                        full_part.body_text,
+                        self.artifacts.content.execution,
+                    )
+                if text_view is None:
+                    text_view = await self.artifacts.text_view(view.body)
+                view = view.model_copy(
+                    update={
+                        "sections": tuple(
+                            MaterialSection(
+                                key=block.key,
+                                heading_path=block.heading_path,
+                                selection=block.selection,
+                                structural_context=text_view.structural_context(block.selection),
+                            )
+                            for block in text_view.blocks
+                            if block.parent_key is None
+                        )
+                    }
+                )
+            if structure and view.sections is None:
+                view = view.model_copy(update={"sections": ()})
+            readings.append(
+                MaterialRead(material=view, selections=parts, shared=shared, sources=source_content)
+            )
+        if counter is not None:
+            used = counter.used
+        return MaterialReadBatch(
+            readings=tuple(readings),
+            remaining=tuple(remaining),
+            used=used,
+            unit=budget.unit if budget else "characters",
+        )
 
     async def follow(
         self,
@@ -403,10 +432,38 @@ class Materials:
         *,
         namespace: NamespaceSelector = None,
     ) -> tuple[MaterialRelation, ...]:
+        view = await self.resolve(ref, namespace=namespace)
+        return await self.follow_view(view, relation=relation, limit=limit)
+
+    async def follow_view(
+        self, view: CognitiveMaterialView, *, relation: str | None = None, limit: int = 100
+    ) -> tuple[MaterialRelation, ...]:
+        """Expand formal relations from an already captured material."""
         if limit < 1:
             raise NousError("material.invalid_limit", "Relation limit must be positive")
-        view = await self.resolve(ref, namespace=namespace)
-        return tuple(item for item in view.relations if relation is None or item.kind == relation)[
+        ref = view.ref
+        relations = list(view.relations)
+        relations.extend(
+            MaterialRelation(kind=source.kind, target=source.material, evidence=source.selections)
+            for source in view.material_sources
+        )
+        if isinstance(ref, ResultOutputRef):
+            async with self.results.database.read() as tx:
+                mappings = (await self.results.output_mappings_in(tx, (ref,))).get(
+                    (ref.result.id, ref.output), ()
+                )
+            assert view.body is not None
+            relations.extend(
+                MaterialRelation(
+                    kind=mapping.relation,
+                    target=origin.artifact,
+                    scope=(view.body.model_copy(update={"selection": mapping.selection}),),
+                    evidence=(origin,),
+                )
+                for mapping in mappings
+                for origin in mapping.origins
+            )
+        return tuple(item for item in relations if relation is None or item.kind == relation)[
             :limit
         ]
 
@@ -415,29 +472,28 @@ class Materials:
             ref = await self.resolve_identifier(request.ref, namespace=request.namespace)
             result = (
                 await self.read_many(
-                    (MaterialSelection(material=ref),), namespace=request.namespace
+                    (MaterialSelection(material=ref),),
+                    namespace=request.namespace,
+                    include_sources=request.sources,
+                    structure=request.structure,
+                    blocks=request.blocks,
                 )
             )[0]
         elif request.selection is not None:
-            result = (await self.read_many((request.selection,), namespace=request.namespace))[0]
+            result = (
+                await self.read_many(
+                    (request.selection,),
+                    namespace=request.namespace,
+                    include_sources=request.sources,
+                    structure=request.structure,
+                )
+            )[0]
         else:
-            from nous.cognition.retrieval.contracts import EvidenceDelivery
+            from nous.cognition.retrieval.adoption import read_saved_evidence
 
             assert request.delivery is not None and request.key is not None
-            evidence = await self.results.get(request.delivery)
-            artifact = next(
-                (item.artifact for item in evidence.outputs if item.name == "evidence"), None
-            )
-            if artifact is None:
-                raise NousError(
-                    "content.not_found",
-                    "Result output does not exist",
-                    details={"result": evidence.ref.identifier, "output": "evidence"},
-                )
-            delivery = EvidenceDelivery.model_validate_json(
-                await self.artifacts.read_text(artifact)
-            )
-            delivery_namespace = delivery.intent.constraints.namespace
+            evidence = await read_saved_evidence(self.results, request.delivery)
+            delivery_namespace = evidence.namespace
             async with self.records.database.read() as tx:
                 selected_namespace = await self.records.namespace_in(
                     tx, request.namespace if request.namespace is not None else delivery_namespace
@@ -446,78 +502,15 @@ class Materials:
                 raise NousError(
                     "cognition.namespace_mismatch", "Evidence belongs to another namespace"
                 )
-            matches = [item for item in delivery.passages if item.key == request.key]
-            if len(matches) != 1:
-                raise NousError("material.evidence_unknown", "Evidence key is not in this delivery")
-            passage = matches[0]
-            view = await self.resolve(passage.material, namespace=delivery_namespace)
-            selected = passage.selections
-            result = MaterialRead(
-                material=view, selections=await self.artifacts.read_view_many(selected)
-            )
-        if request.blocks:
-            if result.material.body is None:
-                raise NousError("material.no_content", "Material has no text body")
-            text_view = await self.artifacts.text_view(result.material.body)
-            selected = tuple(text_view.block(key).selection for key in request.blocks)
-            result = result.model_copy(
-                update={"selections": await self.artifacts.read_view_many(selected)}
-            )
-        if request.sources:
-            sources: list[MaterialSource] = list(result.material.material_sources)
-            for binding in result.material.sources:
-                if binding.owner_revision is not None:
-                    candidate = MaterialSource(
-                        key=binding.key,
-                        material=binding.owner_revision,
-                        selections=binding.selections,
-                        kind=binding.usage,
-                        name=binding.name,
-                    )
-                    if not any(
-                        item.key == candidate.key and item.selections == candidate.selections
-                        for item in sources
-                    ):
-                        sources.append(candidate)
-                else:
-                    for part in binding.selections:
-                        if not any(
-                            item.key == binding.key and part in item.selections for item in sources
-                        ):
-                            sources.append(
-                                MaterialSource(
-                                    key=binding.key,
-                                    material=part.artifact,
-                                    selections=(part,),
-                                    kind=binding.usage,
-                                    name=binding.name,
-                                )
-                            )
-            known = {(item.material, item.selections) for item in sources}
-            for index, relation in enumerate(result.material.relations, 1):
-                if relation.evidence and (relation.target, relation.evidence) not in known:
-                    sources.append(
-                        MaterialSource(
-                            key=f"R{index}",
-                            material=relation.target,
-                            selections=relation.evidence,
-                            kind=relation.kind,
-                        )
-                    )
-                    known.add((relation.target, relation.evidence))
-            values = await self.artifacts.read_view_many(
-                tuple(selection for source in sources for selection in source.selections)
-            )
-            offset = 0
-            details: list[MaterialSourceRead] = []
-            for source in sources:
-                details.append(
-                    MaterialSourceRead(
-                        source=source, views=values[offset : offset + len(source.selections)]
-                    )
+            source = evidence.source(request.key)
+            result = (
+                await self.read_many(
+                    (MaterialSelection(material=source.material, selections=source.selections),),
+                    namespace=delivery_namespace,
+                    include_sources=request.sources,
+                    structure=request.structure,
                 )
-                offset += len(source.selections)
-            result = result.model_copy(update={"sources": tuple(details)})
+            )[0]
         return result
 
     async def follow_request(self, request: FollowMaterial, call: CallContext) -> RelationRead:

@@ -4,12 +4,13 @@ use super::*;
 impl Snapshot {
     pub(super) fn recall_context(
         &self,
+        signals: &[ContextLexical],
         allowed: &BTreeSet<u64>,
         options: &Options,
         cancel: &CancellationToken,
     ) -> Result<CandidateSet> {
         let mut sets = Vec::new();
-        for fragment in &options.context_lexical {
+        for fragment in signals {
             ensure!(
                 fragment.contribution.is_finite() && fragment.contribution >= 0.0,
                 "Invalid lexical context contribution"
@@ -253,7 +254,6 @@ impl Snapshot {
         options: &Options,
         cancel: &CancellationToken,
     ) -> Result<CandidateSet> {
-        self.validate_observation(observation)?;
         let direct = observation
             .core_rows
             .iter()
@@ -439,7 +439,6 @@ impl Snapshot {
         input: &CandidateSet,
         options: &Options,
     ) -> Result<CalibratedPool> {
-        self.validate_observation(observation)?;
         self.validate_candidates(input)?;
         let prepared = self.prepare_pool(
             observation,

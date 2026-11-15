@@ -5,7 +5,7 @@ outputs = { evidence = { node = "deliver", port = "evidence" } }
 [[wave.programs.example_text.nodes]]
 id = "lexical"
 operator = "lexical.search"
-inputs = { text = { node = "query", port = "lexical" }, snapshot = { node = "snapshot", port = "handle" }, allowed = { node = "scope", port = "allowed" } }
+inputs = { text = { node = "query", port = "lexical" } }
 
 [[wave.programs.example_text.nodes]]
 id = "rank"
@@ -16,7 +16,7 @@ parameters = { lane = "bm25" }
 [[wave.programs.example_text.nodes]]
 id = "context_recall"
 operator = "context.recall"
-inputs = { signals = { node = "query", port = "context_lexical" }, snapshot = { node = "snapshot", port = "handle" }, allowed = { node = "scope", port = "allowed" } }
+inputs = { signals = { node = "query", port = "context_lexical" } }
 
 [[wave.programs.example_text.nodes]]
 id = "context"
@@ -26,15 +26,15 @@ inputs = { ranked = { node = "rank", port = "ranked" }, candidates = { node = "c
 [[wave.programs.example_text.nodes]]
 id = "locate"
 operator = "passages.locate"
-inputs = { ranked = { node = "context", port = "ranked" }, intent = { node = "query", port = "intent" }, snapshot = { node = "snapshot", port = "handle" } }
+inputs = { ranked = { node = "context", port = "ranked" } }
 parameters = { signals = ["lexical"] }
 
 [[wave.programs.example_text.nodes]]
 id = "select"
 operator = "passages.select"
-inputs = { passages = { node = "locate", port = "passages" }, delivery = { node = "delivery", port = "request" } }
+inputs = { passages = { node = "locate", port = "passages" } }
 
 [[wave.programs.example_text.nodes]]
 id = "deliver"
 operator = "delivery.read"
-inputs = { selected = { node = "select", port = "selected" }, materials = { node = "scope", port = "materials" } }
+inputs = { selected = { node = "select", port = "selected" } }

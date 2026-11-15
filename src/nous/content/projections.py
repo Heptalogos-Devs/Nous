@@ -171,9 +171,13 @@ async def semantic_text_many(
                     tx,
                     facts=ResultFacts(
                         operation="content.semantic_text",
-                        producer=ProgramProducer(operation="content.semantic_text"),
+                        producer=ProgramProducer(),
                         selected_inputs=SelectedInputs(
-                            sources=(SelectedSource(slot_key="S1", selections=(source,)),)
+                            sources=(
+                                SelectedSource(
+                                    material=source.artifact, key="S1", selections=(source,)
+                                ),
+                            )
                         ),
                         inputs=(
                             InputGroup(
@@ -189,12 +193,12 @@ async def semantic_text_many(
                                 ),
                             ),
                         ),
-                        parameters={"cache_key": key},
                         coverage={"source": source.selection.model_dump(mode="json")},
                         mappings=tuple(mapping),
                         formed_at=results.artifacts.clock.utc_now(),
                     ),
                     prepared_outputs=output,
+                    cache_key=key,
                 )
                 artifact_ref = next(item.artifact for item in result.outputs if item.name == "text")
                 adopted[key] = (result.ref, artifact_ref)

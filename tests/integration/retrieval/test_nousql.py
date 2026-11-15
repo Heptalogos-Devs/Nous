@@ -17,9 +17,8 @@ from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import AddNote, AfterWrite, CreateJournal
 from nous.cognition.writing.operations import ADD_NOTE, CREATE_JOURNAL
 from nous.common.errors import NousError
-from nous.content.contracts import InlineText
+from nous.content.contracts import DeliveryBudget, InlineText
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.wave.contracts import DeliveryBudget
 
 
 def test_nousql_literals_nested_controls_and_invalid_syntax() -> None:
@@ -64,9 +63,9 @@ def test_nested_nousql_and_budget_through_application(tmp_path: Path) -> None:
             }
             result = await runtime.app.call(QUERY, QueryRequest(text=text))
             assert {
-                item.material.ref.model_dump_json() for item in result.evidence.materials
+                item.material.model_dump_json() for item in result.evidence.materials
             } == expected
-            assert len(result.evidence.passages) == 2
+            assert sum(len(item.passages) for item in result.evidence.materials) == 2
             bounded = await runtime.app.call(
                 QUERY,
                 QueryRequest(
@@ -75,14 +74,14 @@ def test_nested_nousql_and_budget_through_application(tmp_path: Path) -> None:
                 ),
             )
             assert {
-                item.material.ref.model_dump_json() for item in bounded.evidence.materials
+                item.material.model_dump_json() for item in bounded.evidence.materials
             } == expected
-            assert not bounded.evidence.passages
+            assert all(not item.passages for item in bounded.evidence.materials)
             assert all(
                 item.delivery_status == "budget_exhausted" for item in bounded.evidence.materials
             )
             assert {
-                item.target.model_dump_json()
+                item.selection.material.model_dump_json()
                 for item in bounded.evidence.continuation
                 if item.relation == "read"
             } == expected

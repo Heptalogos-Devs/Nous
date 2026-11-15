@@ -314,9 +314,8 @@ class TextPreparation:
             result = await self.preparer.results.adopt(
                 facts=ResultFacts(
                     operation="content.literal_text",
-                    producer=ProgramProducer(operation="content.literal_text"),
+                    producer=ProgramProducer(),
                     selected_inputs=SelectedInputs(sources=()),
-                    parameters={"cache_key": key},
                     formed_at=self.artifacts.clock.utc_now(),
                 ),
                 outputs={
@@ -326,6 +325,7 @@ class TextPreparation:
                         display_name=display_name,
                     )
                 },
+                cache_key=key,
             )
         return ContentSelection(
             artifact=next(item.artifact for item in result.outputs if item.name == "text")

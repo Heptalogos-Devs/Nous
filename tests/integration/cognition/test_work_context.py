@@ -7,7 +7,7 @@ import pytest
 
 from nous.cognition.material_contracts import FollowMaterial, MaterialSelection, ReadMaterial
 from nous.cognition.materials import FOLLOW_MATERIAL, READ_MATERIAL
-from nous.cognition.retrieval.contracts import ContextSelection, QueryRequest
+from nous.cognition.retrieval.contracts import ContextSelection, QueryControls, QueryRequest
 from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.work.contracts import (
     CreateWork,
@@ -30,7 +30,7 @@ from nous.cognition.writing.operations import ADD_NOTE
 from nous.common.errors import NousError
 from nous.content.contracts import ContentSelection, InlineText
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.wave.contracts import WaveRead
+from nous.wave.contracts import CandidateRef, WaveRead
 from nous.wave.operations import WAVE_READ
 
 
@@ -67,7 +67,8 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
                                 basis=(MaterialSelection(material=record.commit.revision_ref),),
                             ),
                         ),
-                    )
+                    ),
+                    body="保留的工作说明。",
                 ),
             )
 
@@ -83,8 +84,9 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
             assert answer.evidence_ref is not None
             passage = next(
                 part
-                for part in answer.evidence.passages
-                if part.material == record.commit.revision_ref
+                for group in answer.evidence.materials
+                if group.material == record.commit.revision_ref
+                for part in group.passages
             )
             read = await runtime.app.call(
                 READ_MATERIAL, ReadMaterial(delivery=answer.evidence_ref, key=passage.key)
@@ -93,10 +95,12 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
             assert "等待连接退出" in text
             assert "已提交结果重新计算" in text
             used = MaterialSelection(
-                material=passage.material, selections=tuple(item.source for item in read.selections)
+                material=record.commit.revision_ref,
+                selections=tuple(item.source for item in read.selections),
             )
             followed = await runtime.app.call(
-                FOLLOW_MATERIAL, FollowMaterial(ref=passage.material, relation="reference")
+                FOLLOW_MATERIAL,
+                FollowMaterial(ref=record.commit.revision_ref, relation="reference"),
             )
             origin_ref = next(
                 item.target for item in followed.relations if item.target == original.ref
@@ -116,6 +120,15 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
                     decision_key="release",
                 ),
             )
+            direct_use = await runtime.app.call(
+                RECORD_WORK_USE,
+                RecordWorkUse(
+                    revision=current.revision_ref.identifier,
+                    selections=(supplementary,),
+                    purpose="直接阅读原始讨论",
+                ),
+            )
+            assert direct_use.evidence is None and direct_use.selections == (supplementary,)
             revised_state = current.state.model_copy(
                 update={
                     "decisions": (
@@ -134,30 +147,43 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
                     target=current.ref,
                     expected=current.revision_ref,
                     state=revised_state,
-                    body=current.body,
                 ),
             )
+            assert revised.body == "保留的工作说明。"
             assert revised.revision_ref.ordinal == current.revision_ref.ordinal + 1
             assert use.selections == (used, supplementary)
             assert use in await runtime.app.call(LIST_WORK_USES, ListWorkUses(ref=current.ref))
             await runtime.configuration.update({"cognition.search.include_work": True})
-            projected = await runtime.app.call(QUERY, QueryRequest(text="取消"))
-            note_hit = next(
+            projected = await runtime.app.call(
+                QUERY, QueryRequest(text="取消", controls=QueryControls(diagnostics=True))
+            )
+            note_group = next(
                 item
-                for item in projected.evidence.passages
+                for item in projected.evidence.materials
                 if item.material == record.commit.revision_ref
             )
-            work_hit = next(
+            work_group = next(
                 item
-                for item in projected.evidence.passages
+                for item in projected.evidence.materials
                 if item.material == revised.revision_ref
             )
-            assert note_hit.candidate is not None and work_hit.candidate is not None
+            note_hit = note_group.passages[0]
+            work_hit = work_group.passages[0]
+            diagnostics = projected.evidence.diagnostics
+            assert diagnostics is not None
+            passages = diagnostics["passages"]
+            assert isinstance(passages, dict)
+            note_detail = passages[note_hit.key]
+            work_detail = passages[work_hit.key]
+            assert isinstance(note_detail, dict) and isinstance(work_detail, dict)
+            note_candidate = CandidateRef.model_validate(note_detail["candidate"])
+            work_candidate = CandidateRef.model_validate(work_detail["candidate"])
+            assert projected.evidence.snapshot is not None
             note_sources = await runtime.app.call(
                 WAVE_READ,
                 WaveRead(
                     snapshot=projected.evidence.snapshot.identifier,
-                    candidate=note_hit.candidate.key,
+                    candidate=note_candidate.key,
                     sources=True,
                 ),
             )
@@ -165,12 +191,22 @@ def test_work_short_question_records_used_evidence_across_sessions(tmp_path: Pat
                 WAVE_READ,
                 WaveRead(
                     snapshot=projected.evidence.snapshot.identifier,
-                    candidate=work_hit.candidate.key,
+                    candidate=work_candidate.key,
                     sources=True,
                 ),
             )
             assert note_sources.sources == work_sources.sources
             assert note_sources.sources is not None and len(note_sources.sources) == 1
+            cleared = await runtime.app.call(
+                REVISE_WORK,
+                ReviseWork(
+                    target=revised.ref, expected=revised.revision_ref, state=revised.state, body=""
+                ),
+            )
+            assert cleared.body == ""
+            assert (
+                await runtime.app.call(READ_WORK, ReadWork(ref=revised.revision_ref))
+            ).body == "保留的工作说明。"
             with pytest.raises(NousError) as conflict:
                 await runtime.app.call(
                     REVISE_WORK,

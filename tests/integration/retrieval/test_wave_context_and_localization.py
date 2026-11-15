@@ -3,7 +3,6 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -11,12 +10,11 @@ import pytest
 
 import nous_native as native
 from nous.content.budget import SelectionBudget
-from nous.content.contracts import ArtifactRef, ContentSelection, SourceSelection
+from nous.content.contracts import ArtifactRef, ContentSelection, DeliveryBudget, SourceSelection
 from nous.content.text import TextView
 from nous.wave.configuration import WaveConfig
 from nous.wave.contracts import (
     CandidateRef,
-    DeliveryBudget,
     GroupDescriptor,
     PortRef,
     ProgramNode,
@@ -27,7 +25,7 @@ from nous.wave.contracts import (
     WaveSearchResult,
 )
 from nous.wave.delivery import LocatedGroup, LocatedResult, PassageProposal, select_passages
-from nous.wave.program import compile_program, resolve_program
+from nous.wave.program import compile_program
 
 
 def test_context_mass_is_independent_of_parent_fragment_count() -> None:
@@ -71,13 +69,12 @@ def test_context_mass_is_independent_of_parent_fragment_count() -> None:
 
 
 def test_program_ignores_unconnected_model_work_and_capabilities() -> None:
-    program = resolve_program(WaveConfig(), "lexical").definition
+    program = WaveConfig().programs["lexical"]
     unused_observation = ProgramNode(
         id="unused_observation",
         operator="vcp.observe",
         inputs={
             "signal": PortRef(node="query", port="contextual_signal"),
-            "snapshot": PortRef(node="snapshot", port="handle"),
         },
     )
     unused_evaluation = ProgramNode(
@@ -85,7 +82,6 @@ def test_program_ignores_unconnected_model_work_and_capabilities() -> None:
         operator="passages.evaluate",
         inputs={
             "passages": PortRef(node="locate", port="passages"),
-            "intent": PortRef(node="query", port="intent"),
         },
     )
     expanded = program.model_copy(
@@ -179,7 +175,7 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
                 }
             )
         )
-        definition = resolve_program(WaveConfig(), "fixed_set").definition
+        definition = WaveConfig().programs["fixed_set"]
         nodes = tuple(
             node.model_copy(update={"parameters": {"signals": ["lexical", "semantic"]}})
             if node.operator == "passages.locate"
@@ -187,7 +183,7 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
             for node in definition.nodes
         )
         program = compile_program("fixed-mixed", definition.model_copy(update={"nodes": nodes}))
-        plan = program.native_plan
+        plan = program.native_plan()
         result = snapshot.execute(
             name=program.name,
             program_json=json.dumps(plan),
@@ -203,7 +199,7 @@ def test_fixed_group_localization_competes_over_all_local_units(tmp_path: Path) 
                 }
             ),
         )
-        group = json.loads(result)["groups"][0]
+        group = json.loads(result)["value:0"]["groups"][0]
         assert group["rank_basis_row"] == 0
         assert group["passages"][0]["row"] == 2
         assert group["passages"][0]["scores"]["lexical"] > 0
@@ -276,6 +272,7 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
     template = WaveSearchResult(
         snapshot=SnapshotRef(instance_id="instance", id="id", identifier="snapshot"),
         program="test",
+        program_selection="explicit",
         score_kind="rrf",
         used_lanes=(),
         skipped_lanes=(),
@@ -284,9 +281,6 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
         grouping="document",
         rank_scope="grouped_lane",
         context_summary={},
-        cue_summary=(),
-        algorithm_versions={},
-        scope={},
         coverage=coverage,
     )
     result = LocatedResult(
@@ -296,14 +290,12 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
         views={artifact.id: TextView.parse(ContentSelection(artifact=artifact), "abcdef")},
     )
 
-    def choose(
-        value: LocatedResult, amount: int, unit: Literal["characters", "bytes"] = "characters"
-    ) -> LocatedResult:
+    def choose(value: LocatedResult, amount: int) -> LocatedResult:
         return asyncio.run(
             select_passages(
                 value,
                 1,
-                SelectionBudget(value.views, amount=amount, unit=unit),
+                SelectionBudget(value.views, amount=amount, unit="characters"),
                 aspect_similarities=None,
                 semantic_similarity=None,
                 aspect_weight=1.0,
@@ -345,28 +337,6 @@ def test_budget_preserves_ranked_groups_and_charges_shared_context_once() -> Non
     assert deduplicated.groups[1].passages[0].scored_ranges == (part(1, 5),)
     assert deduplicated.groups[1].passages[0].shared_context == (part(1, 4), part(0, 1))
     assert deduplicated.result.context_summary["delivered_characters"] == 5
-    first = group("first", 1, part(0, 3), 1.0)
-    second = group("second", 2, part(3, 6), 0.8)
-    first = first.model_copy(
-        update={"passages": (first.passages[0].model_copy(update={"support_context": ()}),)}
-    )
-    second = second.model_copy(
-        update={"passages": (second.passages[0].model_copy(update={"support_context": ()}),)}
-    )
-    unicode_result = result.model_copy(
-        update={
-            "groups": (first, second),
-            "views": {artifact.id: TextView.parse(ContentSelection(artifact=artifact), "甲乙")},
-        }
-    )
-    chars = choose(unicode_result, 2)
-    byte_limited = choose(unicode_result, 3, "bytes")
-    assert [group.delivery_status for group in chars.groups] == ["selected", "selected"]
-    assert [group.delivery_status for group in byte_limited.groups] == [
-        "selected",
-        "budget_exhausted",
-    ]
-
     costly = group("costly", 1, part(0, 4), 1.0)
     concise = group("concise", 2, part(4, 6), 0.8)
     costly = costly.model_copy(
@@ -442,7 +412,7 @@ def test_token_budget_counts_union_with_declared_tokenizer(tmp_path: Path) -> No
         instance = tmp_path / "instance"
         await initialize_instance(instance, environment={})
         async with open_instance(
-            instance, environment={}, overrides={"wave.query.tokenizer_path": str(path)}
+            instance, environment={}, overrides={"content.tokenizer_path": str(path)}
         ) as runtime:
             body = await runtime.artifacts.ingest("Hello world", media_type="text/plain")
             manifest = {
@@ -476,8 +446,7 @@ def test_token_budget_counts_union_with_declared_tokenizer(tmp_path: Path) -> No
             )
             assert result.groups[0].passages
             assert result.context_summary["delivered_tokens"] == 2
-            assert result.program_run is not None
-            assert result.program_run.options["tokenizer_digest"] == counter.tokenizer_digest
+            assert result.budget == DeliveryBudget(amount=2, unit="tokens")
 
     asyncio.run(query())
 
@@ -503,7 +472,7 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
     async def scenario() -> None:
         instance = tmp_path / "structural-support"
         await initialize_instance(instance, environment={})
-        fixed = resolve_program(WaveConfig(), "fixed_set").definition
+        fixed = WaveConfig().programs["fixed_set"]
         fixed = fixed.model_copy(
             update={
                 "nodes": tuple(
@@ -514,7 +483,7 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
                 )
             }
         )
-        lexical = resolve_program(WaveConfig(), "lexical").definition
+        lexical = WaveConfig().programs["lexical"]
         duplicate_fusion = lexical.model_copy(
             update={
                 "nodes": (
@@ -659,36 +628,35 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
                         delivery_budget=DeliveryBudget(amount=256, unit="bytes"),
                     ),
                 )
-                facts = result.program_run
-                assert facts is not None and facts.selection == "explicit"
-                locator = next(node for node in facts.nodes if node.operator == "passages.locate")
-                assert locator.parameters["signals"] == ["lexical"]
-                assert locator.parameters["rrf_k"] == 60.0
-                assert facts.budget == DeliveryBudget(amount=256, unit="bytes")
+                assert result.program_selection == "explicit"
+                assert result.budget == DeliveryBudget(amount=256, unit="bytes")
                 passage = result.groups[0].passages[0]
                 parts = (*passage.fragments, *passage.support_context)
                 assert all(
-                    part.text.encode("utf-8")
+                    (part.body_text or "").encode("utf-8")
                     == source.encode("utf-8")[
-                        part.content.selection.start_byte : part.content.selection.end_byte
+                        part.source.selection.start_byte : part.source.selection.end_byte
                     ]
                     for part in parts
                 )
-                delivered = " ".join(part.text for part in parts)
+                delivered = " ".join(part.body_text or "" for part in parts)
                 assert all(phrase in delivered for phrase in required)
                 assert excluded not in delivered
                 if query == "codemarker":
-                    assert any(part.text.strip() == "```" for part in passage.support_context)
-                assert sum(len(part.text.encode("utf-8")) for part in parts) <= 256
+                    assert any(
+                        (part.body_text or "").strip() == "```" for part in passage.support_context
+                    )
+                assert sum(len((part.body_text or "").encode("utf-8")) for part in parts) <= 256
             fallback = await runtime.app.call(
                 WAVE_QUERY,
                 WaveQuery(
                     snapshot=built.snapshot.identifier, text="tablemarker", grouping="document"
                 ),
             )
-            assert fallback.program_run is not None
-            assert fallback.program_run.name == "text_only"
-            assert fallback.program_run.selection == "fallback"
+            assert fallback.program == "text_only"
+            assert fallback.program_selection == "fallback"
+            assert fallback.fallback_from == "dense"
+            assert fallback.unavailable_capabilities
             fixed_result = await runtime.app.call(
                 WAVE_QUERY,
                 WaveQuery(
@@ -707,11 +675,6 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
                     ),
                 ),
             )
-            assert fixed_result.program_run is not None
-            assert fixed_result.program_run.options["candidate_set"] == {
-                "count": 1,
-                "rank_scope": "candidate_lane",
-            }
             assert fixed_result.groups[0].passages
             fused_result = await runtime.app.call(
                 WAVE_QUERY,
@@ -722,12 +685,6 @@ def test_structural_support_preserves_disjoint_source_ranges(tmp_path: Path) -> 
                     grouping="document",
                 ),
             )
-            assert fused_result.program_run is not None
-            fusion = next(
-                node for node in fused_result.program_run.nodes if node.operator == "rank.fuse"
-            )
-            assert fusion.parameters["weights"] == [2.0]
-            assert fusion.inputs["rankings"] == (PortRef(node="rank", port="ranked"),)
             assert fused_result.groups[0].basis.ranking_score == pytest.approx(2.0 / 61.0)
             with pytest.raises(NousError) as missing_thinking:
                 await runtime.app.call(

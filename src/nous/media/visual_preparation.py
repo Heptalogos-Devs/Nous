@@ -175,20 +175,10 @@ class VisualPreparation:
                     derived = await self.results.adopt(
                         facts=ResultFacts(
                             operation="media.prepare.image",
-                            producer=ProgramProducer(
-                                operation="media.prepare.image", parameters=parameters
-                            ),
+                            producer=ProgramProducer(),
                             selected_inputs=SelectedInputs(
                                 sources=(
-                                    SelectedSource(
-                                        slot_key="S1",
-                                        selections=(
-                                            ContentSelection(
-                                                artifact=original.ref, selection=selection
-                                            ),
-                                        ),
-                                        display_name=original.display_name,
-                                    ),
+                                    SelectedSource(material=original.ref, key='S1', selections=(ContentSelection(artifact=original.ref, selection=selection),), name=original.display_name),
                                 )
                             ),
                             inputs=tuple(
@@ -201,7 +191,7 @@ class VisualPreparation:
                                 for frame in frame_info
                             ),
                             parameters=TypeAdapter(dict[str, JsonValue]).validate_python(
-                                {**parameters, "cache_key": cache_key, "frames": frame_info}
+                                {**parameters, "frames": frame_info}
                             ),
                             coverage={"selection": selection.model_dump(mode="json")},
                             mappings=tuple(
@@ -223,6 +213,7 @@ class VisualPreparation:
                             formed_at=self.artifacts.clock.utc_now(),
                         ),
                         outputs=outputs,
+                        cache_key=cache_key,
                     )
                     track_completed(derived.ref)
                     derivatives = {

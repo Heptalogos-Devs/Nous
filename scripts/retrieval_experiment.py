@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from nous.application.inputs import FileInput
 from nous.cognition.annotation.contracts import AnnotateRecord
 from nous.cognition.annotation.operations import ANNOTATE_RECORD
-from nous.cognition.contracts import RecordRevisionRef
 from nous.cognition.writing.contracts import (
     AddNote,
     AdoptDraft,
@@ -31,6 +30,7 @@ from nous.cognition.writing.contracts import (
 from nous.cognition.writing.generation import READ_DRAFT, REVISE_DRAFT, WRITE_DRAFT
 from nous.cognition.writing.operations import ADD_NOTE, ADOPT_DRAFT, REPLACE_RECORD
 from nous.common.errors import NousError
+from nous.common.material_refs import RecordRevisionRef
 from nous.content.citations import parse_citations
 from nous.content.contracts import ExternalInput, InlineText, ReadResult, SourceSelection
 from nous.content.operations import READ_RESULT

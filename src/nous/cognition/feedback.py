@@ -15,6 +15,7 @@ from sqlalchemy.engine import RowMapping
 from nous.application.contracts import CallContext, define_operation
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.common.operations import record_completed
 from nous.content.contracts import ContentSelection, ExternalInput, ResultRef
 from nous.content.results import ResultStore
@@ -30,12 +31,10 @@ from .contracts import (
     Namespace,
     NamespaceRef,
     NamespaceSelector,
-    RecordRef,
-    RecordRevisionRef,
     RevisionSelection,
 )
 from .material_contracts import MaterialSelection
-from .retrieval.contracts import EvidenceDelivery
+from .retrieval.adoption import read_saved_evidence
 from .scope import NamespaceOperations
 
 if TYPE_CHECKING:
@@ -158,29 +157,6 @@ RESOLVE_FEEDBACK = define_operation(
     result=FeedbackView,
     description="Record a resolution for feedback",
 )
-
-
-async def upgrade_query_feedback_in(tx: WriteTx) -> None:
-    """Protect saved evidence references and retain older standalone feedback facts."""
-    columns = await tx.connection.run_sync(
-        lambda connection: {
-            item["name"] for item in sa.inspect(connection).get_columns("cognition_feedback")
-        }
-    )
-    if "evidence_result_id" in columns:
-        return
-    await tx.connection.exec_driver_sql(
-        "ALTER TABLE cognition_feedback ADD COLUMN evidence_result_id VARCHAR "
-        "REFERENCES processing_results(id)"
-    )
-    await tx.connection.exec_driver_sql(
-        "UPDATE cognition_feedback SET "
-        "evidence_result_id = json_extract(target, '$.query.evidence.id'), "
-        "target = json_remove(target, '$.query.intent', '$.query.snapshot', "
-        "'$.query.group_rank', '$.query.basis', '$.query.candidate') "
-        "WHERE EXISTS (SELECT 1 FROM processing_results "
-        "WHERE id = json_extract(cognition_feedback.target, '$.query.evidence.id'))"
-    )
 
 
 class FeedbackOperations:
@@ -360,7 +336,7 @@ class FeedbackOperations:
             selected = await call.inputs.read_text(
                 selection.key, selection.selection, call.settings.values.content.text_read_max_bytes
             )
-            selection = ContentSelection.model_validate_json(selected.data)
+            selection = ContentSelection.model_validate_json(selected)
         owner = (
             NamespaceRef(
                 instance_id=target.record_ref.instance_id, id=target.record_ref.namespace_id
@@ -406,32 +382,12 @@ class FeedbackOperations:
     async def record_query(self, request: QueryFeedbackRequest, call: CallContext) -> FeedbackView:
         """Record feedback about a saved query or one actually delivered passage."""
         async with self.execution.operation("feedback.record_query"):
-            result = await self.results.get(request.evidence)
-            if result.operation != "retrieval.query":
-                raise NousError(
-                    "cognition.invalid_evidence", "Result is not a query evidence delivery"
-                )
-            artifact = next(
-                (item.artifact for item in result.outputs if item.name == "evidence"), None
-            )
-            if artifact is None:
-                raise NousError("cognition.invalid_evidence", "Evidence output is missing")
-            delivery = EvidenceDelivery.model_validate_json(
-                await self.reader.artifacts.read_text(artifact)
-            )
-            namespace = await self.scope.resolve_for(
-                request.namespace, delivery.intent.constraints.namespace
-            )
-            passage = None
+            result = await read_saved_evidence(self.results, request.evidence)
+            namespace = await self.scope.resolve_for(request.namespace, result.namespace)
             selection = None
             revision = None
             if request.passage_key is not None:
-                matches = [item for item in delivery.passages if item.key == request.passage_key]
-                if len(matches) != 1:
-                    raise NousError(
-                        "cognition.selection_mismatch", "Evidence key is not in this delivery"
-                    )
-                passage = matches[0]
+                passage = result.source(request.passage_key)
                 selected = passage.selections
                 if isinstance(passage.material, RecordRevisionRef):
                     revision = passage.material
@@ -440,10 +396,11 @@ class FeedbackOperations:
                     selection = MaterialSelection(material=passage.material, selections=selected)
             async with AsyncExitStack() as stack:
                 snapshot_available = False
-                if delivery.snapshot is not None:
+                snapshot = result.snapshot
+                if snapshot is not None:
                     try:
                         await stack.enter_async_context(
-                            self.wave.snapshots.hold_reference(delivery.snapshot)
+                            self.wave.snapshots.hold_reference(snapshot)
                         )
                         snapshot_available = True
                     except NousError as error:
@@ -469,9 +426,9 @@ class FeedbackOperations:
                         request.comment,
                         request.author,
                     )
-                    if snapshot_available and delivery.snapshot is not None:
+                    if snapshot_available and snapshot is not None:
                         await self.wave.retain_in(
-                            tx, delivery.snapshot, owner_kind="feedback", owner_id=saved.id
+                            tx, snapshot, owner_kind="feedback", owner_id=saved.id
                         )
             await call.saved(self._ref(saved))
             return saved

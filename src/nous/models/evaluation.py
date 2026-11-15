@@ -7,8 +7,8 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 
+from httpx2 import Response
 from openai import APIConnectionError, APIStatusError
-from openai import BaseModel as APIBaseModel
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from nous.application.contracts import CallContext, LanguageEvents, define_operation
@@ -33,7 +33,6 @@ from .evaluation_contracts import (
     CandidateEvaluation,
     EvaluationBatchFacts,
     EvaluationCandidate,
-    EvaluationInputFacts,
     EvaluationOutcome,
     EvaluationResponse,
     EvaluationTask,
@@ -65,7 +64,7 @@ class _WireRank(BaseModel):
     relevance_score: float
 
 
-class _WireResponse(APIBaseModel):
+class _WireResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str | None = None
     results: list[_WireRank]
@@ -192,15 +191,6 @@ class EvaluationOperations:
             facts.append(batch)
         return EvaluationOutcome(
             items=tuple(items),
-            producer=facts[0].producer,
-            usage={"batches": [item.usage for item in facts]},
-            actual_input=EvaluationInputFacts(
-                question=request.question,
-                candidates=request.candidates,
-                rubric=request.rubric,
-                purpose=request.purpose,
-                scale=request.scale,
-            ),
             batches=tuple(facts),
         )
 
@@ -225,11 +215,6 @@ class EvaluationOperations:
             )
         return RankOutcome(
             items=items,
-            producer=batch.producer,
-            usage=batch.usage,
-            actual_input=EvaluationInputFacts(
-                question=request.question, candidates=request.candidates
-            ),
             batches=(batch,),
         )
 
@@ -279,7 +264,7 @@ class EvaluationOperations:
                     try:
                         response = await client.post(
                             "/rerank",
-                            cast_to=_WireResponse,
+                            cast_to=Response,
                             body={
                                 "model": route.model.model_name,
                                 "query": request.question,
@@ -292,9 +277,7 @@ class EvaluationOperations:
                             },
                         )
                         try:
-                            response = _WireResponse.model_validate(
-                                response.model_dump(warnings=False)
-                            )
+                            parsed = _WireResponse.model_validate_json(response.content)
                         except ValidationError as error:
                             scope.complete(outcome="error", error_code="model.invalid_output")
                             raise NousError(
@@ -302,27 +285,27 @@ class EvaluationOperations:
                                 "Rerank returned an invalid response",
                                 cause=error,
                             ) from error
-                        indices = [item.index for item in response.results]
+                        indices = [item.index for item in parsed.results]
                         if (
                             len(indices) != len(set(indices))
                             or any(
                                 index < 0 or index >= len(request.candidates) for index in indices
                             )
                             or any(
-                                not math.isfinite(item.relevance_score) for item in response.results
+                                not math.isfinite(item.relevance_score) for item in parsed.results
                             )
                         ):
                             raise NousError(
                                 "model.invalid_output",
                                 "Rerank returned invalid candidate indices or scores",
                             )
-                        usage = response.usage or response.meta or {}
+                        usage = parsed.usage or parsed.meta or {}
                         producer = ModelProducer(
                             provider=route.model.provider,
                             protocol=provider.protocol,
                             model_id=route.model_id,
                             requested_model_name=route.model.model_name,
-                            request_id=response.id,
+                            request_id=parsed.id,
                         )
                         items = tuple(
                             RankedCandidate(
@@ -330,10 +313,10 @@ class EvaluationOperations:
                                 score=item.relevance_score,
                                 scale="rerank_relevance_score",
                             )
-                            for item in response.results
+                            for item in parsed.results
                         )
                         scope.complete(
-                            outcome="success", provider_request_id=response.id, reported_usage=usage
+                            outcome="success", provider_request_id=parsed.id, reported_usage=usage
                         )
                         return items, EvaluationBatchFacts(
                             keys=tuple(item.key for item in request.candidates),

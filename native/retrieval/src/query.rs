@@ -180,17 +180,15 @@ impl Options {
         }
     }
 }
-pub struct CalibratedPool {
-    pub candidates: CandidateSet,
-    pub prepared: PreparedPool,
-    pub observation: Arc<PipelineOutput>,
-    pub population: usize,
+struct CalibratedPool {
+    candidates: CandidateSet,
+    prepared: PreparedPool,
+    observation: Arc<PipelineOutput>,
+    population: usize,
 }
-pub struct QueryObservation {
-    pub output: Arc<PipelineOutput>,
-    pub identity: Value,
-    pub text: String,
-    pub core_rows: Vec<u64>,
-    pub records_enabled: bool,
-    pub diagnostics_json: String,
+struct QueryObservation {
+    output: Arc<PipelineOutput>,
+    text: String,
+    core_rows: Vec<u64>,
+    records_enabled: bool,
 }

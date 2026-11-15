@@ -19,8 +19,6 @@ ContentReadView (`content.contracts`):
   name, media_type, detected_media_type?, byte_length
   body_text?: str                 # 真正是文本且范围可读时
   available_representations[]     # 已存在、覆盖明确的转写/描述/页图等
-  export_ref: ArtifactRef
-  coverage
 ```
 
 文本返回选定原文；图片/音频/视频/PDF 返回原件及页/时间/区域、可导出引用、已有表示。`media_type` 是接纳类型，`detected_media_type` 是已探测的实际类型；未知类型的 UTF-8 正文也可以直接读取。没有可读表示也是正常的媒体视图。成果采用时将各表示输出声明的 OutputMapping 来源写入索引，读取按该索引找到覆盖所选范围的表示；每项保留命名输出及生产者声明的精确来源。表示的坐标换算使用这些正式映射，见[选区与正文](selection-and-text.md#已采用表示回原文)。
@@ -29,7 +27,7 @@ ContentReadView (`content.contracts`):
 
 默认阅读不运行新模型、不偷偷转写，也不为缺少描述标成失败。用户需要新解释时显式调用媒体操作。原件不存在或存储错误仍返回实际错误。
 
-RecordReader 和草稿的 `source_views` 按来源键保存有序 ContentReadView；ResultStore.read_view 的 `source_views` 展开用户所选来源，`input_views` 按实际输入组展开各表示，有名输出 `view` 使用同一形状。重复的精确选区在同次读取内复用，单项文本读取受配置上限约束。Wave 来源展开也使用该方法。程序可以持有正式引用，必要时通过现有 export/borrow_local 读取实际字节。
+文稿来源详情与草稿的 `source_views` 按来源键提供有序 ContentReadView；ResultStore.read_view 的 `content_views` 对每个精确选区提供一次可读内容。所选来源、实际输入和各输出的正式来源通过各自的 ContentSelection 对应这些内容，有名输出 `view` 使用同一形状。单项文本读取受配置上限约束。Wave 来源展开也使用该方法。程序可以持有正式引用，必要时通过现有 export/borrow_local 读取实际字节。
 
 ## 成批输入与内存所有权
 

@@ -246,9 +246,6 @@ class NativeConfig(ConfigModel):
 
 
 class QueryConfig(ConfigModel):
-    tokenizer_path: str | None = setting(
-        None, min_length=1, description="Local tokenizer.json used for token delivery budgets."
-    )
     group_scan_limit: int = Field(
         default_factory=lambda: cast(int, _profile_defaults("query")["group_scan_limit"]),
         description="Maximum candidate rows inspected by each grouped vector lane.",

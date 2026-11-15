@@ -113,14 +113,10 @@ class MediaDerivatives:
             result = await self.results.adopt(
                 facts=ResultFacts(
                     operation=operation,
-                    producer=ProgramProducer(operation=operation, parameters=parameters),
+                    producer=ProgramProducer(),
                     selected_inputs=SelectedInputs(
                         sources=(
-                            SelectedSource(
-                                slot_key="S1",
-                                selections=(selected,),
-                                display_name=original.display_name,
-                            ),
+                            SelectedSource(material=selected.artifact, key='S1', selections=(selected,), name=original.display_name),
                         )
                     ),
                     inputs=(
@@ -139,10 +135,7 @@ class MediaDerivatives:
                             ),
                         ),
                     ),
-                    parameters={
-                        **parameters,
-                        "cache_key": cache_key,
-                    },
+                    parameters=parameters,
                     coverage={"selection": selection.model_dump(mode="json")},
                     mappings=tuple(
                         OutputMapping(
@@ -162,6 +155,7 @@ class MediaDerivatives:
                     )
                     for name, output in outputs.items()
                 },
+                cache_key=cache_key,
             )
             track_completed(result.ref)
             return {

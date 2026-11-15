@@ -24,10 +24,10 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 从源码运行需要 Python 3.14、uv、稳定版 Rust 1.97 及系统 C/C++ 编译工具链。Windows 使用 Visual Studio Build Tools 的 C++ 桌面开发组件；Linux/macOS 使用对应平台的 C++ 编译器。`uv sync --locked` 会通过 maturin 构建包含 Python 主应用、Tantivy/Jieba、USearch 和 Wave 数值内核的 `nous-server` 包。在仓库目录先设置开发环境，使缓存和虚拟环境位于 `temp/`：
 
 ```powershell
-. ./dev.ps1 env
+. ./dev.ps1
 ```
 
-Linux 和 macOS 使用 `source ./dev.sh env`。随后安装依赖，初始化一个独立实例并检查运行资源：
+Linux 和 macOS 使用 `source ./dev.sh`。随后安装依赖，初始化一个独立实例并检查运行资源：
 
 需要代码检索工具时，可以运行 `. ./dev.ps1 init` 或 `source ./dev.sh init`。该命令准备 CodeGraph、Zvec-grep 和项目索引，并更新用户的 Codex MCP 配置；首次运行需要 Node.js/npm、uv 和 Codex CLI，Codex 需重连 MCP 或重启后读取新配置。检查索引时将 `init` 换成 `status`。
 

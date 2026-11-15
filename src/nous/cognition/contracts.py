@@ -5,7 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from nous.content.contracts import ArtifactRef, ContentReadView, ContentSelection
+from nous.common.material_refs import RecordRef, RecordRevisionRef
+from nous.content.contracts import ArtifactRef, ContentReadView, ContentSelection, MaterialSource
 from nous.temporal.values import CognitiveTimes
 
 TitleSource = Literal["user", "heading", "none"]
@@ -53,25 +54,6 @@ class Namespace(CognitiveValue):
         return self.ref.id
 
 
-class RecordRef(CognitiveValue):
-    instance_id: str
-    namespace_id: str
-    kind: Literal["note", "journal"]
-    id: str
-    identifier: str
-
-
-class RecordRevisionRef(CognitiveValue):
-    kind: Literal["record_revision"] = "record_revision"
-    record_ref: RecordRef
-    revision_id: str
-    ordinal: int = Field(ge=1)
-
-    @property
-    def identifier(self) -> str:
-        return f"{self.record_ref.identifier}@{self.ordinal}"
-
-
 class FeedbackRef(CognitiveValue):
     """Identify a saved feedback record in its owning instance and namespace."""
 
@@ -89,18 +71,10 @@ class RevisionSelection(CognitiveValue):
     selections: tuple[ContentSelection, ...] = Field(min_length=1)
 
 
-class SourceBinding(CognitiveValue):
-    key: str = Field(min_length=1)
-    selections: tuple[ContentSelection, ...] = Field(min_length=1)
-    owner_revision: RecordRevisionRef | None = None
-    usage: Literal["reference", "current_basis", "inspiration"] = "reference"
-    name: str | None = None
-
-
 class RecordSourceView(CognitiveValue):
     """One formal source and its readable content at the referenced revision."""
 
-    binding: SourceBinding
+    binding: MaterialSource
     views: tuple[ContentReadView, ...]
     title: str | None = None
 
@@ -137,7 +111,7 @@ class RecordView(CognitiveValue):
     author: str | None = None
     viewpoint: str | None = None
     times: CognitiveTimes
-    sources: tuple[SourceBinding, ...] = ()
+    sources: tuple[MaterialSource, ...] = ()
     source_details: tuple[RecordSourceView, ...] = ()
     archived: bool
     recall: bool

@@ -212,7 +212,7 @@ def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path)
             )
             result = await runtime.app.call(QUERY, QueryRequest(text="completed memory"))
             assert any(
-                group.material.ref == stored.revision_ref for group in result.evidence.materials
+                group.material == stored.revision_ref for group in result.evidence.materials
             )
 
             work = await runtime.app.call(

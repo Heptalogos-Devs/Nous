@@ -46,12 +46,12 @@ async def main(runtime: Runtime, namespace: str, annotate: bool) -> None:
     )
     for group in result.evidence.materials:
         view = await runtime.app.call(
-            READ_MATERIAL, ReadMaterial(ref=group.material.ref, sources=True)
+            READ_MATERIAL, ReadMaterial(ref=group.material, sources=True)
         )
         print(view.material.title, [item.body_text for item in view.selections])
-    if result.evidence.passages:
+    passage = next((item for group in result.evidence.materials for item in group.passages), None)
+    if passage is not None:
         evidence_ref = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=result.evidence))
-        passage = result.evidence.passages[0]
         view = await runtime.app.call(
             READ_MATERIAL, ReadMaterial(delivery=evidence_ref, key=passage.key)
         )

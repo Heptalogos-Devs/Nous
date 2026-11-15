@@ -10,7 +10,6 @@ from nous.content.contracts import ArtifactRef
 from nous.content.results import ResultStore
 from nous.wave.contracts import (
     Association,
-    Candidate,
     CandidateContent,
     CandidateOccurrence,
     CandidatePath,
@@ -24,7 +23,6 @@ from nous.wave.contracts import (
     EvidenceProjection,
     GroupDescriptor,
     PathStep,
-    ReusableDocument,
     SourceSequence,
     SupportGroup,
     document_order,
@@ -32,7 +30,7 @@ from nous.wave.contracts import (
 
 from ..concept_contracts import AnnotationView
 from ..materials import Materials
-from .capture import CapturedCorpus
+from .capture import CapturedCorpus, MaterialSnapshot
 from .contracts import CognitiveGroupContext
 
 
@@ -111,90 +109,32 @@ class ProjectionBuilder:
         self.results, self.materials = results, materials
 
     @staticmethod
-    def combine(
-        collection: str,
-        profile: str,
-        namespace_id: str,
-        generation: int,
-        needs_review_count: int,
-        fragments: Sequence[tuple[str, str, CorpusView | ReusableDocument, GroupDescriptor]],
-        sources: dict[str, ReusableDocument],
-    ) -> CorpusView:
-        """Assemble independent group projections without expanding unchanged sources."""
-        documents: dict[str, Document] = {}
-        concepts: dict[str, Concept] = {}
-        candidates: dict[str, Candidate | DocumentCandidates] = {}
-        associations: dict[str, Association] = {}
-        support_groups: dict[str, SupportGroup] = {}
-        sequences: dict[str, SourceSequence] = {}
-        roots: dict[str, tuple[ArtifactRef, ...]] = {}
-        memberships: dict[str, tuple[str, ...]] = {}
-        source_documents: dict[str, None] = {}
-        groups: list[GroupDescriptor] = []
-        stamps: dict[str, str] = {}
-
-        def merge[T](target: dict[str, T], key: str, value: T) -> None:
-            if key in target and target[key] != value:
-                raise NousError(
-                    "wave.projection_conflict",
-                    "Projection fragments disagree",
-                    details={"key": key},
+    def group(snapshot: MaterialSnapshot) -> GroupDescriptor:
+        view, index = snapshot.view, snapshot.index
+        context = CognitiveGroupContext(
+            material=view.ref,
+            needs_review=index.needs_review,
+            sources=tuple(
+                dict.fromkeys(
+                    part for source in view.material_sources for part in source.selections
                 )
-            target[key] = value
-
-        for value in sources.values():
-            merge(documents, value.document.key, value.document)
-            for key, refs in value.roots.items():
-                merge(roots, key, refs)
-            merge(memberships, value.document.key, value.memberships)
-            if value.projection.source_document:
-                source_documents[value.document.key] = None
-
-        for document_key, stamp, fragment, group in fragments:
-            if isinstance(fragment, CorpusView):
-                for value in fragment.documents:
-                    merge(documents, value.key, value)
-                for key, refs in fragment.evidence.roots.items():
-                    merge(roots, key, refs)
-                for key, value in fragment.evidence.documents.items():
-                    merge(memberships, key, value)
-                source_documents.update(dict.fromkeys(fragment.evidence.source_documents))
-                declarations = fragment
-            else:
-                declarations = fragment.projection
-            for value in declarations.concepts:
-                merge(concepts, value.key, value)
-            for value in declarations.candidates:
-                merge(candidates, value.key, value)
-            for value in declarations.associations:
-                merge(associations, value.key, value)
-            for value in declarations.support_groups:
-                merge(support_groups, value.key, value)
-            for value in declarations.source_sequences:
-                sequences.setdefault(value.model_dump_json(), value)
-            groups.append(group)
-            stamps[document_key] = stamp
-        return CorpusView(
-            name=collection,
-            owner=CognitionOwner(namespace_id=namespace_id),
-            generation=generation,
-            profile=profile,
-            metadata={"needs_review_count": needs_review_count},
-            documents=tuple(documents.values()),
-            groups=tuple(groups),
-            evidence=EvidenceProjection(
-                roots=roots, documents=memberships, source_documents=tuple(source_documents)
             ),
-            concepts=tuple(concepts.values()),
-            candidates=tuple(candidates.values()),
-            source_sequences=tuple(sequences.values()),
-            support_groups=tuple(support_groups.values()),
-            associations=tuple(associations.values()),
-            capture_stamps=stamps,
+        )
+        return GroupDescriptor(
+            key=index.group_key,
+            document_key=index.key,
+            title=view.title,
+            context=cast(dict[str, JsonValue], context.model_dump(mode="json")),
         )
 
     async def build(
-        self, captured: CapturedCorpus, collection: str, profile: str, *, candidate_limit: int
+        self,
+        captured: CapturedCorpus,
+        collection: str,
+        profile: str,
+        *,
+        candidate_limit: int,
+        needs_review_count: int,
     ) -> CorpusView:
         """Project frozen common material views and their exact source relations."""
         views = {key: item.view for key, item in captured.materials.items()}
@@ -269,12 +209,10 @@ class ProjectionBuilder:
         sequences: list[SourceSequence] = []
         supports: list[SupportGroup] = []
         associations: list[Association] = []
-        review_count = 0
         for key in captured.current:
             view = views[key]
             index = captured.materials[key].index
             annotation = index.annotation
-            review_count += int(index.needs_review)
             paths = annotation_paths(annotation) if annotation else ()
             occurrences = annotation_occurrences(annotation) if annotation else ()
             if annotation:
@@ -298,29 +236,7 @@ class ProjectionBuilder:
                         )
                         for path in paths
                     )
-            context = CognitiveGroupContext(
-                material=view.ref,
-                kind=view.kind,
-                purpose=index.purpose,
-                needs_review=index.needs_review,
-                sources=tuple(
-                    dict.fromkeys(
-                        part
-                        for relation in view.relations
-                        if relation.kind != "representation"
-                        for part in relation.evidence
-                    )
-                ),
-                attributes=view.attributes,
-            )
-            groups.append(
-                GroupDescriptor(
-                    key=index.group_key,
-                    document_key=key,
-                    title=view.title,
-                    context=cast(dict[str, JsonValue], context.model_dump(mode="json")),
-                )
-            )
+            groups.append(self.group(captured.materials[key]))
             candidates.append(
                 DocumentCandidates(
                     document=key,
@@ -363,7 +279,7 @@ class ProjectionBuilder:
             owner=CognitionOwner(namespace_id=captured.namespace.id),
             generation=captured.namespace.content_generation,
             profile=profile,
-            metadata={"needs_review_count": review_count},
+            metadata={"needs_review_count": needs_review_count},
             documents=tuple(documents),
             groups=tuple(groups),
             concepts=tuple(concepts.values()),

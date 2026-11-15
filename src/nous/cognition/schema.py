@@ -64,7 +64,10 @@ sources = sa.Table(
     sa.Column("revision_id", sa.String, sa.ForeignKey(revisions.c.id), primary_key=True),
     sa.Column("key", sa.String, primary_key=True),
     sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("material", sa.JSON, nullable=False),
     sa.Column("target_revision_id", sa.String, sa.ForeignKey(revisions.c.id), index=True),
+    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
+    sa.Column("source_work_revision_id", sa.String, sa.ForeignKey("work_revisions.id")),
     sa.Column("usage", sa.String, nullable=False),
     sa.Column("name", sa.String),
     sa.UniqueConstraint("revision_id", "ordinal"),
@@ -78,18 +81,6 @@ source_targets = sa.Table(
     sa.Column("ordinal", sa.Integer, primary_key=True),
     sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
     sa.Column("selection", sa.JSON, nullable=False),
-    sa.ForeignKeyConstraint(
-        ["revision_id", "key"], ["revision_sources.revision_id", "revision_sources.key"]
-    ),
-)
-
-source_materials = sa.Table(
-    "revision_source_materials",
-    metadata,
-    sa.Column("revision_id", sa.String, primary_key=True),
-    sa.Column("key", sa.String, primary_key=True),
-    sa.Column("material", sa.JSON, nullable=False),
-    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.ForeignKeyConstraint(
         ["revision_id", "key"], ["revision_sources.revision_id", "revision_sources.key"]
     ),
@@ -112,4 +103,32 @@ journal_drafts = sa.Table(
     sa.Column("adopted_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
     sa.Column("adopted_as", sa.String),
     sa.Column("recorded_at", sa.String, nullable=False),
+)
+
+draft_sources = sa.Table(
+    "journal_draft_sources",
+    metadata,
+    sa.Column("draft_id", sa.String, sa.ForeignKey(journal_drafts.c.id), primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("material", sa.JSON, nullable=False),
+    sa.Column("target_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
+    sa.Column("source_result_id", sa.String, sa.ForeignKey(results.c.id)),
+    sa.Column("source_work_revision_id", sa.String, sa.ForeignKey("work_revisions.id")),
+    sa.Column("usage", sa.String, nullable=False),
+    sa.Column("name", sa.String),
+    sa.UniqueConstraint("draft_id", "ordinal"),
+)
+
+draft_source_targets = sa.Table(
+    "journal_draft_source_targets",
+    metadata,
+    sa.Column("draft_id", sa.String, primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
+    sa.Column("selection", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["draft_id", "key"], ["journal_draft_sources.draft_id", "journal_draft_sources.key"]
+    ),
 )

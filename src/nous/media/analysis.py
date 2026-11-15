@@ -226,12 +226,7 @@ class MediaAnalysis:
                         update={
                             "sources": (
                                 *scope.sources,
-                                SelectedSource(
-                                    slot_key="DESCRIPTION",
-                                    role="context",
-                                    display_name="Description",
-                                    selections=(ContentSelection(artifact=output.artifact),),
-                                ),
+                                SelectedSource(material=output.artifact, key='DESCRIPTION', kind='context', name='Description', selections=(ContentSelection(artifact=output.artifact),)),
                             )
                         }
                     )

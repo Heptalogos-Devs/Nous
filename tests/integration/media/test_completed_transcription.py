@@ -122,7 +122,10 @@ def test_saved_transcript_is_reused_after_description_failure(tmp_path: Path) ->
                         description_task="read",
                     ),
                 )
-                view = await runtime.app.call(READ_RESULT, ReadResult(ref=result.descriptions[0]))
+                view = await runtime.app.call(
+                    READ_RESULT, ReadResult(ref=result.descriptions[0], sources=True, details=True)
+                )
+                assert view.inputs is not None
                 transcript = next(
                     part
                     for group in view.inputs
@@ -134,6 +137,9 @@ def test_saved_transcript_is_reused_after_description_failure(tmp_path: Path) ->
                 assert origin.origin.artifact == first.ref
                 assert origin.origin.selection == interval
                 assert origin.transform_ref is not None
+                sources = view.outputs[0].sources
+                assert sources is not None
+                assert any(source.selections == (origin.origin,) for source in sources)
                 assert calls == ["transcription", "description", "description"]
                 await runtime.app.call(
                     ANALYZE_MEDIA,

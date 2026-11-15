@@ -14,16 +14,23 @@ struct Node {
     inputs: BTreeMap<String, Value>,
     #[serde(default)]
     parameters: Value,
+    #[serde(default)]
+    branch: Option<usize>,
 }
 #[derive(Deserialize)]
 struct Program {
     nodes: Vec<Node>,
     outputs: BTreeMap<String, Value>,
+    #[serde(default)]
+    branches: Vec<Branch>,
+    #[serde(default)]
+    query_prefix: String,
 }
 #[derive(Clone)]
 enum Stage {
-    Marker,
     Text(String),
+    Context(Arc<Vec<ContextLexical>>),
+    Stages(Arc<Vec<ThinkingStage>>),
     Vector(Vec<f32>, String),
     Observation(Arc<QueryObservation>),
     Candidates(Arc<CandidateSet>),
@@ -33,46 +40,28 @@ enum Stage {
     Result(Arc<Value>),
 }
 type Values = BTreeMap<(String, String), Stage>;
-enum ProgramRun {
-    Complete(Value),
-    Ranked(
-        RankedCandidates,
-        Option<Arc<QueryObservation>>,
-        BTreeMap<String, crate::grouping::LaneCoverage>,
-    ),
-}
 #[derive(Deserialize)]
-struct ExpressionBranch {
-    name: String,
+struct Branch {
     text: String,
     allowed_rows: Vec<u64>,
     core_rows: Vec<u64>,
     vector_index: Option<usize>,
+}
+
+struct BranchContext {
+    text: String,
+    allowed: BTreeSet<u64>,
+    local_vector: Option<Vec<f32>>,
+    options: Options,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct RankAdjustment {
+    name: Option<String>,
+    kind: Option<String>,
     limit: Option<usize>,
     prefer: Vec<String>,
-    avoid: Vec<String>,
-    sort: Option<String>,
-}
-#[derive(Deserialize)]
-struct ExpressionTree {
-    kind: String,
-    branch: Option<usize>,
-    #[serde(default)]
-    children: Vec<ExpressionTree>,
-    limit: Option<usize>,
-    sort: Option<String>,
-    #[serde(default)]
-    prefer: Vec<String>,
-    #[serde(default)]
-    avoid: Vec<String>,
-}
-#[derive(Deserialize)]
-struct BoundExpression {
-    tree: ExpressionTree,
-    branches: Vec<ExpressionBranch>,
-    #[serde(default)]
-    prefer: Vec<String>,
-    #[serde(default)]
     avoid: Vec<String>,
     sort: Option<String>,
 }
@@ -110,378 +99,6 @@ fn put(values: &mut Values, node: &Node, port: &str, value: Stage) {
 }
 
 impl Snapshot {
-    fn combine_expression(
-        &self,
-        tree: &ExpressionTree,
-        branches: &[RankedCandidates],
-        options: &Options,
-        local_vector: Option<Vec<f32>>,
-        allowed: &BTreeSet<u64>,
-        cancel: &CancellationToken,
-    ) -> Result<RankedCandidates> {
-        if tree.kind == "term" {
-            let index = tree.branch.context("Expression term needs a branch")?;
-            return branches
-                .get(index)
-                .cloned()
-                .context("Expression branch is unavailable");
-        }
-        ensure!(
-            matches!(tree.kind.as_str(), "any" | "all") && !tree.children.is_empty(),
-            "Expression must be a nonempty any/all combination"
-        );
-        let children = tree
-            .children
-            .iter()
-            .map(|child| {
-                self.combine_expression(
-                    child,
-                    branches,
-                    options,
-                    local_vector.clone(),
-                    allowed,
-                    cancel,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut result = if children.len() == 1 {
-            children[0].clone()
-        } else {
-            let inputs = children
-                .iter()
-                .map(|ranked| (ranked, 1.0))
-                .collect::<Vec<_>>();
-            self.fuse_rankings(&inputs, options.rrf_k, options, local_vector)?
-        };
-        if tree.kind == "all" {
-            let mut common: Option<BTreeSet<u64>> = None;
-            for ranked in &children {
-                let groups = ranked
-                    .hits
-                    .iter()
-                    .filter_map(|hit| hit["row"].as_u64())
-                    .map(|row| self.inner.candidates.group_rows[row as usize])
-                    .collect::<BTreeSet<_>>();
-                common = Some(match common {
-                    Some(previous) => previous.intersection(&groups).copied().collect(),
-                    None => groups,
-                });
-            }
-            let common = common.unwrap_or_default();
-            result.hits.retain(|hit| {
-                common.contains(
-                    &self.inner.candidates.group_rows[hit["row"].as_u64().unwrap() as usize],
-                )
-            });
-        }
-        result =
-            self.apply_preferences(&result, &tree.prefer, &tree.avoid, allowed, options, cancel)?;
-        self.sort_ranked(&mut result, tree.sort.as_deref(), options)?;
-        self.limit_ranked_groups(&mut result, tree.limit);
-        Ok(result)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn execute_expression(
-        &self,
-        name: &str,
-        program_json: &str,
-        expression_json: &str,
-        text: &str,
-        original_vector: Option<&[f32]>,
-        raw_vectors: &[Vec<f32>],
-        contextual_vectors: &[Vec<f32>],
-        allowed: &BTreeSet<u64>,
-        options_json: &str,
-        ghost_vectors: Vec<Vec<f32>>,
-        cancel: &CancellationToken,
-    ) -> Result<Value> {
-        let expression: BoundExpression = serde_json::from_str(expression_json)
-            .map_err(|error| failure("wave.invalid_input", error))?;
-        let plan: Program = serde_json::from_str(program_json)
-            .map_err(|error| failure("wave.invalid_program", error))?;
-        let context_nodes = plan
-            .nodes
-            .iter()
-            .filter(|node| node.operator == "context.recall")
-            .map(|node| node.id.as_str())
-            .collect::<BTreeSet<_>>();
-        let context_in_pool = plan
-            .nodes
-            .iter()
-            .filter(|node| node.operator == "candidates.union")
-            .any(|node| {
-                node.inputs
-                    .get("sets")
-                    .and_then(Value::as_array)
-                    .is_some_and(|sets| {
-                        sets.iter().any(|reference| {
-                            reference["node"]
-                                .as_str()
-                                .is_some_and(|name| context_nodes.contains(name))
-                        })
-                    })
-            });
-        let mut options: Options = serde_json::from_str(options_json)?;
-        let local = original_vector.map(unit).transpose()?;
-        let mut rankings = Vec::new();
-        let mut observations = Vec::new();
-        let mut branch_coverage = Vec::new();
-        let mut expression_allowed = BTreeSet::new();
-        for branch in &expression.branches {
-            cancel.check()?;
-            let scope = branch
-                .allowed_rows
-                .iter()
-                .copied()
-                .filter(|row| allowed.contains(row))
-                .collect::<BTreeSet<_>>();
-            expression_allowed.extend(scope.iter().copied());
-            let mut branch_options: Options = serde_json::from_str(options_json)?;
-            branch_options.core_rows = branch.core_rows.clone();
-            if !context_in_pool {
-                branch_options.context_lexical.clear();
-            }
-            branch_options.explore = false;
-            branch_options.thinking_stages.clear();
-            let scope_only = branch.text.trim().is_empty() && branch.core_rows.is_empty();
-            let (mut ranked, observation, lanes) = if scope_only {
-                (
-                    self.rank_scope(&scope, &branch_options, local.clone()),
-                    None,
-                    BTreeMap::new(),
-                )
-            } else {
-                let raw = branch
-                    .vector_index
-                    .and_then(|index| raw_vectors.get(index))
-                    .map(Vec::as_slice);
-                let contextual = branch
-                    .vector_index
-                    .and_then(|index| contextual_vectors.get(index))
-                    .map(Vec::as_slice);
-                match self.run_program(
-                    name,
-                    &plan,
-                    &branch.text,
-                    raw,
-                    contextual,
-                    &scope,
-                    branch_options,
-                    ghost_vectors.clone(),
-                    None,
-                    cancel,
-                    true,
-                )? {
-                    ProgramRun::Ranked(ranked, observation, lanes) => (ranked, observation, lanes),
-                    ProgramRun::Complete(_) => {
-                        return Err(failure(
-                            "wave.invalid_program",
-                            "Branch produced a complete delivery",
-                        ));
-                    }
-                }
-            };
-            let branch_options: Options = serde_json::from_str(options_json)?;
-            if context_in_pool && expression.tree.kind != "term" {
-                let direct_groups = ranked
-                    .hits
-                    .iter()
-                    .filter(|hit| {
-                        hit["channels"].as_array().is_some_and(|lanes| {
-                            lanes.iter().any(|lane| {
-                                lane.as_str()
-                                    .is_some_and(|name| !name.starts_with("context:"))
-                            })
-                        })
-                    })
-                    .filter_map(|hit| hit["row"].as_u64())
-                    .map(|row| self.inner.candidates.group_rows[row as usize])
-                    .collect::<BTreeSet<_>>();
-                ranked.hits.retain(|hit| {
-                    direct_groups.contains(
-                        &self.inner.candidates.group_rows[hit["row"].as_u64().unwrap() as usize],
-                    )
-                });
-            }
-            ranked = self.apply_preferences(
-                &ranked,
-                &branch.prefer,
-                &branch.avoid,
-                &scope,
-                &branch_options,
-                cancel,
-            )?;
-            self.sort_ranked(&mut ranked, branch.sort.as_deref(), &branch_options)?;
-            let groups_before_limit = ranked
-                .hits
-                .iter()
-                .filter_map(|hit| hit["row"].as_u64())
-                .map(|row| self.inner.candidates.group_rows[row as usize])
-                .collect::<BTreeSet<_>>()
-                .len();
-            self.limit_ranked_groups(&mut ranked, branch.limit);
-            let groups = ranked
-                .hits
-                .iter()
-                .filter_map(|hit| hit["row"].as_u64())
-                .map(|row| self.inner.candidates.group_rows[row as usize])
-                .collect::<BTreeSet<_>>();
-            let scope_groups = scope
-                .iter()
-                .map(|row| self.inner.candidates.group_rows[*row as usize])
-                .collect::<BTreeSet<_>>()
-                .len();
-            branch_coverage.push(json!({"name":branch.name,"coverage":{
-                "requested_groups":branch.limit,"returned_groups":groups.len(),"eligible_groups_known":null,
-                "allowed_groups":scope_groups,"recall_exhausted":scope_only || (!lanes.is_empty() && lanes.values().all(|lane|lane.recall_exhausted)),
-                "truncated":groups_before_limit>groups.len() || lanes.values().any(|lane|lane.truncated),
-                "reason":if groups_before_limit>groups.len(){Some("branch_limit")}else{None},"lanes":lanes,
-                "lane_limit_unit":if options.grouping=="document"{"groups"}else{"candidates"},
-                "group_scan_limit":options.group_scan_limit,"passages_per_group":options.passages_per_group,
-                "candidates":ranked.hits.len(),"total_candidates":self.inner.candidates.keys.len(),
-                "max_union_candidates":options.readout.max_union_candidates,"top_k":options.top_k,
-                "offered_candidates":ranked.offered_candidates,"ranked_candidates":ranked.hits.len(),
-                "unique_candidates":ranked.hits.len(),"candidate_limit_reached":false,"top_k_truncated":false
-            }}));
-            rankings.push(ranked);
-            observations.push(observation);
-        }
-        let mut ranked = self.combine_expression(
-            &expression.tree,
-            &rankings,
-            &options,
-            local.clone(),
-            &expression_allowed,
-            cancel,
-        )?;
-        let context_allowed = if expression.tree.kind == "term" {
-            expression_allowed.clone()
-        } else {
-            let groups = ranked
-                .hits
-                .iter()
-                .filter_map(|hit| hit["row"].as_u64())
-                .map(|row| self.inner.candidates.group_rows[row as usize])
-                .collect::<BTreeSet<_>>();
-            expression_allowed
-                .iter()
-                .copied()
-                .filter(|row| groups.contains(&self.inner.candidates.group_rows[*row as usize]))
-                .collect()
-        };
-        if !context_in_pool && !context_nodes.is_empty() {
-            let context_candidates = self.recall_context(&context_allowed, &options, cancel)?;
-            for fragment in &options.context_lexical {
-                let lane = format!("context:{}", fragment.key);
-                let rows = context_candidates
-                    .entries
-                    .iter()
-                    .filter(|entry| entry.lanes.contains_key(&lane))
-                    .map(|entry| entry.row)
-                    .collect::<Vec<_>>();
-                let groups = rows
-                    .iter()
-                    .map(|row| self.inner.candidates.group_rows[*row as usize])
-                    .collect::<BTreeSet<_>>();
-                let lane_coverage = context_candidates.lane_coverage.get(&lane);
-                let lanes = lane_coverage
-                    .map(|coverage| {
-                        [(lane.clone(), coverage.clone())]
-                            .into_iter()
-                            .collect::<BTreeMap<_, _>>()
-                    })
-                    .unwrap_or_default();
-                branch_coverage.push(json!({"name":lane,"coverage":{
-                    "requested_groups":null,"returned_groups":groups.len(),
-                    "eligible_groups_known":lane_coverage.and_then(|coverage| coverage.eligible_groups_known),
-                    "allowed_groups":context_allowed.iter().map(|row| self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),
-                    "recall_exhausted":lane_coverage.is_some_and(|coverage|coverage.recall_exhausted),
-                    "truncated":lane_coverage.is_some_and(|coverage|coverage.truncated),
-                    "reason":lane_coverage.and_then(|coverage|coverage.reason.clone()),"lanes":lanes,
-                    "lane_limit_unit":if options.grouping=="document"{"groups"}else{"candidates"},
-                    "group_scan_limit":options.group_scan_limit,"passages_per_group":options.passages_per_group,
-                    "candidates":rows.len(),"total_candidates":self.inner.candidates.keys.len(),
-                    "max_union_candidates":options.readout.max_union_candidates,"top_k":options.top_k,
-                    "offered_candidates":rows.len(),"ranked_candidates":rows.len(),"unique_candidates":rows.len(),
-                    "candidate_limit_reached":false,"top_k_truncated":false
-                }}));
-            }
-            ranked = self.rank_context(&ranked, &context_candidates, &options)?;
-        }
-        ranked = self.apply_preferences(
-            &ranked,
-            &expression.prefer,
-            &expression.avoid,
-            &context_allowed,
-            &options,
-            cancel,
-        )?;
-        self.sort_ranked(&mut ranked, expression.sort.as_deref(), &options)?;
-        ranked.local_vector = local;
-        if options.explore {
-            if let Some(observation) = observations.iter().flatten().next() {
-                let stages = vec![ThinkingStage {
-                    name: "explore".into(),
-                    top_k: options.top_k,
-                    candidate_rows: ranked
-                        .hits
-                        .iter()
-                        .filter_map(|hit| hit["row"].as_u64())
-                        .collect(),
-                }];
-                ranked.thinking = self.thinking(
-                    observation,
-                    &stages,
-                    options.thinking_min_closure,
-                    &context_allowed,
-                    cancel,
-                )?;
-            }
-        }
-        if let Some(locator) = plan
-            .nodes
-            .iter()
-            .find(|node| node.operator == "passages.locate")
-        {
-            let parameters: LocateParameters = serde_json::from_value(locator.parameters.clone())?;
-            parameters
-                .validate()
-                .map_err(|error| failure("wave.invalid_program", error))?;
-            options.local_units_per_group = parameters.local_units_per_group;
-            options.localize_signals = parameters
-                .signals
-                .iter()
-                .map(|signal| signal.name().into())
-                .collect();
-            options.localize_rrf_k = parameters.rrf_k;
-            options.localize_lexical_weight = parameters.lexical_weight;
-            options.localize_semantic_weight = parameters.semantic_weight;
-        }
-        let mut value =
-            self.deliver(name, text, &context_allowed, &options, None, cancel, ranked)?;
-        value["branch_coverage"] = json!(branch_coverage);
-        let any_truncated = value["branch_coverage"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|branch| branch["coverage"]["truncated"].as_bool() == Some(true));
-        let all_exhausted = value["branch_coverage"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|branch| branch["coverage"]["recall_exhausted"].as_bool() == Some(true));
-        value["coverage"]["truncated"] =
-            json!(value["coverage"]["truncated"].as_bool().unwrap_or(false) || any_truncated);
-        value["coverage"]["recall_exhausted"] = json!(all_exhausted);
-        value["coverage"]["eligible_groups_known"] = Value::Null;
-        value["coverage"]["candidates"] = Value::Null;
-        value["coverage"]["offered_candidates"] = Value::Null;
-        value["coverage"]["ranked_candidates"] = Value::Null;
-        value["coverage"]["unique_candidates"] = Value::Null;
-        Ok(value)
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn execute_program(
         &self,
@@ -490,49 +107,16 @@ impl Snapshot {
         text: &str,
         raw: Option<&[f32]>,
         contextual: Option<&[f32]>,
+        branch_raw: &[Vec<f32>],
+        branch_contextual: &[Vec<f32>],
         allowed: &BTreeSet<u64>,
-        options: Options,
+        mut options: Options,
         ghost_vectors: Vec<Vec<f32>>,
         fixed: Option<&CandidateSet>,
         cancel: &CancellationToken,
     ) -> Result<Value> {
         let program: Program = serde_json::from_str(program_json)
             .map_err(|error| failure("wave.invalid_program", error))?;
-        match self.run_program(
-            name,
-            &program,
-            text,
-            raw,
-            contextual,
-            allowed,
-            options,
-            ghost_vectors,
-            fixed,
-            cancel,
-            false,
-        )? {
-            ProgramRun::Complete(result) => Ok(result),
-            ProgramRun::Ranked(_, _, _) => {
-                unreachable!("complete program returned an intermediate rank")
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_program(
-        &self,
-        name: &str,
-        program: &Program,
-        text: &str,
-        raw: Option<&[f32]>,
-        contextual: Option<&[f32]>,
-        allowed: &BTreeSet<u64>,
-        mut options: Options,
-        ghost_vectors: Vec<Vec<f32>>,
-        fixed: Option<&CandidateSet>,
-        cancel: &CancellationToken,
-        stop_at_rank: bool,
-    ) -> Result<ProgramRun> {
         options.validate_grouping()?;
         QueryControls {
             top_k: options.top_k,
@@ -551,7 +135,11 @@ impl Snapshot {
                 .all(|r| *r < self.inner.candidates.keys.len() as u64),
             "Candidate row outside snapshot"
         );
-        if raw.is_some() || contextual.is_some() {
+        if raw.is_some()
+            || contextual.is_some()
+            || !branch_raw.is_empty()
+            || !branch_contextual.is_empty()
+        {
             self.validate_query_space(&options)?;
         }
         let raw = raw.map(unit).transpose()?;
@@ -559,13 +147,16 @@ impl Snapshot {
         let local_vector = raw.clone().or_else(|| contextual.clone());
         let mut values = Values::new();
         values.insert(("query".into(), "lexical".into()), Stage::Text(text.into()));
-        values.insert(("query".into(), "intent".into()), Stage::Marker);
-        values.insert(("query".into(), "stages".into()), Stage::Marker);
-        values.insert(("query".into(), "context_lexical".into()), Stage::Marker);
-        values.insert(("snapshot".into(), "handle".into()), Stage::Marker);
-        values.insert(("scope".into(), "allowed".into()), Stage::Marker);
-        values.insert(("scope".into(), "materials".into()), Stage::Marker);
-        values.insert(("delivery".into(), "request".into()), Stage::Marker);
+        let context = Arc::new(std::mem::take(&mut options.context_lexical));
+        let stages = Arc::new(std::mem::take(&mut options.thinking_stages));
+        values.insert(
+            ("query".into(), "context_lexical".into()),
+            Stage::Context(context.clone()),
+        );
+        values.insert(
+            ("query".into(), "stages".into()),
+            Stage::Stages(stages.clone()),
+        );
         if let Some(vector) = raw {
             values.insert(
                 ("query".into(), "raw_vector".into()),
@@ -591,9 +182,271 @@ impl Snapshot {
                 Stage::Candidates(Arc::new(pool.clone())),
             );
         }
+        let options_value = serde_json::to_value(&options)?;
+        let mut contexts = Vec::with_capacity(program.branches.len());
+        let mut expression_allowed = BTreeSet::new();
+        for (index, branch) in program.branches.iter().enumerate() {
+            ensure!(
+                branch.allowed_rows.iter().all(|row| allowed.contains(row)),
+                "Expression branch exceeds the query scope"
+            );
+            let scope = branch.allowed_rows.iter().copied().collect::<BTreeSet<_>>();
+            expression_allowed.extend(scope.iter().copied());
+            let mut branch_options: Options = serde_json::from_value(options_value.clone())?;
+            branch_options.core_rows.clone_from(&branch.core_rows);
+            let (raw, contextual) = if let Some(i) = branch.vector_index {
+                (
+                    Some(unit(
+                        branch_raw.get(i).context("Branch query vector missing")?,
+                    )?),
+                    Some(unit(
+                        branch_contextual
+                            .get(i)
+                            .context("Branch context vector missing")?,
+                    )?),
+                )
+            } else {
+                (None, None)
+            };
+            let branch_local = raw.clone().or_else(|| contextual.clone());
+            let query = format!("{}query:{index}", program.query_prefix);
+            values.insert(
+                (query.clone(), "lexical".into()),
+                Stage::Text(branch.text.clone()),
+            );
+            values.insert(
+                (query.clone(), "context_lexical".into()),
+                Stage::Context(context.clone()),
+            );
+            values.insert(
+                (query.clone(), "stages".into()),
+                Stage::Stages(stages.clone()),
+            );
+            if let Some(vector) = raw {
+                values.insert(
+                    (query.clone(), "raw_vector".into()),
+                    Stage::Vector(vector, "query_knn".into()),
+                );
+            }
+            if let Some(vector) = contextual {
+                values.insert(
+                    (query, "contextual_signal".into()),
+                    Stage::Vector(vector, "context".into()),
+                );
+            }
+            contexts.push(BranchContext {
+                text: branch.text.clone(),
+                allowed: scope,
+                local_vector: branch_local,
+                options: branch_options,
+            });
+        }
+        let allowed = if program.branches.is_empty() {
+            allowed
+        } else {
+            &expression_allowed
+        };
+        let mut branch_coverage = Vec::new();
         for node in &program.nodes {
             cancel.check()?;
+            if node.branch.is_none() {
+                for context in &contexts {
+                    options
+                        .lane_coverage
+                        .lock()
+                        .unwrap()
+                        .extend(context.options.lane_coverage.lock().unwrap().clone());
+                }
+            }
+            let (text, allowed, local_vector, options) = if let Some(index) = node.branch {
+                let context = contexts
+                    .get_mut(index)
+                    .context("Program branch is unavailable")?;
+                (
+                    context.text.as_str(),
+                    &context.allowed,
+                    &context.local_vector,
+                    &mut context.options,
+                )
+            } else {
+                (text, allowed, &local_vector, &mut options)
+            };
             match node.operator.as_str() {
+                "thinking.combine" => {
+                    let references = node
+                        .inputs
+                        .get("routes")
+                        .and_then(Value::as_array)
+                        .context("Thinking branch outputs missing")?;
+                    let names = node.parameters["branches"]
+                        .as_array()
+                        .context("Thinking branch names missing")?;
+                    ensure!(
+                        references.len() == names.len(),
+                        "Thinking branch names do not match outputs"
+                    );
+                    let mut stages = Vec::new();
+                    let mut unavailable = Vec::new();
+                    for (reference, name) in references.iter().zip(names) {
+                        let Stage::Links(value) = get(&values, reference)? else {
+                            anyhow::bail!("Thinking combination requires routes")
+                        };
+                        if let Some(items) = value.get("stages").and_then(Value::as_array) {
+                            for item in items {
+                                let mut stage = item.clone();
+                                stage["branch"] = name.clone();
+                                stages.push(stage);
+                            }
+                        }
+                        if let Some(reason) = value.get("unavailable").and_then(Value::as_object) {
+                            let mut reason = reason.clone();
+                            reason.insert("branch".into(), name.clone());
+                            unavailable.push(Value::Object(reason));
+                        }
+                    }
+                    if options.explore || !stages.is_empty() {
+                        for name in node.parameters["missing"].as_array().into_iter().flatten() {
+                            unavailable
+                                .push(json!({"branch":name,"code":"thinking.no_observation"}));
+                        }
+                    }
+                    let result = if stages.is_empty() && unavailable.is_empty() {
+                        Value::Null
+                    } else {
+                        let mut value = json!({"stages": stages});
+                        if !unavailable.is_empty() {
+                            value["branch_unavailable"] = json!(unavailable);
+                            if value["stages"].as_array().is_some_and(Vec::is_empty) {
+                                value["unavailable"] =
+                                    json!({"code":"thinking.branches_unavailable"});
+                            }
+                        }
+                        value
+                    };
+                    put(&mut values, node, "routes", Stage::Links(result));
+                }
+                "rank.scope" => {
+                    let ranked = self.rank_scope(allowed, options, local_vector.clone());
+                    put(&mut values, node, "ranked", Stage::Ranked(Arc::new(ranked)));
+                }
+                "rank.adjust" | "rank.combine" => {
+                    let parameters: RankAdjustment =
+                        serde_json::from_value(node.parameters.clone())?;
+                    let mut ranked = if node.operator == "rank.adjust" {
+                        let Stage::Ranked(ranked) = input(&values, node, "ranked")? else {
+                            anyhow::bail!("Ranking adjustment requires ranked candidates")
+                        };
+                        (**ranked).clone()
+                    } else {
+                        let refs = node
+                            .inputs
+                            .get("rankings")
+                            .and_then(Value::as_array)
+                            .context("Combined rankings missing")?;
+                        let mut rankings = Vec::new();
+                        for reference in refs {
+                            let Stage::Ranked(ranked) = get(&values, reference)? else {
+                                anyhow::bail!("Combination requires ranked candidates")
+                            };
+                            rankings.push(ranked.as_ref());
+                        }
+                        ensure!(
+                            !rankings.is_empty(),
+                            "Combination requires at least one ranking"
+                        );
+                        let mut combined = if rankings.len() == 1 {
+                            rankings[0].clone()
+                        } else {
+                            let inputs = rankings
+                                .iter()
+                                .map(|ranked| (*ranked, 1.0))
+                                .collect::<Vec<_>>();
+                            self.fuse_rankings(
+                                &inputs,
+                                options.rrf_k,
+                                options,
+                                local_vector.clone(),
+                            )?
+                        };
+                        if parameters.kind.as_deref() == Some("all") {
+                            let mut common: Option<BTreeSet<u64>> = None;
+                            for ranking in rankings {
+                                let groups = ranking
+                                    .hits
+                                    .iter()
+                                    .filter_map(|hit| hit["row"].as_u64())
+                                    .map(|row| self.inner.candidates.group_rows[row as usize])
+                                    .collect::<BTreeSet<_>>();
+                                common = Some(match common {
+                                    Some(previous) => {
+                                        previous.intersection(&groups).copied().collect()
+                                    }
+                                    None => groups,
+                                });
+                            }
+                            let common = common.unwrap_or_default();
+                            combined.hits.retain(|hit| {
+                                common.contains(
+                                    &self.inner.candidates.group_rows
+                                        [hit["row"].as_u64().unwrap() as usize],
+                                )
+                            });
+                        } else {
+                            ensure!(
+                                parameters.kind.as_deref() == Some("any"),
+                                "Invalid combination"
+                            );
+                        }
+                        combined
+                    };
+                    let lanes = options.lane_coverage.lock().unwrap().clone();
+                    ranked = self.apply_preferences(
+                        &ranked,
+                        &parameters.prefer,
+                        &parameters.avoid,
+                        allowed,
+                        options,
+                        cancel,
+                    )?;
+                    self.sort_ranked(&mut ranked, parameters.sort.as_deref(), options)?;
+                    let before = ranked
+                        .hits
+                        .iter()
+                        .filter_map(|hit| hit["row"].as_u64())
+                        .map(|row| self.inner.candidates.group_rows[row as usize])
+                        .collect::<BTreeSet<_>>()
+                        .len();
+                    self.limit_ranked_groups(&mut ranked, parameters.limit);
+                    if let Some(name) = parameters.name {
+                        let groups = ranked
+                            .hits
+                            .iter()
+                            .filter_map(|hit| hit["row"].as_u64())
+                            .map(|row| self.inner.candidates.group_rows[row as usize])
+                            .collect::<BTreeSet<_>>()
+                            .len();
+                        let scope_groups = allowed
+                            .iter()
+                            .map(|row| self.inner.candidates.group_rows[*row as usize])
+                            .collect::<BTreeSet<_>>()
+                            .len();
+                        let scope_only = text.trim().is_empty() && options.core_rows.is_empty();
+                        branch_coverage.push(json!({"name":name,"coverage":{
+                            "requested_groups":parameters.limit,"returned_groups":groups,
+                            "eligible_groups_known":null,"allowed_groups":scope_groups,
+                            "recall_exhausted":scope_only || (!lanes.is_empty() && lanes.values().all(|lane|lane.recall_exhausted)),
+                            "truncated":before>groups || lanes.values().any(|lane|lane.truncated),
+                            "reason":if before>groups {Some("branch_limit")} else {None},"lanes":lanes,
+                            "lane_limit_unit":if options.grouping=="document" {"groups"} else {"candidates"},
+                            "group_scan_limit":options.group_scan_limit,"passages_per_group":options.passages_per_group,
+                            "candidates":ranked.hits.len(),"total_candidates":self.inner.candidates.keys.len(),
+                            "max_union_candidates":options.readout.max_union_candidates,"top_k":options.top_k,
+                            "offered_candidates":ranked.offered_candidates,"ranked_candidates":ranked.hits.len(),
+                            "unique_candidates":ranked.hits.len(),"candidate_limit_reached":false,"top_k_truncated":false
+                        }}));
+                    }
+                    put(&mut values, node, "ranked", Stage::Ranked(Arc::new(ranked)));
+                }
                 "vcp.observe" => {
                     let Stage::Vector(vector, _) = input(&values, node, "signal")? else {
                         anyhow::bail!("Observation requires a vector signal")
@@ -855,8 +708,11 @@ impl Snapshot {
                     let Stage::Ranked(ranked) = input(&values, node, "ranked")? else {
                         anyhow::bail!("Thinking requires ranked candidates")
                     };
+                    let Stage::Stages(stages) = input(&values, node, "stages")? else {
+                        anyhow::bail!("Thinking requires stage inputs")
+                    };
                     let discovered;
-                    let stages = if options.explore && options.thinking_stages.is_empty() {
+                    let stages: &[ThinkingStage] = if options.explore && stages.is_empty() {
                         discovered = vec![ThinkingStage {
                             name: "explore".into(),
                             candidate_rows: ranked
@@ -868,7 +724,7 @@ impl Snapshot {
                         }];
                         &discovered
                     } else {
-                        &options.thinking_stages
+                        stages.as_slice()
                     };
                     let routes = self.thinking(
                         observation,
@@ -951,7 +807,10 @@ impl Snapshot {
                     put(&mut values, node, "ranked", Stage::Ranked(Arc::new(result)));
                 }
                 "context.recall" => {
-                    let candidates = self.recall_context(allowed, &options, cancel)?;
+                    let Stage::Context(signals) = input(&values, node, "signals")? else {
+                        anyhow::bail!("Context recall requires context signals")
+                    };
+                    let candidates = self.recall_context(signals, allowed, &options, cancel)?;
                     put(
                         &mut values,
                         node,
@@ -963,17 +822,6 @@ impl Snapshot {
                     let Stage::Ranked(ranked) = input(&values, node, "ranked")? else {
                         anyhow::bail!("Localization requires ranking")
                     };
-                    if stop_at_rank {
-                        let observation = values.values().find_map(|value| match value {
-                            Stage::Observation(observation) => Some(observation.clone()),
-                            _ => None,
-                        });
-                        return Ok(ProgramRun::Ranked(
-                            (**ranked).clone(),
-                            observation,
-                            options.lane_coverage.lock().unwrap().clone(),
-                        ));
-                    }
                     let parameters: LocateParameters =
                         serde_json::from_value(node.parameters.clone())?;
                     parameters
@@ -1012,22 +860,39 @@ impl Snapshot {
                 }
             }
         }
-        let output = program
-            .outputs
-            .get("evidence")
-            .context("Program evidence output missing")?;
-        let Stage::Result(result) = get(&values, output)? else {
-            anyhow::bail!("Program output is not evidence")
-        };
-        let mut result = (**result).clone();
-        if let Some(reference) = program.outputs.get("thinking") {
-            let Stage::Links(routes) = get(&values, reference)? else {
-                anyhow::bail!("Thinking output is not routes")
+        let mut outputs = serde_json::Map::new();
+        for (name, reference) in &program.outputs {
+            let mut result = match get(&values, reference)? {
+                Stage::Result(value) => (**value).clone(),
+                Stage::Links(value) => {
+                    outputs.insert(name.clone(), value.clone());
+                    continue;
+                }
+                _ => anyhow::bail!("Unsupported Native output type"),
             };
-            result["thinking"] = routes.clone();
-        }
-        if options.include_trace {
-            let rankings = values
+            if !program.branches.is_empty() {
+                let truncated = branch_coverage
+                    .iter()
+                    .any(|branch| branch["coverage"]["truncated"].as_bool() == Some(true));
+                let exhausted = branch_coverage
+                    .iter()
+                    .all(|branch| branch["coverage"]["recall_exhausted"].as_bool() == Some(true));
+                result["branch_coverage"] = json!(branch_coverage);
+                result["coverage"]["truncated"] =
+                    json!(result["coverage"]["truncated"].as_bool().unwrap_or(false) || truncated);
+                result["coverage"]["recall_exhausted"] = json!(exhausted);
+                for key in [
+                    "eligible_groups_known",
+                    "candidates",
+                    "offered_candidates",
+                    "ranked_candidates",
+                    "unique_candidates",
+                ] {
+                    result["coverage"][key] = Value::Null;
+                }
+            }
+            if options.include_trace {
+                let rankings = values
                 .iter()
                 .filter_map(|((node, port), value)| match value {
                     Stage::Ranked(ranked) => Some((
@@ -1044,14 +909,16 @@ impl Snapshot {
                     _ => None,
                 })
                 .collect::<BTreeMap<_, _>>();
-            result["diagnostics"]["ranked_nodes"] = json!(rankings);
-            result["diagnostics"]["observation_count"] = json!(
-                values
-                    .values()
-                    .filter(|value| matches!(value, Stage::Observation(_)))
-                    .count()
-            );
+                result["diagnostics"]["ranked_nodes"] = json!(rankings);
+                result["diagnostics"]["observation_count"] = json!(
+                    values
+                        .values()
+                        .filter(|value| matches!(value, Stage::Observation(_)))
+                        .count()
+                );
+            }
+            outputs.insert(name.clone(), result);
         }
-        Ok(ProgramRun::Complete(result))
+        Ok(Value::Object(outputs))
     }
 }

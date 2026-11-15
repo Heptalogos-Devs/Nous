@@ -493,9 +493,7 @@ class ModelExecutor:
             "deployment_revision": route.model.deployment_revision,
             "request_id": response.provider_response_id,
             "generated_at": response.timestamp.isoformat(),
-            "template_version": prepared.compiled.resource.version,
             "execution_signature": prepared.compiled.resource.execution_signature,
-            "documentation_signature": prepared.compiled.resource.documentation_signature,
         }
         usage = TypeAdapter(dict[str, JsonValue]).validate_python(response.usage.__dict__)
         return GenerationResult(

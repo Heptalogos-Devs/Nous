@@ -11,6 +11,7 @@ from nous.application.contracts import (
 )
 from nous.application.inputs import InputReader
 from nous.common.errors import NousError, failure_code, failure_message
+from nous.common.material_refs import RecordRevisionRef
 from nous.common.operations import OperationIssue, completed_references
 from nous.runtime.execution import ExecutionManager, OperationContext
 from nous.storage.database import Database
@@ -22,7 +23,7 @@ from ..annotation.contracts import (
     AnnotationOutcome,
 )
 from ..annotation.operations import AnnotationOperations
-from ..contracts import NamespaceRef, RecordRevisionRef
+from ..contracts import NamespaceRef
 from ..retrieval.operations import CognitiveRetrieval
 from ..scope import NamespaceOperations
 from ..writing.contracts import AfterWrite, CommittedRecord

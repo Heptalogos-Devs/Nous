@@ -53,7 +53,7 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
             assert saved.maintenance.refresh.state == "published"
             found = await runtime.app.call(QUERY, QueryRequest(text="annotation failure"))
             assert any(
-                group.material.ref == saved.commit.revision_ref
+                group.material == saved.commit.revision_ref
                 for group in found.evidence.materials
             )
 
@@ -139,7 +139,7 @@ def test_background_capacity_cancellation_and_restart_preserve_saved_records(
             ).body == "saved before interruption"
             found = await runtime.app.call(QUERY, QueryRequest(text="saved before interruption"))
             assert any(
-                group.material.ref == pending.commit.revision_ref
+                group.material == pending.commit.revision_ref
                 for group in found.evidence.materials
             )
             database_path = (

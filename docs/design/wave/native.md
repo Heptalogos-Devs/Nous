@@ -15,15 +15,13 @@ NativeEngine(settings: EngineSettings)
   close()
 
 NativeSnapshot
-  identity, capabilities, statistics
-  observe(signals: QuerySignals, options: ObservationOptions, cancel) -> QueryObservation
-  execute(program, signals, allowed_rows, options, cancel) -> 定位结果 JSON
+  capabilities, statistics
+  execute(program, signals, allowed_rows, options, cancel) -> 具名数值输出 JSON
   passage_similarities(candidate_rows, selected_rows, aspects, cancel) -> 相似度矩阵
-  think(observation, stages: ThinkingStages, options, cancel) -> ThinkingResult
   neighborhood(node_rows, options, cancel) -> NeighborhoodResult
 ```
 
-程序执行器按已编译的算子图取得观测、候选、校准和排名，在同一快照借用中复用阶段结果。Thinking 使用实际观测；高级调用可单独取得观测和路线。程序与端口见 [Wave 程序](program.md)。
+程序执行器按已编译的算子图取得观测、候选、校准和排名，在同一快照借用中复用阶段结果。Thinking 使用图中声明的实际观测，结果与其他需要交付的端口一起返回。程序与端口见 [Wave 程序](program.md)。
 
 函数返回真实结果或类型化错误，不返回带 success=true 的空实现。lexical 不需要模型或向量；dense 需要对应向量；VCP 需要几何/概念/图能力；空种子是算法允许的输入，不当作异常，但 capability 缺失不能伪装成已经运行 VCP。
 
@@ -31,7 +29,7 @@ NativeSnapshot
 
 FrozenAssets 见资产专题。QuerySignals 包含 raw_query[D]、effective_query[D] 或 context 矩阵、core_rows[K]、ghost_vectors[G,D] 与 ghost 描述、实际 query_text。大数组分别传入，metadata 不嵌入 JSON 向量。纯词项程序的向量字段可以缺省；需要向量的程序使用与空间一致的实际向量。
 
-CandidateSet 保留 candidate row、各通道得分与名次；CalibratedPool 保留该候选总体、观测和校准参照。ThinkingStages 保存 stage name、candidate_rows 和 top_k。所有行号属于 snapshot；QueryObservation 同时绑定 snapshot/space/算法配置，跨快照使用报 `wave.observation_mismatch`。
+CandidateSet 保留 candidate row、各通道得分与名次；CalibratedPool 保留该候选总体、观测和校准参照。ThinkingStages 保存 stage name、candidate_rows 和 top_k。所有行号和中间观测属于当前 snapshot 执行，固定候选必须匹配该快照。
 
 Python 侧只提供少量输入值类，实际 C-contiguous NumPy 数组通过 rust-numpy 传递。无需一个拥有几十个可选数组参数的 build 函数；可以用四个职责明确的 bundle：Candidates、Concepts、SourceFacts、Associations。bundle 只是数据值，无服务依赖。
 

@@ -2,28 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from nous.common.errors import NousError
 from nous.configuration.metadata import ConfigSequence
 from nous.models.evaluation_contracts import EvaluationScale
 
 from .contracts import (
-    CandidateSet,
-    DeliveryBudget,
     PortRef,
     ProgramNode,
-    ProgramRunFacts,
     WaveProgram,
 )
-from .serialization import content_signature
 
 if TYPE_CHECKING:
     from .configuration import WaveConfig
@@ -58,13 +53,14 @@ class Operator:
     outputs: dict[str, str]
     requirements: frozenset[str] = frozenset()
     pure: bool = True
+    host: bool = False
 
 
 # A [] suffix marks a multi-input port. Numerical parameter schemas are supplied
 # by Native together with the implementation, not duplicated in this catalog.
 CATALOG = {
     "vcp.observe": Operator(
-        {"signal": "signal", "snapshot": "snapshot"},
+        {"signal": "signal"},
         {
             "observation": "observation",
             "enhanced": "vector",
@@ -74,17 +70,17 @@ CATALOG = {
         frozenset({"vectors", "vcp"}),
     ),
     "ann.search": Operator(
-        {"vector": "vector", "snapshot": "snapshot", "allowed": "scope"},
+        {"vector": "vector"},
         {"candidates": "candidates"},
         frozenset({"vectors"}),
     ),
     "lexical.search": Operator(
-        {"text": "lexical", "snapshot": "snapshot", "allowed": "scope"},
+        {"text": "lexical"},
         {"candidates": "candidates"},
         frozenset({"text"}),
     ),
     "concept.direct": Operator(
-        {"observation": "observation", "snapshot": "snapshot", "allowed": "scope"},
+        {"observation": "observation"},
         {"candidates": "candidates"},
         frozenset({"vcp"}),
     ),
@@ -111,13 +107,13 @@ CATALOG = {
     ),
     "rank.from_lane": Operator({"candidates": "candidates"}, {"ranked": "ranked"}),
     "rank.cosine": Operator(
-        {"candidates": "candidates", "vector": "vector", "snapshot": "snapshot"},
+        {"candidates": "candidates", "vector": "vector"},
         {"ranked": "ranked"},
         frozenset({"vectors"}),
     ),
     "rank.fuse": Operator({"rankings": "ranked[]"}, {"ranked": "ranked"}),
     "context.recall": Operator(
-        {"signals": "context_lexical", "snapshot": "snapshot", "allowed": "scope"},
+        {"signals": "context_lexical"},
         {"candidates": "candidates"},
         frozenset({"text"}),
     ),
@@ -125,44 +121,61 @@ CATALOG = {
         {"ranked": "ranked", "candidates": "candidates"},
         {"ranked": "ranked"},
     ),
-    "passages.locate": Operator(
-        {"ranked": "ranked", "intent": "intent", "snapshot": "snapshot"}, {"passages": "passages"}
-    ),
+    "passages.locate": Operator({"ranked": "ranked"}, {"passages": "passages"}),
     "passages.evaluate": Operator(
-        {"passages": "passages", "intent": "intent"}, {"passages": "passages"}, pure=False
+        {"passages": "passages"},
+        {"passages": "passages"},
+        pure=False,
+        host=True,
     ),
-    "passages.select": Operator(
-        {"passages": "passages", "delivery": "delivery"}, {"selected": "selection"}
-    ),
+    "passages.select": Operator({"passages": "passages"}, {"selected": "selection"}, host=True),
     "delivery.read": Operator(
-        {"selected": "selection", "materials": "materials"}, {"evidence": "evidence"}, pure=False
+        {"selected": "selection"},
+        {"evidence": "evidence"},
+        pure=False,
+        host=True,
     ),
 }
 BUILTINS = {
     "query": {
-        "intent": "intent",
         "raw_vector": "vector",
         "contextual_signal": "signal",
         "lexical": "lexical",
         "context_lexical": "context_lexical",
         "stages": "stages",
     },
-    "snapshot": {"handle": "snapshot"},
-    "scope": {"allowed": "scope", "materials": "materials", "candidates": "candidates"},
-    "delivery": {"request": "delivery"},
+    "scope": {"candidates": "candidates"},
 }
 
 
 @dataclass(frozen=True)
 class CompiledProgram:
     name: str
-    definition: WaveProgram
     nodes: tuple[ProgramNode, ...]
     outputs: dict[str, PortRef]
     requirements: frozenset[str]
-    signature: str
-    native_plan: dict[str, object]
-    delivery_steps: tuple[ProgramNode, ...]
+    native_outputs: dict[str, PortRef]
+
+    def native_plan(self) -> dict[str, object]:
+        """Encode the numerical nodes and their actual cross-language outputs."""
+        return {
+            "nodes": [
+                node.model_dump(mode="json")
+                for node in self.nodes
+                if not CATALOG[node.operator].host
+            ],
+            "outputs": {
+                key: ref.model_dump(mode="json") for key, ref in self.native_outputs.items()
+            },
+        }
+
+
+@dataclass(frozen=True)
+class ProgramSelection:
+    program: CompiledProgram
+    source: Literal["explicit", "default", "fallback", "exploration"]
+    unavailable_capabilities: tuple[str, ...] = ()
+    fallback_from: str | None = None
 
 
 def _error(message: str, **details: object) -> NousError:
@@ -183,9 +196,7 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
     from .configuration import native_profiles
 
     _, native_schemas = native_profiles()
-    operator_schemas = TypeAdapter(dict[str, dict[str, JsonValue]]).validate_python(
-        native_schemas.get("operators", {})
-    )
+    operator_schemas = cast(dict[str, dict[str, JsonValue]], native_schemas.get("operators", {}))
     for node in definition.nodes:
         operator = CATALOG.get(node.operator)
         if operator is None:
@@ -286,12 +297,14 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
         node = nodes[node_id]
         requirements.update(CATALOG[node.operator].requirements)
         if node.operator == "passages.evaluate":
-            parameters = TypeAdapter(dict[str, JsonValue]).validate_python(
-                EvaluationParameters.model_validate(node.parameters).model_dump(mode="json")
+            parameters = cast(
+                dict[str, JsonValue],
+                EvaluationParameters.model_validate(node.parameters).model_dump(mode="json"),
             )
         else:
-            properties = TypeAdapter(dict[str, dict[str, JsonValue]]).validate_python(
-                operator_schemas.get(node.operator, {}).get("properties", {})
+            properties = cast(
+                dict[str, dict[str, JsonValue]],
+                operator_schemas.get(node.operator, {}).get("properties", {}),
             )
             parameters: dict[str, JsonValue] = {
                 key: value["default"] for key, value in properties.items() if "default" in value
@@ -312,7 +325,7 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
         if node.operator == "rank.fuse":
             references = inputs["rankings"]
             assert isinstance(references, tuple)
-            weights = TypeAdapter(list[float]).validate_python(parameters.get("weights") or [])
+            weights = cast(list[float], parameters.get("weights") or [])
             if weights and len(weights) != len(references):
                 raise _error("Fusion weights must match ranking inputs", node=node.id)
             unique: dict[PortRef, float] = {}
@@ -344,59 +357,29 @@ def compile_program(name: str, definition: WaveProgram) -> CompiledProgram:
         for name_, ref in definition.outputs.items()
     }
     by_id = {node.id: node for node in compiled}
-    locators = [node for node in compiled if node.operator == "passages.locate"]
-    if len(locators) != 1:
-        raise _error("A query must have one localization node", program=name)
-    locator = locators[0]
-    steps: list[ProgramNode] = []
-    current = outputs["evidence"]
-    ports = {
-        "delivery.read": ("evidence", "selected"),
-        "passages.select": ("selected", "passages"),
-        "passages.evaluate": ("passages", "passages"),
-    }
-    while current.node != locator.id:
-        node = by_id[current.node]
-        expected = ports.get(node.operator)
-        if expected is None or current.port != expected[0]:
-            raise _error("Invalid delivery chain", node=node.id)
-        steps.append(node)
-        source = node.inputs[expected[1]]
-        if isinstance(source, tuple):
-            raise _error("Invalid delivery input", node=node.id)
-        current = source
-    if current.port != "passages":
-        raise _error("Invalid localization output", node=locator.id)
-    needed = {locator.id}
-    if "thinking" in outputs:
-        needed.add(outputs["thinking"].node)
-    pending = list(needed)
-    while pending:
-        for source in by_id[pending.pop()].inputs.values():
-            for ref in source if isinstance(source, tuple) else (source,):
-                if ref.node in by_id and ref.node not in needed:
-                    needed.add(ref.node)
-                    pending.append(ref.node)
-    native_nodes = [node for node in compiled if node.id in needed]
-    if any(node.operator in ports for node in native_nodes):
-        raise _error("Localization cannot depend on a delivery stage", node=locator.id)
-    native_outputs: dict[str, object] = {"evidence": {"node": locator.id, "port": "passages"}}
-    if "thinking" in outputs:
-        native_outputs["thinking"] = outputs["thinking"].model_dump(mode="json")
-    native_plan: dict[str, object] = {
-        "nodes": [node.model_dump(mode="json") for node in native_nodes],
-        "outputs": native_outputs,
-    }
-    canonical = definition.model_dump_json()
+    host_nodes = tuple(node for node in compiled if CATALOG[node.operator].host)
+    native_nodes = [node for node in compiled if not CATALOG[node.operator].host]
+    native_outputs: dict[str, PortRef] = {}
+    for node in host_nodes:
+        for value in node.inputs.values():
+            for ref in value if isinstance(value, tuple) else (value,):
+                if ref.node in by_id and not CATALOG[by_id[ref.node].operator].host:
+                    if ref not in native_outputs.values():
+                        native_outputs[f"value:{len(native_outputs)}"] = ref
+    for name_, ref in outputs.items():
+        if not CATALOG[by_id[ref.node].operator].host:
+            native_outputs[name_] = ref
+    for node in native_nodes:
+        for value in node.inputs.values():
+            for ref in value if isinstance(value, tuple) else (value,):
+                if ref.node in by_id and CATALOG[by_id[ref.node].operator].host:
+                    raise _error("Native nodes cannot consume asynchronous outputs", node=node.id)
     return CompiledProgram(
         name,
-        definition,
         tuple(compiled),
         outputs,
         frozenset(requirements),
-        hashlib.sha256(canonical.encode()).hexdigest(),
-        native_plan,
-        tuple(reversed(steps)),
+        native_outputs,
     )
 
 
@@ -412,88 +395,203 @@ def resolve_program(config: WaveConfig, name: str | None = None) -> CompiledProg
     return compile_program(selected, definition)
 
 
-def delivery_budget(
-    program: CompiledProgram, requested: DeliveryBudget | None = None
-) -> DeliveryBudget | None:
-    """Resolve the actual budget once from the request and selected program."""
-    if requested is not None:
-        return requested
-    node = next((item for item in program.nodes if item.operator == "passages.select"), None)
-    value = node.parameters.get("budget") if node else None
-    return DeliveryBudget.model_validate(value) if value is not None else None
-
-
-def program_run_facts(
-    program: CompiledProgram,
+def select_program(
+    config: WaveConfig,
+    name: str | None,
     *,
-    requested_program: str | None,
-    selection: Literal["explicit", "default", "fallback", "exploration"],
-    options: Mapping[str, object],
-    context_options: Mapping[str, object],
-    evaluation_options: Mapping[str, object],
-    evaluation_tasks: Mapping[str, object],
-    budget: DeliveryBudget | None,
-    space_id: str | None,
-    space_signature: str | None,
-    space_definition: Mapping[str, object] | None,
-    candidate_set: CandidateSet | None,
-    expression_kind: Literal["term", "any", "all"] | None,
-    expression_terms: int,
-) -> ProgramRunFacts:
-    """Record the compiled graph and the settings that its execution consumes."""
-    operators = {node.operator for node in program.nodes}
-    names = {
-        "top_k",
-        "grouping",
-        "passages_per_group",
-        "candidates_per_group",
-        "group_scan_limit",
-        "rrf_k",
-        "preference_weight",
-        "dedup_threshold",
-        "include_counterevidence",
-        "explore",
-        "readout",
-    }
-    if "ann.search" in operators:
-        names.add("ann_search_effort")
-    if "vcp.observe" in operators:
-        names.add("pipeline")
-    if "dtsc.readout" in operators:
-        names.add("dtsc")
-    if "vcp.think" in operators:
-        names.add("thinking_min_closure")
-    selected = {key: value for key, value in options.items() if key in names}
-    selected["candidate_set"] = (
-        {"count": len(candidate_set.entries), "rank_scope": candidate_set.rank_scope}
-        if candidate_set is not None
-        else None
+    explore: bool,
+    capabilities: Sequence[str],
+) -> ProgramSelection:
+    """Select one program against explicit available retrieval capabilities."""
+    source: Literal["explicit", "default", "fallback", "exploration"] = (
+        "explicit" if name else "exploration" if explore else "default"
     )
-    selected["expression"] = (
-        {"kind": expression_kind, "terms": expression_terms} if expression_kind else None
-    )
-    if operators & {"context.recall", "passages.locate", "passages.evaluate"}:
-        selected["context"] = dict(context_options)
-    if "passages.evaluate" in operators:
-        selected["evaluation"] = {
-            "limits": dict(evaluation_options),
-            "tasks": dict(evaluation_tasks),
-        }
-    facts = {
-        "name": program.name,
-        "definition_signature": program.signature,
-        "requested_program": requested_program,
-        "selection": selection,
-        "requirements": sorted(program.requirements),
-        "nodes": [node.model_dump(mode="json") for node in program.nodes],
-        "outputs": {key: value.model_dump(mode="json") for key, value in program.outputs.items()},
-        "options": selected,
-        "budget": budget.model_dump(mode="json") if budget else None,
-        "space_id": space_id,
-        "space_signature": space_signature,
-        "space_definition": space_definition,
-    }
-    return ProgramRunFacts.model_validate({**facts, "signature": content_signature(facts)})
+    program = resolve_program(config, name or (config.exploration_program if explore else None))
+    missing = program.requirements - set(capabilities)
+    unavailable: tuple[str, ...] = ()
+    fallback_from = None
+    if missing and name is None and not explore and config.unavailable_program:
+        unavailable = tuple(sorted(missing))
+        fallback_from = program.name
+        program = resolve_program(config, config.unavailable_program)
+        source = "fallback"
+        missing = program.requirements - set(capabilities)
+    if missing:
+        raise NousError(
+            "wave.capability_unavailable",
+            "Available retrieval capabilities cannot execute the requested program",
+            details={"program": program.name, "missing": sorted(missing)},
+        )
+    return ProgramSelection(program, source, unavailable, fallback_from)
+
+
+def compile_expression(
+    program: CompiledProgram,
+    tree: dict[str, object],
+    branches: list[dict[str, object]],
+    *,
+    prefer: tuple[str, ...],
+    avoid: tuple[str, ...],
+    sort: str | None,
+) -> dict[str, object]:
+    """Bind each expression branch to the numerical graph's declared dependencies."""
+    native = [node for node in program.nodes if not CATALOG[node.operator].host]
+    terminal_ids = {ref.node for name, ref in program.native_outputs.items() if name != "thinking"}
+    prefix = "expression:"
+    while any(node.id.startswith(prefix) for node in native):
+        prefix += ":"
+    nodes: list[dict[str, object]] = []
+
+    def reference(node: str, port: str = "ranked") -> dict[str, str]:
+        return {"node": node, "port": port}
+
+    def branch_ref(ref: PortRef, index: int) -> dict[str, str]:
+        if ref.node == "query":
+            return reference(f"{prefix}query:{index}", ref.port)
+        if ref.node in BUILTINS:
+            return ref.model_dump()
+        return reference(f"{prefix}node:{index}:{ref.node}", ref.port)
+
+    active: list[int] = []
+    for index, branch in enumerate(branches):
+        scope_only = not str(branch["text"]).strip() and not branch["core_rows"]
+        if scope_only:
+            nodes.append(
+                {
+                    "id": f"{prefix}scope:{index}",
+                    "operator": "rank.scope",
+                    "inputs": {},
+                    "parameters": {},
+                    "branch": index,
+                }
+            )
+            continue
+        active.append(index)
+        for node in native:
+            if node.id in terminal_ids:
+                continue
+            inputs = {
+                key: [branch_ref(ref, index) for ref in value]
+                if isinstance(value, tuple)
+                else branch_ref(value, index)
+                for key, value in node.inputs.items()
+            }
+            nodes.append(
+                {
+                    "id": f"{prefix}node:{index}:{node.id}",
+                    "operator": node.operator,
+                    "inputs": inputs,
+                    "parameters": node.parameters,
+                    "branch": index,
+                }
+            )
+
+    counter = 0
+    combined_ranks: dict[PortRef, dict[str, str]] = {}
+
+    def combine_rank(source: PortRef) -> dict[str, str]:
+        nonlocal counter
+        if source in combined_ranks:
+            return combined_ranks[source]
+        ranks: list[dict[str, str]] = []
+        for index, branch in enumerate(branches):
+            source_ref = (
+                branch_ref(source, index)
+                if index in active
+                else reference(f"{prefix}scope:{index}")
+            )
+            counter += 1
+            adjusted = f"{prefix}adjust:{counter}"
+            nodes.append(
+                {
+                    "id": adjusted,
+                    "operator": "rank.adjust",
+                    "branch": index,
+                    "inputs": {"ranked": source_ref},
+                    "parameters": {
+                        key: branch[key] for key in ("name", "limit", "prefer", "avoid", "sort")
+                    },
+                }
+            )
+            ranks.append(reference(adjusted))
+
+        def combine(value: dict[str, object]) -> dict[str, str]:
+            nonlocal counter
+            if value["kind"] == "term":
+                return ranks[cast(int, value["branch"])]
+            children = [
+                combine(cast(dict[str, object], child))
+                for child in cast(list[object], value["children"])
+            ]
+            counter += 1
+            node_id = f"{prefix}combine:{counter}"
+            nodes.append(
+                {
+                    "id": node_id,
+                    "operator": "rank.combine",
+                    "inputs": {"rankings": children},
+                    "parameters": {
+                        key: value.get(key) for key in ("kind", "limit", "prefer", "avoid", "sort")
+                    },
+                }
+            )
+            return reference(node_id)
+
+        combined = combine(tree)
+        counter += 1
+        final = f"{prefix}final:{counter}"
+        nodes.append(
+            {
+                "id": final,
+                "operator": "rank.adjust",
+                "inputs": {"ranked": combined},
+                "parameters": {"prefer": list(prefer), "avoid": list(avoid), "sort": sort},
+            }
+        )
+        combined_ranks[source] = reference(final)
+        return combined_ranks[source]
+
+    for node in native:
+        if node.id not in terminal_ids:
+            continue
+        inputs: dict[str, object] = {}
+        for port, value in node.inputs.items():
+            if CATALOG[node.operator].inputs[port] == "ranked":
+                inputs[port] = combine_rank(cast(PortRef, value))
+            elif isinstance(value, tuple):
+                inputs[port] = [ref.model_dump() for ref in value]
+            else:
+                inputs[port] = value.model_dump()
+        nodes.append(
+            {
+                "id": node.id,
+                "operator": node.operator,
+                "inputs": inputs,
+                "parameters": node.parameters,
+            }
+        )
+
+    outputs = {key: ref.model_dump(mode="json") for key, ref in program.native_outputs.items()}
+    if "thinking" in program.outputs:
+        thinking_ref = program.outputs["thinking"]
+        combined_thinking = f"{prefix}thinking"
+        nodes.append(
+            {
+                "id": combined_thinking,
+                "operator": "thinking.combine",
+                "inputs": {"routes": [branch_ref(thinking_ref, index) for index in active]},
+                "parameters": {
+                    "branches": [branches[index]["name"] for index in active],
+                    "missing": [
+                        branches[index]["name"]
+                        for index in range(len(branches))
+                        if index not in active
+                    ],
+                },
+            }
+        )
+        outputs["thinking"] = reference(combined_thinking, "routes")
+    return {"nodes": nodes, "outputs": outputs, "branches": branches, "query_prefix": prefix}
 
 
 def default_programs() -> dict[str, WaveProgram]:
@@ -508,12 +606,8 @@ def default_programs() -> dict[str, WaveProgram]:
     ) -> ProgramNode:
         return ProgramNode(id=id, operator=operator, inputs=inputs, parameters=parameters)
 
-    snapshot, allowed = ref("snapshot", "handle"), ref("scope", "allowed")
-
     def search(name: str, source: PortRef) -> ProgramNode:
-        return node(
-            name, "ann.search", {"vector": source, "snapshot": snapshot, "allowed": allowed}
-        )
+        return node(name, "ann.search", {"vector": source})
 
     def lane(id: str, source: str, name: str) -> ProgramNode:
         return node(id, "rank.from_lane", {"candidates": ref(source, "candidates")}, lane=name)
@@ -522,23 +616,23 @@ def default_programs() -> dict[str, WaveProgram]:
     lexical = node(
         "lexical",
         "lexical.search",
-        {"text": ref("query", "lexical"), "snapshot": snapshot, "allowed": allowed},
+        {"text": ref("query", "lexical")},
     )
     observe = node(
         "observe",
         "vcp.observe",
-        {"signal": ref("query", "contextual_signal"), "snapshot": snapshot},
+        {"signal": ref("query", "contextual_signal")},
     )
     fields = [search(name, ref("observe", name)) for name in ("enhanced", "local", "transfer")]
     direct = node(
         "direct",
         "concept.direct",
-        {"observation": ref("observe", "observation"), "snapshot": snapshot, "allowed": allowed},
+        {"observation": ref("observe", "observation")},
     )
     context = node(
         "context_recall",
         "context.recall",
-        {"signals": ref("query", "context_lexical"), "snapshot": snapshot, "allowed": allowed},
+        {"signals": ref("query", "context_lexical")},
     )
     union = node(
         "union",
@@ -593,18 +687,18 @@ def default_programs() -> dict[str, WaveProgram]:
                 node(
                     "locate",
                     "passages.locate",
-                    {"ranked": ranked, "intent": ref("query", "intent"), "snapshot": snapshot},
+                    {"ranked": ranked},
                     **({"signals": cast(list[JsonValue], ["lexical"])} if text_only else {}),
                 ),
                 node(
                     "select",
                     "passages.select",
-                    {"passages": ref("locate", "passages"), "delivery": ref("delivery", "request")},
+                    {"passages": ref("locate", "passages")},
                 ),
                 node(
                     "deliver",
                     "delivery.read",
-                    {"selected": ref("select", "selected"), "materials": ref("scope", "materials")},
+                    {"selected": ref("select", "selected")},
                 ),
             ]
         )
@@ -653,7 +747,6 @@ def default_programs() -> dict[str, WaveProgram]:
             {
                 "candidates": ref("union", "candidates"),
                 "vector": ref("query", "raw_vector"),
-                "snapshot": snapshot,
             },
         ),
     ]

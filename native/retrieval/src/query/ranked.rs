@@ -225,7 +225,6 @@ impl Snapshot {
             channel_ranks: BTreeMap::new(),
             offered_candidates: 0,
             diagnostics: json!({}),
-            thinking: Value::Null,
             score_kind: String::new(),
             wormhole_rrf_active: false,
             used_lanes: Vec::new(),
@@ -369,19 +368,19 @@ impl Snapshot {
         options: &Options,
     ) -> Result<RankedCandidates> {
         let mut branches = Vec::new();
-        for fragment in &options.context_lexical {
-            ensure!(
-                fragment.contribution.is_finite() && fragment.contribution >= 0.0,
-                "Invalid lexical context contribution"
-            );
-            if fragment.contribution == 0.0 || fragment.text.trim().is_empty() {
-                continue;
+        let mut weights = BTreeMap::new();
+        for entry in &candidates.entries {
+            for (lane, score) in &entry.lanes {
+                if lane.starts_with("context:") {
+                    weights.entry(lane.clone()).or_insert(score.weight);
+                }
             }
-            let lane = format!("context:{}", fragment.key);
+        }
+        for (lane, weight) in &weights {
             let ranked =
-                self.rank_lane(candidates, &lane, None, options, base.local_vector.clone())?;
+                self.rank_lane(candidates, lane, None, options, base.local_vector.clone())?;
             if !ranked.hits.is_empty() {
-                branches.push((ranked, fragment.contribution));
+                branches.push((ranked, *weight));
             }
         }
         if branches.is_empty() {
@@ -394,8 +393,8 @@ impl Snapshot {
         result.score_kind = "context_rrf".into();
         result.diagnostics["context"] = json!({
             "base_score_kind": base.score_kind,
-            "branches": options.context_lexical.iter().map(|item|
-                json!({"key":item.key,"contribution":item.contribution})).collect::<Vec<_>>()
+            "branches": weights.iter().map(|(lane, weight)|
+                json!({"key":lane.trim_start_matches("context:"),"contribution":weight})).collect::<Vec<_>>()
         });
         Ok(result)
     }
@@ -409,7 +408,6 @@ impl Snapshot {
         cancel: &CancellationToken,
         local_vector: Option<Vec<f32>>,
     ) -> Result<RankedCandidates> {
-        self.validate_observation(observation)?;
         ensure!(
             Arc::ptr_eq(&observation.output, &pool.observation),
             "Calibration belongs to a different observation"
@@ -487,7 +485,6 @@ impl Snapshot {
         cancel: &CancellationToken,
         local_vector: Option<Vec<f32>>,
     ) -> Result<RankedCandidates> {
-        self.validate_observation(observation)?;
         self.validate_candidates(candidates)?;
         let output = &observation.output;
         let assets = self.inner.assets.as_ref().context("VCP assets required")?;

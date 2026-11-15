@@ -19,7 +19,6 @@ from nous.content.contracts import (
     ExternalInput,
     InlineText,
     ResultOutputInput,
-    ResultOutputRef,
     SourceSelection,
     SourceTarget,
     is_text_media_type,
@@ -112,15 +111,6 @@ async def input_chunks(
             await blocking(close)
 
 
-@dataclass(frozen=True)
-class SelectedExternalText:
-    text: str
-    data: bytes
-    selection: SourceSelection
-    name: str
-    source: str | None
-
-
 class InputReader:
     """Resolve only the external bindings supplied for this application call."""
 
@@ -206,14 +196,11 @@ class InputReader:
             )
         return artifact
 
-    async def read_text(
-        self, key: str, selection: SourceSelection, limit: int
-    ) -> SelectedExternalText:
+    async def read_text(self, key: str, selection: SourceSelection, limit: int) -> str:
         """Read a bounded selected text range without accepting an extra artifact."""
         from nous.content.text_selection import TextSelection
 
         value = self._get(key)
-        name, source = self._identity(value)
         if isinstance(value, FileInput):
             chunks = self._readers.chunks(
                 value.path, self._chunk_size, selection=selection, limit=limit
@@ -243,14 +230,11 @@ class InputReader:
             finally:
                 await chunks.aclose()
         try:
-            text = data.decode("utf-8")
+            return data.decode("utf-8")
         except UnicodeDecodeError as error:
             raise NousError(
                 "content.not_text", "Selection does not contain complete UTF-8 text"
             ) from error
-        return SelectedExternalText(
-            text=text, data=data, selection=selection, name=name, source=source
-        )
 
     async def accept_target(self, target: SourceTarget) -> tuple[Artifact, SourceSelection]:
         """Resolve any declared source and retain the caller's exact selection."""
@@ -265,10 +249,7 @@ class InputReader:
             return await artifacts.get(target.artifact), target.selection
         if self._results is None:
             raise NousError("input.unavailable", "Stored results are unavailable")
-        result = await self._results.get(target.result)
-        ref = await self._results.resolve_output(
-            ResultOutputRef(result=result.ref, output=target.output)
-        )
+        _, ref = await self._results.resolve_output(target.result, target.output)
         return await artifacts.get(ref), target.selection
 
     async def body(self, value: BodySpec) -> str:
@@ -277,7 +258,7 @@ class InputReader:
 
         limit = self._execution.snapshot.values.content.text_read_max_bytes
         if isinstance(value, ExternalInput):
-            return (await self.read_text(value.key, value.selection, limit)).text
+            return await self.read_text(value.key, value.selection, limit)
         if isinstance(value, InlineText):
             selected = TextSelection(SourceSelection(), limit)
             selected.feed(value.text.encode("utf-8"))
@@ -292,10 +273,7 @@ class InputReader:
             assert isinstance(value, ResultOutputInput)
             if self._results is None:
                 raise NousError("input.unavailable", "Stored results are unavailable")
-            result = await self._results.get(value.result)
-            ref = await self._results.resolve_output(
-                ResultOutputRef(result=result.ref, output=value.output)
-            )
+            _, ref = await self._results.resolve_output(value.result, value.output)
             artifact = await artifacts.get(ref)
         if (
             not is_text_media_type(artifact.media_type)

@@ -15,6 +15,7 @@ from nous.content.contracts import (
     Artifact,
     ContentSelection,
     InputGroup,
+    MaterialSource,
     NamedSelection,
     OutputContent,
     OutputMapping,
@@ -102,6 +103,8 @@ class InterpretedOutputs:
     outputs: Mapping[str, OutputContent]
     mappings: tuple[OutputMapping, ...] = ()
     selections: tuple[NamedSelection, ...] = ()
+    material_sources: tuple[MaterialSource, ...] | None = None
+    value: BaseModel | None = None
 
 
 def interpreted_outputs(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from time import perf_counter
 
 from nous.application.contracts import CallContext, LanguageEvents, define_operation
@@ -11,33 +11,24 @@ from nous.common.keyed_locks import KeyedLocks
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ResultRef
 from nous.content.results import ResultStore
-from nous.content.text import PARSER_PROFILE
 from nous.observability.instrumentation import get_logger
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database
-from nous.temporal.domains import TimeService
 from nous.wave.contracts import (
     CognitionOwner,
-    CorpusView,
-    GroupDescriptor,
-    ReusableDocument,
     SnapshotDescriptor,
 )
 from nous.wave.operations import WaveOperations
-from nous.wave.program import resolve_program
-from nous.wave.serialization import content_signature
+from nous.wave.program import ProgramSelection, select_program
 
 from ..annotation.operations import AnnotationOperations
 from ..contracts import Namespace, NamespaceRef, NamespaceSelector
-from ..material_contracts import MaterialIndex
 from ..materials import Materials
 from ..scope import NamespaceOperations
-from ..steward.operations import StewardOperations
-from ..work.operations import WorkOperations
-from .adoption import EvidenceAdoption
+from ..work.reading import WorkReader
+from ..writing.reading import RecordReader
 from .capture import CorpusCapture
 from .contracts import (
-    CognitiveGroupContext,
     QueryRequest,
     RefreshResult,
     RefreshRetrieval,
@@ -70,7 +61,7 @@ REFRESH = define_operation(
 @dataclass(frozen=True)
 class SearchOptions:
     namespace: str
-    program: str
+    selection: ProgramSelection
     space: str | None
     include_review: bool
     include_exploration: bool
@@ -79,11 +70,7 @@ class SearchOptions:
 
 
 class CognitiveRetrieval:
-    """Coordinate current-view capture, publication and grouped cognitive retrieval.
-
-    Wave owns preparation, ranking and delivery. Current queries can build and
-    publish a snapshot for the selected namespace when needed.
-    """
+    """Capture and publish the current retrieval view for a namespace."""
 
     def __init__(
         self,
@@ -95,19 +82,15 @@ class CognitiveRetrieval:
         wave: WaveOperations,
         annotations: AnnotationOperations,
         materials: Materials,
-        work: WorkOperations,
-        steward: StewardOperations,
-        time: TimeService,
         *,
-        evidence_adoption: EvidenceAdoption,
+        record_reader: RecordReader,
+        work_reader: WorkReader,
     ):
         self.database, self.execution, self.scope = database, execution, scope
-        self.artifacts, self.results, self.wave = artifacts, results, wave
-        self.annotations = annotations
-        self.materials, self.work, self.steward = materials, work, steward
-        self.evidence_adoption = evidence_adoption
-        self.time = time
-        self.capture = CorpusCapture(scope, materials)
+        self.wave, self.materials = wave, materials
+        self.capture = CorpusCapture(
+            scope, materials, artifacts, results, record_reader, work_reader, annotations
+        )
         self.projection = ProjectionBuilder(results, materials)
         self._locks = KeyedLocks[tuple[str, str]]()
 
@@ -121,27 +104,23 @@ class CognitiveRetrieval:
         space_override: str | None = None,
         *,
         target: NamespaceRef | None = None,
+        explore: bool = False,
     ) -> SearchOptions:
         settings = self.execution.snapshot.values.cognition
         namespace_id = (await self.scope.resolve_for(namespace, target)).id
         wave_settings = self.execution.snapshot.values.wave
-        compiled = resolve_program(wave_settings, program)
         space = space_override or settings.search.space
-        if "vectors" in compiled.requirements and not space:
-            if program is not None or not wave_settings.unavailable_program:
-                raise NousError(
-                    "cognition.space_required", "This query program requires an embedding space"
-                )
-            compiled = resolve_program(wave_settings, wave_settings.unavailable_program)
-            if "vectors" in compiled.requirements:
-                raise NousError(
-                    "cognition.space_required", "The fallback program requires an embedding space"
-                )
-        if "vectors" not in compiled.requirements:
+        selected = select_program(
+            wave_settings,
+            program,
+            explore=explore,
+            capabilities=("text", "vectors", "vcp") if space else ("text",),
+        )
+        if "vectors" not in selected.program.requirements:
             space = None
         return SearchOptions(
             namespace_id,
-            compiled.name,
+            selected,
             space,
             settings.search.include_review if include_review is None else include_review,
             settings.search.include_exploration
@@ -154,20 +133,11 @@ class CognitiveRetrieval:
         )
 
     def _projection_policy(self, selected: SearchOptions) -> dict[str, object]:
-        material_contract = content_signature(
-            {
-                "material_index_schema": MaterialIndex.model_json_schema(),
-                "group_context_schema": CognitiveGroupContext.model_json_schema(),
-                "material_schemas": self.materials.describe(),
-                "searchable_kinds": self.materials.searchable_kinds(),
-            }
-        )
         return {
             "include_review": selected.include_review,
             "include_exploration": selected.include_exploration,
             "local_candidate_max_bytes": selected.candidate_limit,
             "include_work": selected.include_work,
-            "material_contract": material_contract,
         }
 
     async def current_view(
@@ -209,93 +179,15 @@ class CognitiveRetrieval:
                     include_exploration=selected.include_exploration,
                     include_work=selected.include_work,
                 )
-                eligible = directory.entries
-                stamps: dict[str, str] = {}
-                for key, entry in eligible.items():
-                    material = entry.view
-                    stamps[key] = content_signature(
-                        {
-                            "revision": material.ref.model_dump(mode="json"),
-                            "body": material.body.model_dump(mode="json")
-                            if material.body
-                            else None,
-                            "body_digest": entry.body_digest,
-                            "material_contract": policy["material_contract"],
-                            "title": material.title,
-                            "attributes": material.attributes.model_dump(mode="json"),
-                            "times": material.times.model_dump(mode="json")
-                            if material.times
-                            else None,
-                            "index": entry.index.model_dump(mode="json"),
-                            "relations": [
-                                item.model_dump(mode="json") for item in material.relations
-                            ],
-                            "parser": PARSER_PROFILE,
-                            "candidate_limit": selected.candidate_limit,
-                        }
-                    )
-                reusable = await self.wave.match_units_in(tx, tuple(stamps.values()))
-                needed = tuple(key for key, stamp in stamps.items() if stamp not in reusable)
-                sources = {unit.document.key: unit for unit, _ in reusable.values()}
-                pending = {
-                    parent for unit in sources.values() for parent in unit.document.derived_from
-                } - sources.keys()
-                while pending:
-                    related = await self.wave.related_units_in(tx, tuple(pending))
-                    missing = pending - related.keys()
-                    if missing:
-                        raise NousError(
-                            "wave.projection_incomplete",
-                            "A reusable source node is unavailable",
-                            details={"documents": sorted(missing)},
-                        )
-                    sources.update(related)
-                    pending = {
-                        parent for unit in related.values() for parent in unit.document.derived_from
-                    } - sources.keys()
-                captured = await self.capture.expand_in(tx, directory, needed)
+                captured = await self.capture.expand_in(tx, directory, tuple(directory.entries))
             capture_ms = (perf_counter() - captured_at) * 1000
             projection_at = perf_counter()
-            fragments: list[tuple[str, str, CorpusView | ReusableDocument, GroupDescriptor]] = []
-            for key in eligible:
-                cached = reusable.get(stamps[key])
-                if cached is not None:
-                    fragment, group = cached
-                else:
-                    relevant: set[str] = set()
-                    pending = [key]
-                    while pending:
-                        current = pending.pop()
-                        if current in relevant:
-                            continue
-                        relevant.add(current)
-                        for relation in captured.materials[current].index.support_relations:
-                            target = self.materials.key(relation.target)
-                            pending.append(target)
-                            target_body = captured.materials[target].view.body
-                            pending.extend(
-                                self.materials.key(part.artifact)
-                                for part in relation.evidence
-                                if target_body is None or part.artifact != target_body.artifact
-                            )
-                    subset = replace(
-                        captured,
-                        materials={item: captured.materials[item] for item in relevant},
-                        current=(key,),
-                    )
-                    fragment = await self.projection.build(
-                        subset, collection, profile, candidate_limit=selected.candidate_limit
-                    )
-                    group = fragment.groups[0]
-                fragments.append((key, stamps[key], fragment, group))
-            view = self.projection.combine(
+            view = await self.projection.build(
+                captured,
                 collection,
                 profile,
-                directory.namespace.id,
-                directory.namespace.content_generation,
-                directory.needs_review_count,
-                fragments,
-                sources,
+                candidate_limit=selected.candidate_limit,
+                needs_review_count=directory.needs_review_count,
             )
 
             get_logger(__name__).info(
@@ -303,8 +195,7 @@ class CognitiveRetrieval:
                 extra={
                     "namespace_id": ns.id,
                     "generation": directory.namespace.content_generation,
-                    "records": len(eligible),
-                    "expanded_records": len(needed),
+                    "records": len(directory.entries),
                     "capture_ms": capture_ms,
                     "projection_ms": (perf_counter() - projection_at) * 1000,
                 },
@@ -383,18 +274,6 @@ class CognitiveRetrieval:
             include_exploration=request.include_exploration,
         )
 
-    async def handle_query(self, request: QueryRequest, call: CallContext) -> RetrievalOutcome:
-        from .query import QueryExecutor
-
-        return await QueryExecutor(self).run(request, call)
-
-    async def save_evidence(self, request: SaveEvidence, call: CallContext) -> ResultRef:
-        evidence = request.evidence.model_copy(deep=True)
-        await self.evidence_adoption.validate(evidence)
-        return await self.evidence_adoption.save(
-            evidence, call, retain_snapshot=request.retain_snapshot
-        )
-
     async def status(self) -> dict[str, object]:
         """Report published retrieval views without building or calling models."""
         async with self.execution.operation("cognition.retrieval_status"):
@@ -444,7 +323,7 @@ class CognitiveRetrieval:
                 )
             return {
                 "profile": profile,
-                "program": selected.program if selected else None,
+                "program": selected.selection.program.name if selected else None,
                 "namespaces": states,
                 "state": "unconfigured" if failure else "ready",
                 "error": failure,

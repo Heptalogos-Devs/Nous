@@ -13,7 +13,7 @@ impl Snapshot {
         }
         Ok(())
     }
-    pub fn observation(
+    pub(super) fn observation(
         &self,
         vector: &[f32],
         text: &str,
@@ -81,36 +81,12 @@ impl Snapshot {
                 failure("wave.observation_failed", e)
             }
         })?;
-        let diagnostics_json = if o.include_trace {
-            json!({"metadata":output.metadata,"observation":output.observation}).to_string()
-        } else {
-            json!({"metadata":output.metadata,"nodes":output.observation.nodes.len(),"transitions":output.observation.transitions.len(),"transitions_truncated":output.observation.transitions_truncated}).to_string()
-        };
         Ok(QueryObservation {
             output: Arc::new(output),
-            identity: self.inner.input.identity.clone(),
             text: text.into(),
             core_rows: o.core_rows.clone(),
             records_enabled,
-            diagnostics_json,
         })
-    }
-    pub fn validate_observation(&self, observation: &QueryObservation) -> Result<()> {
-        if observation.identity != self.inner.input.identity {
-            return Err(failure(
-                "wave.observation_mismatch",
-                "Observation identity mismatch",
-            ));
-        }
-        let assets = self
-            .inner
-            .assets
-            .as_ref()
-            .ok_or_else(|| failure("wave.capability_missing", "VCP unavailable"))?;
-        observation
-            .output
-            .validate_for(assets)
-            .map_err(|e| failure("wave.observation_mismatch", e))
     }
     pub fn neighborhood(
         &self,
@@ -168,7 +144,7 @@ impl Snapshot {
         edges.truncate(limit);
         Ok(json!({"nodes":nodes,"edges":edges,"associations":associations,"truncated":total_edges>limit}).to_string())
     }
-    pub fn validate_candidates(&self, candidates: &CandidateSet) -> Result<()> {
+    pub(super) fn validate_candidates(&self, candidates: &CandidateSet) -> Result<()> {
         ensure!(
             matches!(
                 candidates.rank_scope.as_str(),
@@ -264,7 +240,7 @@ impl Snapshot {
         prepare_pool(assets, &observation.output, candidates, config, fixed)
             .map_err(|e| failure("wave.candidate_calibration_failed", e))
     }
-    pub fn thinking(
+    pub(super) fn thinking(
         &self,
         observation: &QueryObservation,
         stages: &[ThinkingStage],

@@ -13,6 +13,7 @@ import sqlalchemy as sa
 
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier, split_revision
+from nous.common.material_refs import RecordRevisionRef
 from nous.content import schema as content_schema
 from nous.content.artifacts import ArtifactStore
 from nous.content.citations import parse_citations
@@ -21,8 +22,8 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     InputPart,
+    MaterialSource,
     ResultFacts,
-    ResultOutputRef,
     SelectedInputs,
     SelectedSource,
     UserProducer,
@@ -34,14 +35,9 @@ from nous.temporal.domains import TimeService
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
 from .. import basis, schema
-from ..contracts import (
-    Namespace,
-    RecordRevisionRef,
-    SourceBinding,
-    TitleSource,
-)
-from ..material_contracts import MaterialSource
+from ..contracts import Namespace, TitleSource
 from ..scope import NamespaceOperations
+from ..source_storage import save_sources_in
 from .contracts import CommittedRecord
 from .reading import RecordReader, RecordRow, RevisionRow, Target
 
@@ -55,11 +51,10 @@ class AdoptionValues(TypedDict):
     purpose: str | None
     author: str | None
     viewpoint: str | None
-    sources: Sequence[SourceBinding]
+    sources: Sequence[MaterialSource]
     times: CognitiveTimes
     origin_result_id: str
     body_artifact: ArtifactRef | None
-    material_sources: Sequence[MaterialSource]
 
 
 class RevisionValues(TypedDict):
@@ -75,7 +70,7 @@ class CreateMetadata(TypedDict, total=False):
     purpose: str | None
     author: str | None
     viewpoint: str | None
-    sources: Sequence[SourceBinding]
+    sources: Sequence[MaterialSource]
     times: CognitiveTimes | None
 
 
@@ -94,8 +89,7 @@ class PreparedRevision:
     row: RecordRow
     previous: RevisionRow
     namespace: Namespace
-    bindings: tuple[SourceBinding, ...]
-    material_sources: tuple[MaterialSource, ...]
+    bindings: tuple[MaterialSource, ...]
     values: RevisionValues
     times: CognitiveTimes
     changed: bool
@@ -135,7 +129,7 @@ class WrittenRecords:
         return heading, "heading" if heading is not None else "none"
 
     @staticmethod
-    def validate_body(body: str, sources: Sequence[SourceBinding]) -> str | None:
+    def validate_body(body: str, sources: Sequence[MaterialSource]) -> str | None:
         """Validate nonempty Markdown and its source keys; return its parsed heading.
 
         Raises:
@@ -158,41 +152,10 @@ class WrittenRecords:
         return parsed.title
 
     async def validate_sources_in(
-        self, tx: ReadTx, namespace: Namespace, sources: Sequence[SourceBinding]
+        self, tx: ReadTx, namespace: Namespace, sources: Sequence[MaterialSource]
     ) -> None:
         """Validate source artifacts and exact owner revisions in the caller's read view."""
         await self.sources.validate_in(tx, namespace.ref, sources)
-
-    async def validate_material_sources_in(
-        self,
-        tx: ReadTx,
-        namespace: Namespace,
-        bindings: Sequence[SourceBinding],
-        materials: Sequence[MaterialSource],
-    ) -> tuple[MaterialSource, ...]:
-        """Validate the material identity attached to each adopted source key."""
-        by_key = {binding.key: binding for binding in bindings}
-        if len({item.key for item in materials}) != len(materials):
-            raise NousError("input.duplicate_source", "Material source keys must be unique")
-        normalized: dict[str, MaterialSource] = {}
-        for item in materials:
-            binding = by_key.get(item.key)
-            if (
-                binding is None
-                or binding.selections != item.selections
-                or (binding.owner_revision is not None and binding.owner_revision != item.material)
-            ):
-                raise NousError(
-                    "cognition.source_mismatch", "Material identity differs from its source binding"
-                )
-            normalized[item.key] = item.model_copy(
-                update={"kind": binding.usage, "name": binding.name}
-            )
-        ordered = tuple(
-            normalized[binding.key] for binding in bindings if binding.key in normalized
-        )
-        await self.materials.validate_sources_in(tx, ordered, namespace=namespace.ref)
-        return ordered
 
     async def prepare_times(self, times: CognitiveTimes | None) -> CognitiveTimes:
         """Set the recorded time and validate cognitive time coordinates."""
@@ -219,12 +182,11 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] = (),
+        sources: Sequence[MaterialSource] = (),
         times: CognitiveTimes,
         recall: bool = True,
         origin_result_id: str | None = None,
         body_artifact: ArtifactRef | None = None,
-        material_sources: Sequence[MaterialSource] = (),
     ) -> CommittedRecord:
         """Create a record and initial revision in the caller's write transaction.
 
@@ -234,9 +196,6 @@ class WrittenRecords:
         ns = await self.scope.get_in(tx, namespace)
         resolved_title, title_source = self.resolve_title(title, self.validate_body(body, sources))
         await self.validate_sources_in(tx, ns, sources)
-        formal_materials = await self.validate_material_sources_in(
-            tx, ns, sources, material_sources
-        )
         object_id, revision_id = str(uuid4()), str(uuid4())
         identifier = await insert_identifier(
             tx,
@@ -277,7 +236,6 @@ class WrittenRecords:
             change_kind="create",
             reason=None,
             origin_result_id=origin_result_id,
-            material_sources=formal_materials,
             body_artifact=body_artifact,
             committed_generation=ns.content_generation + int(recall),
         )
@@ -288,22 +246,13 @@ class WrittenRecords:
     async def manual_inputs_in(
         self,
         tx: ReadTx,
-        sources: Sequence[SourceBinding],
+        sources: Sequence[MaterialSource],
         *,
         parent_id: str | None,
         origin_result_id: str | None,
     ) -> tuple[InputGroup, ...]:
         """Keep source support and editing lineage distinct in content provenance."""
-        inputs = [
-            InputGroup(
-                key=source.key,
-                slot_key=source.key,
-                name=source.name or source.key,
-                role=source.usage,
-                parts=tuple(InputPart(content=selection) for selection in source.selections),
-            )
-            for source in sources
-        ]
+        inputs: list[InputGroup] = []
         bases: list[str] = []
         if parent_id:
             body = await tx.connection.scalar(
@@ -331,7 +280,7 @@ class WrittenRecords:
                     )
                 ).all()
             )
-        keys = {group.key for group in inputs}
+        keys = {source.key for source in sources}
         for body in dict.fromkeys(bases):
             artifact = await self.artifacts.get_in(tx, body)
             index = len(inputs) + 1
@@ -366,11 +315,10 @@ class WrittenRecords:
         author: str | None,
         viewpoint: str | None,
         times: CognitiveTimes,
-        sources: Sequence[SourceBinding],
+        sources: Sequence[MaterialSource],
         change_kind: str,
         reason: str | None,
         origin_result_id: str | None,
-        material_sources: Sequence[MaterialSource],
         body_artifact: ArtifactRef | None = None,
         committed_generation: int,
         write_key: str | None = None,
@@ -387,7 +335,7 @@ class WrittenRecords:
             inputs = await self.manual_inputs_in(
                 tx, sources, parent_id=parent_id, origin_result_id=origin_result_id
             )
-            if inputs:
+            if inputs or sources:
                 result = await self.results.adopt_in(
                     tx,
                     facts=ResultFacts(
@@ -396,15 +344,17 @@ class WrittenRecords:
                         selected_inputs=SelectedInputs(
                             sources=tuple(
                                 SelectedSource(
-                                    slot_key=group.slot_key,
-                                    role=group.role,
-                                    display_name=group.name,
+                                    key=group.slot_key,
+                                    kind=group.role,
+                                    material=group.parts[0].content.artifact,
+                                    name=group.name,
                                     selections=tuple(part.content for part in group.parts),
                                 )
                                 for group in inputs
                             )
                         ),
                         inputs=inputs,
+                        material_sources=tuple(sources),
                         parameters={"change_kind": change_kind, "reason": reason},
                         formed_at=self.time.clock.utc_now(),
                     ),
@@ -448,13 +398,7 @@ class WrittenRecords:
             "body_artifact_id": artifact.ref.id,
             "source_signature": hashlib.sha256(
                 json.dumps(
-                    {
-                        "bindings": [source.model_dump(mode="json") for source in sources],
-                        "materials": {
-                            item.key: item.material.model_dump(mode="json")
-                            for item in material_sources
-                        },
-                    },
+                    [source.model_dump(mode="json") for source in sources],
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -472,47 +416,7 @@ class WrittenRecords:
             "recorded_at": recorded_at.isoformat(),
         }
         await tx.connection.execute(sa.insert(schema.revisions).values(**revision))
-        for index, source in enumerate(sources):
-            await tx.connection.execute(
-                sa.insert(schema.sources).values(
-                    revision_id=revision_id,
-                    key=source.key,
-                    ordinal=index,
-                    target_revision_id=source.owner_revision.revision_id
-                    if source.owner_revision
-                    else None,
-                    usage=source.usage,
-                    name=source.name,
-                )
-            )
-            await tx.connection.execute(
-                sa.insert(schema.source_targets),
-                [
-                    {
-                        "revision_id": revision_id,
-                        "key": source.key,
-                        "ordinal": ordinal,
-                        "artifact_id": selection.artifact.id,
-                        "selection": selection.selection.model_dump(mode="json"),
-                    }
-                    for ordinal, selection in enumerate(source.selections)
-                ],
-            )
-        if material_sources:
-            await tx.connection.execute(
-                schema.source_materials.insert(),
-                [
-                    {
-                        "revision_id": revision_id,
-                        "key": item.key,
-                        "material": item.material.model_dump(mode="json"),
-                        "source_result_id": item.material.result.id
-                        if isinstance(item.material, ResultOutputRef)
-                        else None,
-                    }
-                    for item in material_sources
-                ],
-            )
+        await save_sources_in(tx, revision_id, sources)
         return revision
 
     async def resolve_expected_in(
@@ -630,8 +534,7 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] | None = None,
-        material_sources: Sequence[MaterialSource] | None = None,
+        sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
     ) -> PreparedRevision:
         """Resolve and compare a proposed revision in the caller's consistent view."""
@@ -639,31 +542,11 @@ class WrittenRecords:
             tx, target, expected_revision, namespace, body
         )
         previous_bindings = await self.reader.sources_in(tx, old["id"])
-        previous_materials = (
-            await self.reader.material_sources_many_in(
-                tx, (old["id"],), sources={old["id"]: previous_bindings}
-            )
-        )[old["id"]]
         bindings = previous_bindings if sources is None else tuple(sources)
-        if material_sources is None:
-            old_by_key = {item.key: item for item in previous_bindings}
-            selected = tuple(
-                item
-                for item in previous_materials
-                if any(
-                    binding.key == item.key
-                    and binding.selections == item.selections
-                    and binding.owner_revision == old_by_key[item.key].owner_revision
-                    for binding in bindings
-                )
-            )
-        else:
-            selected = tuple(material_sources)
         resolved_title, title_source = self.resolve_title(
             title, self.validate_body(body, bindings), old
         )
         await self.validate_sources_in(tx, ns, bindings)
-        formal_materials = await self.validate_material_sources_in(tx, ns, bindings, selected)
         values: RevisionValues = {
             "title": resolved_title,
             "title_source": title_source,
@@ -688,12 +571,9 @@ class WrittenRecords:
             )
             == (old["title"], old["title_source"], old["purpose"], old["author"], old["viewpoint"])
             and bindings == previous_bindings
-            and formal_materials == previous_materials
             and equal_times
         )
-        return PreparedRevision(
-            row, old, ns, bindings, formal_materials, values, effective_times, not unchanged
-        )
+        return PreparedRevision(row, old, ns, bindings, values, effective_times, not unchanged)
 
     async def append_in(
         self,
@@ -708,8 +588,7 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] | None = None,
-        material_sources: Sequence[MaterialSource] | None = None,
+        sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
         change_kind: str = "edit",
         reason: str | None = None,
@@ -737,7 +616,6 @@ class WrittenRecords:
             author=author,
             viewpoint=viewpoint,
             sources=sources,
-            material_sources=material_sources,
             times=times,
         )
         row, old, ns = prepared.row, prepared.previous, prepared.namespace
@@ -760,7 +638,6 @@ class WrittenRecords:
             **prepared.values,
             times=effective_times,
             sources=prepared.bindings,
-            material_sources=prepared.material_sources,
             change_kind=change_kind,
             reason=reason,
             origin_result_id=origin_result_id,

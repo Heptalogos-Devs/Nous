@@ -82,7 +82,7 @@ def test_identifier_collision_retry_and_cli_roundtrip(tmp_path: Path) -> None:
     old = RecordView.model_validate(old_data)
     assert old.body == "Wait for the worker."
     assert old.source_details[0].views[0].body_text == "first"
-    assert old.source_details[0].views[0].export_ref.identifier == first
+    assert old.source_details[0].views[0].source.artifact.identifier == first
     inspected = Artifact.model_validate(invoke("tools", "media", "inspect", first)["artifact"])
     assert inspected.ref.identifier == first
     with pytest.raises(subprocess.CalledProcessError) as invalid:

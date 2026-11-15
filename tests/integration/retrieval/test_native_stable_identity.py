@@ -21,14 +21,15 @@ def _search(
     options_json: str = "{}",
 ) -> str:
     program = resolve_program(WaveConfig(), name)
-    return snapshot.execute(
+    result = snapshot.execute(
         name=name,
-        program_json=json.dumps(program.native_plan),
+        program_json=json.dumps(program.native_plan()),
         text=text,
         raw_vector=vector,
         contextual_vector=vector,
         options_json=options_json,
     )
+    return json.dumps(json.loads(result)["value:0"])
 
 
 def _bundles(

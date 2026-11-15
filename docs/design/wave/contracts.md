@@ -46,11 +46,11 @@ ThinkingStage 的候选均先与本次允许集合相交；不存在 key 是输�
 ```text
 WaveSearchResult:
   snapshot
-  program, program_run, used_lanes, skipped_lanes_with_reason
+  program, program_selection, fallback_from, unavailable_capabilities, budget
+  used_lanes, skipped_lanes_with_reason
   groups: ordered GroupHit[]       # 文稿粒度
   hits: ordered {basis, passage}[] # 候选粒度
-  context_summary, cue_summary
-  algorithm_versions, scope, coverage, branch_coverage
+  selected_context, context_summary, coverage, branch_coverage
   thinking: stages/routes | unavailable(reason)
   diagnostics?  # include_trace / explain 时展开
 ```

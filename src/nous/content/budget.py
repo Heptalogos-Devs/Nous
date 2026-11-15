@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
-from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 
@@ -33,15 +32,11 @@ class SelectionBudget:
         amount: int | None,
         unit: Literal["characters", "bytes", "tokens"],
         tokenizer_path: Path | None = None,
-        tokenizer_digest: str | None = None,
-        tokenizer_name: str | None = None,
     ) -> None:
-        self.views = views
+        self.views = dict(views)
         self.amount = amount
         self.unit = unit
         self.tokenizer: Tokenizer | None = None
-        self.tokenizer_name = tokenizer_name
-        self.tokenizer_digest: str | None = None
         if unit == "tokens":
             if tokenizer_path is None:
                 raise NousError(
@@ -49,13 +44,10 @@ class SelectionBudget:
                 )
             try:
                 serialized = tokenizer_path.read_bytes()
-                self.tokenizer_digest = sha256(serialized).hexdigest()
             except Exception as error:
                 raise NousError(
                     "content.tokenizer_invalid", "Cannot load the configured tokenizer", cause=error
                 ) from error
-            if tokenizer_digest is not None and tokenizer_digest != self.tokenizer_digest:
-                raise NousError("content.tokenizer_changed", "The configured tokenizer has changed")
             try:
                 self.tokenizer = _tokenizer(serialized)
             except Exception as error:
@@ -117,11 +109,10 @@ class SelectionBudget:
         return additional
 
     def fit_prefix(self, value: ContentSelection) -> tuple[tuple[ContentSelection, ...], bool]:
-        """Accept a full range or the longest fitting complete sentence/block prefix."""
+        """Return the readable prefix; charge only ranges not already covered."""
         selected = self._normalize(value)
-        full = self.add((selected,))
-        if full is not None:
-            return full, False
+        if self.add((selected,)) is not None:
+            return (selected,), False
         view = self.views[selected.artifact.id]
         start, _ = view.selection_bounds(selected)
         best: ContentSelection | None = None
@@ -137,4 +128,4 @@ class SelectionBudget:
             return (), True
         accepted = self.add((best,))
         assert accepted is not None
-        return accepted, True
+        return (best,), True

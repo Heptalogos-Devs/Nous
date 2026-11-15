@@ -14,7 +14,7 @@
 
 ## 显式 current_basis
 
-SourceBinding.current_basis 表达作者明确声明的依赖。`reference` 和 `inspiration` 只用于回看或启发，不触发待复核。
+MaterialSource 的 `current_basis` 表达作者明确声明的依赖。`reference` 和 `inspiration` 只用于回看或启发，不触发待复核。
 
 revision correction 可以明确标记被纠正的基准 revision 为 basis_invalidated；普通编辑、archive 和未来新状态不会把旧历史事实整体作废。current_basis 的当前后代通过有索引的引用关系在捕获时计算 needs_review，可沿已有 revision DAG 递归；不逐个写入重复状态、不同步唤起所有领域。
 

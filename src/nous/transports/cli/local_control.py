@@ -292,7 +292,9 @@ class LocalControl:
                     await send(writer, {"kind": "event", "event": event.model_dump(mode="json")})
 
                 worker = asyncio.create_task(
-                    self.runtime.app.call_name(name, payload, inputs=bindings, observer=observe)
+                    self.runtime.app.call_parsed(
+                        payload, execution=execution, inputs=bindings, observer=observe
+                    )
                 )
                 incoming = asyncio.create_task(receive(reader))
                 try:

@@ -11,26 +11,22 @@ from nous.application.contracts import CallContext
 from nous.cognition.contracts import NamespaceRef, NamespaceSelector
 from nous.cognition.material_contracts import (
     CognitiveMaterialView,
-    MaterialAttributes,
-    MaterialIndex,
     MaterialRelation,
     MaterialSection,
     MaterialSelection,
-    MaterialSnapshot,
-    MaterialSource,
 )
 from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.common.identifier import split_revision
+from nous.common.material_refs import WorkRef, WorkRevisionRef
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ContentSelection, SourceSelection
+from nous.content.contracts import ContentSelection, MaterialSource, SourceSelection
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
 from . import schema
-from .contracts import ReadWork, WorkAttributes, WorkState, WorkView
-from .refs import WorkRef, WorkRevisionRef
+from .contracts import ReadWork, WorkState, WorkView
 
 
 class WorkReader:
@@ -57,6 +53,16 @@ class WorkReader:
     @staticmethod
     def material_namespace(ref: WorkRevisionRef) -> NamespaceRef:
         return NamespaceRef(instance_id=ref.work_ref.instance_id, id=ref.work_ref.namespace_id)
+
+    def search_support(self, view: CognitiveMaterialView) -> tuple[MaterialRelation, ...]:
+        return (
+            *tuple(item for item in view.relations if item.kind == "current_basis"),
+            *tuple(
+                MaterialRelation(kind=item.kind, target=item.material, evidence=item.selections)
+                for item in view.material_sources
+                if item.kind == "current_basis"
+            ),
+        )
 
     @staticmethod
     def references(state: WorkState) -> tuple[tuple[str, MaterialSelection], ...]:
@@ -160,20 +166,36 @@ class WorkReader:
     async def view(self, work: RowMapping, revision: RowMapping, head: RowMapping) -> WorkView:
         ref = self.ref(work, revision)
         async with self.database.read() as tx:
-            material = (await self.capture_materials_in(tx, (ref,)))[0].view
             artifact = await self.artifacts.get_in(tx, str(revision["body_artifact_id"]))
-        attributes = WorkAttributes.model_validate(material.attributes.values)
-        assert material.body is not None
+            representation = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.representations).where(
+                            schema.representations.c.revision_id == revision["id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            rendered = await self.artifacts.get_in(tx, str(representation["artifact_id"]))
+        fields = {
+            key: ContentSelection(
+                artifact=rendered.ref,
+                selection=SourceSelection(start_byte=value[0], end_byte=value[1]),
+            )
+            for key, value in representation["fields"].items()
+        }
         return WorkView(
             ref=ref.work_ref,
             revision_ref=ref,
             current_revision=self.ref(work, head),
-            state=attributes.state,
+            state=WorkState.model_validate(revision["state"]),
             body_artifact=artifact.ref,
-            rendered_artifact=material.body.artifact,
-            fields=attributes.fields,
+            rendered_artifact=rendered.ref,
+            fields=fields,
             body=await self.artifacts.read_text(artifact.ref),
-            recorded_at=attributes.recorded_at,
+            recorded_at=datetime.fromisoformat(str(revision["recorded_at"])),
         )
 
     async def namespace(
@@ -203,8 +225,8 @@ class WorkReader:
             return await self.view(work, revision, head)
 
     async def capture_materials_in(
-        self, tx: ReadTx, refs: tuple[WorkRevisionRef, ...]
-    ) -> tuple[MaterialSnapshot, ...]:
+        self, tx: ReadTx, refs: tuple[WorkRevisionRef, ...], *, structure: bool = False
+    ) -> tuple[CognitiveMaterialView, ...]:
         """Capture exact Work facts without reading or parsing content bytes."""
         if not refs:
             return ()
@@ -247,12 +269,7 @@ class WorkReader:
         artifacts = {
             item.ref.id: item.ref for item in await self.artifacts.get_many_in(tx, artifact_ids)
         }
-        rendered_ids = tuple(dict.fromkeys(str(row["rendered_id"]) for row in rows))
-        blobs = await self.artifacts.content.resolve_many_in(tx, rendered_ids)
-        digests = {
-            identifier: blob.digest for identifier, blob in zip(rendered_ids, blobs, strict=True)
-        }
-        output: list[MaterialSnapshot] = []
+        output: list[CognitiveMaterialView] = []
         for expected in refs:
             row = by_id[expected.revision_id]
             actual = WorkRevisionRef(
@@ -274,13 +291,7 @@ class WorkReader:
                 artifacts[str(row["body_artifact_id"])],
                 artifacts[str(row["rendered_id"])],
             )
-            fields = {
-                key: ContentSelection(
-                    artifact=rendered,
-                    selection=SourceSelection(start_byte=value[0], end_byte=value[1]),
-                )
-                for key, value in row["fields"].items()
-            }
+            body_bounds = row["fields"].get("body")
             decision_states: dict[str, str] = {item.key: item.state for item in state.decisions}
 
             def relation_kind(role: str, states: dict[str, str] = decision_states) -> str:
@@ -299,6 +310,7 @@ class WorkReader:
                     kind=relation_kind(role), target=item.material, evidence=item.selections
                 )
                 for role, item in references
+                if not item.selections
             )
             material_sources = tuple(
                 MaterialSource(
@@ -310,12 +322,19 @@ class WorkReader:
                 for index, (role, item) in enumerate(references)
                 if item.selections
             )
-            if "body" in fields:
+            if body_bounds is not None:
                 relations += (
                     MaterialRelation(
                         kind="representation",
                         target=body,
-                        scope=(fields["body"],),
+                        scope=(
+                            ContentSelection(
+                                artifact=rendered,
+                                selection=SourceSelection(
+                                    start_byte=body_bounds[0], end_byte=body_bounds[1]
+                                ),
+                            ),
+                        ),
                         evidence=(ContentSelection(artifact=body),),
                     ),
                 )
@@ -324,40 +343,31 @@ class WorkReader:
             assert isinstance(point, Instant)
             view = CognitiveMaterialView(
                 ref=actual,
-                kind="work",
                 title=state.title,
+                media_type="text/markdown",
                 body=ContentSelection(artifact=rendered),
+                sections=tuple(
+                    MaterialSection(
+                        key=key,
+                        selection=ContentSelection(
+                            artifact=rendered,
+                            selection=SourceSelection(start_byte=value[0], end_byte=value[1]),
+                        ),
+                    )
+                    for key, value in row["fields"].items()
+                )
+                if structure
+                else None,
                 material_sources=material_sources,
                 relations=relations,
                 times=CognitiveTimes(recorded=point.at),
-                attributes=MaterialAttributes(
-                    schema_key="work",
-                    values=WorkAttributes(
-                        state=state, recorded_at=recorded_at, fields=fields
-                    ).model_dump(mode="json"),
-                ),
             )
-            output.append(
-                MaterialSnapshot(
-                    view=view,
-                    body_digest=digests[rendered.id],
-                    index=MaterialIndex(
-                        key=self.material_key(actual),
-                        group_key=actual.identifier,
-                        namespace=self.material_namespace(actual),
-                        available=True,
-                        opt_in="work",
-                        support_relations=tuple(
-                            relation for relation in relations if relation.kind == "current_basis"
-                        ),
-                    ),
-                )
-            )
+            output.append(view)
         return tuple(output)
 
     async def current_materials_in(
         self, tx: ReadTx, namespace: NamespaceRef
-    ) -> tuple[MaterialSnapshot, ...]:
+    ) -> tuple[CognitiveMaterialView, ...]:
         """Capture current Work revisions in the caller's namespace read view."""
         await self.scope.get_in(tx, namespace)
         rows = (
@@ -392,15 +402,3 @@ class WorkReader:
             for row in rows
         )
         return await self.capture_materials_in(tx, refs)
-
-    async def prepare_material(self, view: CognitiveMaterialView) -> CognitiveMaterialView:
-        """Expose the saved Work field ranges without reparsing the body."""
-        attributes = WorkAttributes.model_validate(view.attributes.values)
-        return view.model_copy(
-            update={
-                "sections": tuple(
-                    MaterialSection(key=key, selection=selection)
-                    for key, selection in attributes.fields.items()
-                )
-            }
-        )

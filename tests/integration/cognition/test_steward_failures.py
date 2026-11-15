@@ -10,17 +10,15 @@ import pytest
 from nous.application.configuration import open_configuration_operations
 from nous.application.contracts import EventEnvelope, Progress, Saved
 from nous.cognition.contracts import CreateNamespace
-from nous.cognition.material_contracts import ReadMaterial
+from nous.cognition.material_contracts import MaterialSelection, ReadMaterial
 from nous.cognition.materials import READ_MATERIAL
 from nous.cognition.retrieval.contracts import (
     DeliveryRequest,
-    DeliveryUsage,
     QueryControls,
     QueryRequest,
-    SaveEvidence,
     Selector,
 )
-from nous.cognition.retrieval.operations import QUERY, SAVE_EVIDENCE
+from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.scope import CREATE_NAMESPACE
 from nous.cognition.steward.contracts import ArrangeReading
 from nous.cognition.steward.operations import ARRANGE
@@ -29,7 +27,6 @@ from nous.cognition.writing.operations import ADD_NOTE
 from nous.common.errors import NousError
 from nous.content.contracts import ContentSelection, InlineText, ResultRef, SourceSelection
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.wave.contracts import DeliveredText, DeliveryBudget
 from tests.integration.shared.models import configure_models, model_server
 
 
@@ -144,8 +141,6 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                     }
                 ],
             }
-            if len(self.requests) in (2, 4):
-                reading["context_requests"] = [{"key": "E1", "direction": "after"}]
             body = json.dumps(
                 {
                     "id": "reading",
@@ -186,7 +181,7 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                     }
                 )
             async with open_instance(instance, environment={}) as runtime:
-                await runtime.app.call(
+                note = await runtime.app.call(
                     ADD_NOTE,
                     AddNote(
                         body=InlineText(
@@ -221,55 +216,58 @@ def test_independent_arrangement_reports_progress_and_committed_result(tmp_path:
                 assert (await runtime.results.get(reading.reading_ref)).ref == reading.reading_ref
                 sent = json.dumps(Handler.requests[0]["messages"], ensure_ascii=False)
                 assert "release condition" in sent and "compare conditions" in sent
-                assert "include_review" in sent
-
-                body = found.evidence.materials[0].material.body
-                assert body is not None
-                first_text = "The worker exits first."
-                first = ContentSelection(
-                    artifact=body.artifact,
-                    selection=SourceSelection(start_byte=0, end_byte=len(first_text)),
+                assert "include_review" not in sent
+                assert len(Handler.requests) == 1
+                saved_reading = await runtime.results.get(reading.reading_ref)
+                saved_evidence = await runtime.results.get(found.evidence_ref)
+                assert found.evidence_ref in saved_reading.dependencies
+                assert saved_reading.sources_for("markdown") == saved_evidence.sources_for(
+                    "evidence"
                 )
-                passage = found.evidence.passages[0].model_copy(
-                    update={
-                        "key": "E1",
-                        "fragments": (DeliveredText(content=first, text=first_text),),
-                        "support_context": (),
-                        "scored_ranges": (first,),
-                        "shared_context": (),
-                    }
+                assert any(
+                    item.output_name == "markdown" and item.origins
+                    for item in saved_reading.mappings
                 )
-                material = found.evidence.materials[0].model_copy(update={"passage_keys": ("E1",)})
-                evidence = found.evidence.model_copy(
-                    update={
-                        "materials": (material,),
-                        "passages": (passage,),
-                        "program_run": None,
-                        "budget": DeliveryBudget(amount=200, unit="bytes"),
-                        "delivery_usage": DeliveryUsage(unit="bytes", amount=len(first_text)),
-                    }
+                overridden = await runtime.app.call(
+                    ARRANGE,
+                    ArrangeReading(
+                        evidence=found.evidence_ref,
+                        question="Which handle is affected?",
+                        aspects=("new aspect",),
+                        context=({"role": "user", "text": "Use the revised context."},),
+                    ),
                 )
-                original = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=evidence))
-                expanded = await runtime.app.call(ARRANGE, ArrangeReading(evidence=original))
-                assert expanded.evidence_ref != original and len(Handler.requests) == 3
-                read = await runtime.app.call(
-                    READ_MATERIAL, ReadMaterial(delivery=expanded.evidence_ref, key="E1")
-                )
-                assert "Only then may the handle be released" in "".join(
-                    item.body_text or "" for item in read.selections
-                )
-                assert original in (await runtime.results.get(expanded.evidence_ref)).dependencies
+                assert overridden.evidence_ref == found.evidence_ref
+                override_prompt = json.dumps(Handler.requests[1]["messages"], ensure_ascii=False)
+                assert "Which handle is affected?" in override_prompt
                 assert (
-                    expanded.evidence_ref
-                    in (await runtime.results.get(expanded.reading_ref)).dependencies
+                    "new aspect" in override_prompt and "release condition" not in override_prompt
                 )
-
-                limited = evidence.model_copy(
-                    update={"budget": DeliveryBudget(amount=len(first_text), unit="bytes")}
+                assert "Use the revised context." in override_prompt
+                view = await runtime.materials.resolve(note.commit.revision_ref)
+                assert view.body is not None
+                chosen = ContentSelection(
+                    artifact=view.body.artifact,
+                    selection=SourceSelection(
+                        start_byte=0, end_byte=len("The worker exits first.")
+                    ),
                 )
-                original = await runtime.app.call(SAVE_EVIDENCE, SaveEvidence(evidence=limited))
-                constrained = await runtime.app.call(ARRANGE, ArrangeReading(evidence=original))
-                assert constrained.evidence_ref == original and len(Handler.requests) == 4
-                assert constrained.issues[0].code == "steward.budget_exhausted"
+                direct = await runtime.app.call(
+                    ARRANGE,
+                    ArrangeReading(
+                        materials=(
+                            MaterialSelection(
+                                material=note.commit.revision_ref, selections=(chosen,)
+                            ),
+                        ),
+                        question="What happens first?",
+                    ),
+                )
+                assert direct.evidence_ref is None and len(Handler.requests) == 3
+                saved_direct = await runtime.results.get(direct.reading_ref)
+                source = saved_direct.sources_for("markdown")[0]
+                assert source.key == "E1" and source.material == note.commit.revision_ref
+                assert source.selections == (chosen,)
+                assert any(chosen in item.origins for item in saved_direct.mappings)
 
         asyncio.run(scenario())

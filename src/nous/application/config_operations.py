@@ -166,7 +166,7 @@ class ConfigurationCalls:
                 request.input.selection,
                 context.settings.values.content.text_read_max_bytes,
             )
-            value = json.loads(selected.text)
+            value = json.loads(selected)
         return await self.writer.update({request.path: value})
 
     async def unset(self, request: ConfigurationPath, context: CallContext) -> dict[str, object]:

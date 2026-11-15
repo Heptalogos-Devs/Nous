@@ -8,7 +8,6 @@ pub(super) struct RankedCandidates {
     pub channel_ranks: BTreeMap<u64, BTreeMap<String, usize>>,
     pub offered_candidates: usize,
     pub diagnostics: Value,
-    pub thinking: Value,
     pub score_kind: String,
     pub wormhole_rrf_active: bool,
     pub used_lanes: Vec<String>,
@@ -35,7 +34,6 @@ impl Snapshot {
             channel_ranks,
             mut offered_candidates,
             mut diagnostics,
-            thinking,
             score_kind,
             wormhole_rrf_active,
             mut used_lanes,
@@ -267,7 +265,7 @@ impl Snapshot {
         diagnostics["readout_max_union_candidates"] = json!(readout_max_union_candidates);
         diagnostics["input_scale"] = json!({"allowed_candidates":allowed.len(),"concepts":self.inner.concepts.keys.len(),"max_union_candidates":readout_max_union_candidates});
         Ok(
-            json!({"program":program,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"groups":groups,"grouping":o.grouping,"rank_scope":provided_pool.map(|pool|pool.rank_scope.as_str()).unwrap_or(if o.grouping == "document" {"grouped_lane"} else {"candidate_lane"}),"thinking":thinking,"algorithm_versions":{"vcp_upstream":"d5c019ebbac1f317c2938d655d2ce916e41b9164","pipeline":"memo.conservative-topology-v2.2","river":"rivermemo.conservative-topology-v2.2"},"coverage":{"requested_groups":if o.grouping=="document"{Some(o.top_k)}else{None},"returned_groups":groups.len(),"eligible_groups_known":eligible_groups_known,"allowed_groups":allowed.iter().map(|row|self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),"recall_exhausted":recall_exhausted,"truncated":recall_truncated||pool_truncated||top_k_truncated,"reason":coverage_reason,"lanes":lane_coverage,"lane_limit_unit":if o.grouping == "document" {"groups"}else{"candidates"},"group_scan_limit":o.group_scan_limit,"passages_per_group":o.passages_per_group,"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":top_k_truncated},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}),
+            json!({"program":program,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"groups":groups,"grouping":o.grouping,"rank_scope":provided_pool.map(|pool|pool.rank_scope.as_str()).unwrap_or(if o.grouping == "document" {"grouped_lane"} else {"candidate_lane"}),"coverage":{"requested_groups":if o.grouping=="document"{Some(o.top_k)}else{None},"returned_groups":groups.len(),"eligible_groups_known":eligible_groups_known,"allowed_groups":allowed.iter().map(|row|self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),"recall_exhausted":recall_exhausted,"truncated":recall_truncated||pool_truncated||top_k_truncated,"reason":coverage_reason,"lanes":lane_coverage,"lane_limit_unit":if o.grouping == "document" {"groups"}else{"candidates"},"group_scan_limit":o.group_scan_limit,"passages_per_group":o.passages_per_group,"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":top_k_truncated},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}),
         )
     }
 }

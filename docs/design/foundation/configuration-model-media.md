@@ -12,6 +12,7 @@
 |---|---|---|
 | content.io_chunk_bytes | int=1048576，>=4096 | restart；流式接纳块大小 |
 | content.text_read_max_bytes | int=8388608，>0 | next_operation；便利文字读取上限 |
+| content.tokenizer_path | nullable path=null | next_operation；原文 token 预算使用的本地 tokenizer JSON |
 | media.ffmpeg_path / ffprobe_path | nullable path=null | restart；null 用 shutil.which，找到后记录实际版本 |
 | media.max_inline_bytes | int=33554432，>0 | next_operation；一次模型请求内物化媒体的技术上限 |
 | media.image.max_side | int=2048，>0 | next_operation；需要规范化时长边上限 |

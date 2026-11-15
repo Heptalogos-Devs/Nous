@@ -16,8 +16,10 @@ from nous.common.errors import NousError
 from nous.content.contracts import (
     ArtifactInput,
     ContentSelection,
+    DeleteResult,
     InputGroup,
     InputPart,
+    OriginSlice,
     OutputContent,
     ProcessingResult,
     ProgramProducer,
@@ -26,7 +28,7 @@ from nous.content.contracts import (
     SelectedSource,
     SourceSelection,
 )
-from nous.content.operations import READ_ARTIFACT
+from nous.content.operations import DELETE_RESULT, READ_ARTIFACT
 from nous.models.generation.contracts import PreviewPrompt
 from nous.models.generation.operations import PROMPT_PREVIEW
 from nous.runtime.bootstrap import initialize_instance, open_instance
@@ -49,11 +51,12 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
                 runtime.results.adopt(
                     facts=ResultFacts(
                         operation="convert",
-                        producer=ProgramProducer(operation="convert"),
+                        producer=ProgramProducer(),
                         selected_inputs=SelectedInputs(
                             sources=(
                                 SelectedSource(
-                                    slot_key="S1",
+                                    material=original.ref,
+                                    key="S1",
                                     selections=(ContentSelection(artifact=original.ref),),
                                 ),
                             )
@@ -99,14 +102,20 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
             composition = await runtime.results.adopt(
                 facts=ResultFacts(
                     operation="writing.compose",
-                    producer=ProgramProducer(operation="writing.compose"),
+                    producer=ProgramProducer(),
                     selected_inputs=SelectedInputs(
                         sources=(
                             SelectedSource(
-                                slot_key="PRODUCT", role="context", selections=(product,)
+                                material=product.artifact,
+                                key="PRODUCT",
+                                kind="context",
+                                selections=(product,),
                             ),
                             SelectedSource(
-                                slot_key="BASE", role="revision_base", selections=(context,)
+                                material=context.artifact,
+                                key="BASE",
+                                kind="revision_base",
+                                selections=(context,),
                             ),
                         )
                     ),
@@ -358,9 +367,13 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
             selected = ContentSelection(artifact=original.ref)
             facts = ResultFacts(
                 operation="convert",
-                producer=ProgramProducer(operation="convert"),
+                producer=ProgramProducer(),
                 selected_inputs=SelectedInputs(
-                    sources=(SelectedSource(slot_key="S1", selections=(selected,)),)
+                    sources=(
+                        SelectedSource(
+                            material=selected.artifact, key="S1", selections=(selected,)
+                        ),
+                    )
                 ),
                 inputs=(
                     InputGroup(
@@ -395,12 +408,20 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                     prepared_outputs=prepared,
                 )
             assert await runtime.artifacts.read_text(adopted.outputs[0].artifact) == "derived"
-            cache_facts = facts.model_copy(update={"parameters": {"cache_key": "same"}})
-            await runtime.results.adopt(
-                facts=cache_facts, outputs={"output": OutputContent(data=b"cached")}
+            cached = await runtime.results.adopt(
+                facts=facts, outputs={"output": OutputContent(data=b"cached")}, cache_key="same"
             )
+            reused = await runtime.results.adopt(
+                facts=facts, outputs={"output": OutputContent(data=b"cached")}, cache_key="same"
+            )
+            assert reused.ref == cached.ref
+            ordinary = await runtime.results.adopt(
+                facts=facts.model_copy(update={"parameters": {"cache_key": "same"}}),
+                outputs={"output": OutputContent(data=b"cached")},
+            )
+            assert ordinary.ref != cached.ref
             invalid_ref = original.ref.model_copy(update={"identifier": "art(other)"})
-            invalid = cache_facts.model_copy(
+            invalid = facts.model_copy(
                 update={
                     "inputs": (
                         InputGroup(
@@ -414,7 +435,9 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
             )
             with pytest.raises(NousError) as error:
                 await runtime.results.adopt(
-                    facts=invalid, outputs={"output": OutputContent(data=b"cached")}
+                    facts=invalid,
+                    outputs={"output": OutputContent(data=b"cached")},
+                    cache_key="same",
                 )
             assert error.value.code == "content.reference_mismatch"
             preparations = [
@@ -665,12 +688,14 @@ def test_exact_text_selection_and_lossless_edits(tmp_path: Path) -> None:
                 artifact=artifact.ref, selection=SourceSelection(start_line=3, end_line=3)
             )
             value = (await runtime.artifacts.read_selections((selected,)))[0]
-            assert value.data == "中文 x\r\n".encode()
+            assert value.text == "中文 x\r\n"
             assert value.first_line == 3
             byte_value = (await runtime.artifacts.read_selections((value.content,)))[0]
             assert byte_value == value
             local = await runtime.artifacts.text_view(selected)
-            assert local.byte_offset == value.start_byte and local.first_line == 3
+            start = value.content.selection.start_byte
+            assert start is not None
+            assert local.byte_offset == start and local.first_line == 3
             assert local.chunks(max_bytes=11)[0].text == value.text
             from nous.application.preparation import TextPreparation
 
@@ -694,9 +719,7 @@ def test_exact_text_selection_and_lossless_edits(tmp_path: Path) -> None:
                 await runtime.artifacts.read_selection(
                     ContentSelection(
                         artifact=artifact.ref,
-                        selection=SourceSelection(
-                            start_byte=value.start_byte + 1, end_byte=value.start_byte + 2
-                        ),
+                        selection=SourceSelection(start_byte=start + 1, end_byte=start + 2),
                     )
                 )
 
@@ -842,9 +865,49 @@ def test_adopted_text_projection_maps_exact_regions_without_matching_bytes(tmp_p
                 "".join([await runtime.artifacts.read_selection(item.origin) for item in whole])
                 == "before [标签](source:S1) after\n"
             )
+            representation = InputPart(content=selected, origins=mapped)
+            actual = await runtime.artifacts.ingest("model input")
+            adopted = await runtime.results.adopt(
+                facts=ResultFacts(
+                    operation="consume-projection",
+                    producer=ProgramProducer(),
+                    selected_inputs=SelectedInputs(
+                        sources=(
+                            SelectedSource(
+                                key="S1",
+                                material=original.ref,
+                                selections=(mapped[0].origin,),
+                                representations=(representation,),
+                            ),
+                        )
+                    ),
+                    inputs=(
+                        InputGroup(
+                            key="S1",
+                            slot_key="S1",
+                            name="source",
+                            parts=(
+                                InputPart(
+                                    content=ContentSelection(artifact=actual.ref),
+                                    origins=(OriginSlice(origin=selected, precision="atomic"),),
+                                ),
+                            ),
+                        ),
+                    ),
+                    formed_at=runtime.artifacts.clock.utc_now(),
+                ),
+                outputs={"output": OutputContent(data=b"result")},
+            )
         async with open_instance(instance, environment={}) as runtime:
             restored = await runtime.artifacts.map_origins(selected, original.ref)
             assert restored == mapped
+            saved = await runtime.results.get(adopted.ref)
+            assert saved.selected_inputs.sources[0].representations == (representation,)
+            assert saved.inputs[0].parts[0].origins[0].precision == "atomic"
+            assert mapped[0].transform_ref in saved.dependencies
+            with pytest.raises(NousError, match="referenced"):
+                assert mapped[0].transform_ref is not None
+                await runtime.app.call(DELETE_RESULT, DeleteResult(ref=mapped[0].transform_ref))
 
     asyncio.run(scenario())
 
@@ -874,9 +937,13 @@ def test_deep_producer_mappings_keep_exact_ranges(tmp_path: Path) -> None:
                         tx,
                         facts=ResultFacts(
                             operation="projection",
-                            producer=ProgramProducer(operation="projection"),
+                            producer=ProgramProducer(),
                             selected_inputs=SelectedInputs(
-                                sources=(SelectedSource(slot_key="S1", selections=(current,)),)
+                                sources=(
+                                    SelectedSource(
+                                        material=current.artifact, key="S1", selections=(current,)
+                                    ),
+                                )
                             ),
                             inputs=(
                                 InputGroup(

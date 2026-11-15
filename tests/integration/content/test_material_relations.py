@@ -5,13 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from nous.cognition.contracts import NamespaceRef, SourceBinding
-from nous.cognition.material_contracts import (
-    FollowMaterial,
-    MaterialSelection,
-    MaterialSource,
-    ReadMaterial,
-)
+from nous.cognition.contracts import NamespaceRef
+from nous.cognition.material_contracts import FollowMaterial, MaterialSelection, ReadMaterial
 from nous.cognition.materials import FOLLOW_MATERIAL, READ_MATERIAL
 from nous.cognition.work.contracts import CreateWork, WorkState
 from nous.cognition.work.operations import CREATE_WORK
@@ -20,13 +15,14 @@ from nous.cognition.writing.contracts import (
     AdoptDraft,
     AfterWrite,
     DraftFromResult,
+    ReadDraft,
     ReadRecord,
     ReplaceRecord,
     ReviseDraft,
     SourceChanges,
     SourceChoice,
 )
-from nous.cognition.writing.generation import DRAFT_FROM_RESULT, REVISE_DRAFT
+from nous.cognition.writing.generation import DRAFT_FROM_RESULT, READ_DRAFT, REVISE_DRAFT
 from nous.cognition.writing.operations import ADD_NOTE, ADOPT_DRAFT, READ_RECORD, REPLACE_RECORD
 from nous.common.errors import NousError
 from nous.content.contracts import (
@@ -34,10 +30,12 @@ from nous.content.contracts import (
     InlineText,
     InputGroup,
     InputPart,
+    MaterialSource,
     NamedSelection,
     OutputContent,
     OutputMapping,
     ProgramProducer,
+    ReadResult,
     ResultFacts,
     ResultOutputInput,
     ResultOutputRef,
@@ -45,6 +43,7 @@ from nous.content.contracts import (
     SelectedSource,
     SourceSelection,
 )
+from nous.content.operations import READ_RESULT
 from nous.runtime.bootstrap import initialize_instance, open_instance
 
 
@@ -65,23 +64,25 @@ def test_result_exposes_only_declared_representation_sources(tmp_path: Path) -> 
             inputs = SelectedInputs(
                 sources=(
                     SelectedSource(
-                        slot_key="A", selections=(ContentSelection(artifact=original.ref),)
+                        material=original.ref,
+                        key="A",
+                        selections=(ContentSelection(artifact=original.ref),),
                     ),
-                    SelectedSource(slot_key="B", selections=(unrelated,)),
+                    SelectedSource(material=unrelated.artifact, key="B", selections=(unrelated,)),
                 )
             )
             groups = tuple(
                 InputGroup(
-                    key=source.slot_key,
-                    slot_key=source.slot_key,
-                    name=source.slot_key,
+                    key=source.key,
+                    slot_key=source.key,
+                    name=source.key,
                     parts=(InputPart(content=source.selections[0]),),
                 )
                 for source in inputs.sources
             )
             facts = ResultFacts(
                 operation="extract",
-                producer=ProgramProducer(operation="extract"),
+                producer=ProgramProducer(),
                 selected_inputs=inputs,
                 inputs=groups,
                 selections=(NamedSelection(key="E1", sources=(chosen,)),),
@@ -127,19 +128,17 @@ def test_result_exposes_only_declared_representation_sources(tmp_path: Path) -> 
                     facts=facts.model_copy(
                         update={
                             "dependencies": (result.ref, other.ref),
+                            "material_sources": (
+                                MaterialSource(
+                                    key="E1", material=original.ref, selections=(chosen,)
+                                ),
+                            ),
                             "mappings": (
                                 facts.mappings[0].model_copy(update={"origins": (whole_text,)}),
                             ),
                         }
                     ),
                     prepared_outputs=prepared,
-                )
-                await runtime.materials.adopt_sources_in(
-                    tx,
-                    later,
-                    ("description",),
-                    (MaterialSource(key="E1", material=original.ref, selections=(chosen,)),),
-                    namespace=(await runtime.record_reader.namespace_in(tx, None)).ref,
                 )
 
         async with open_instance(instance, environment={}) as runtime:
@@ -148,11 +147,10 @@ def test_result_exposes_only_declared_representation_sources(tmp_path: Path) -> 
                 batch = await runtime.results.get_many_in(
                     tx, (later.ref, saved.ref.identifier, later.ref)
                 )
-                later_snapshot = (
-                    await runtime.materials.capture_in(
-                        tx, (ResultOutputRef(result=later.ref, output="description"),)
-                    )
-                )[0]
+                views = await runtime.materials.capture_in(
+                    tx, (ResultOutputRef(result=later.ref, output="description"),)
+                )
+                later_snapshot = (await runtime.cognitive_retrieval.capture.index_in(tx, views))[0]
             assert batch[0] == batch[2] and batch[1] == saved
             assert batch[0].dependencies == (saved.ref, other.ref)
             assert [relation.evidence for relation in later_snapshot.index.support_relations] == [
@@ -261,9 +259,11 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
             content = b"The decision is recorded [E1](source:E1)."
             facts = ResultFacts(
                 operation="reading.example",
-                producer=ProgramProducer(operation="reading.example"),
+                producer=ProgramProducer(),
                 selected_inputs=SelectedInputs(
-                    sources=(SelectedSource(slot_key="E1", selections=(source,)),)
+                    sources=(
+                        SelectedSource(material=source.artifact, key="E1", selections=(source,)),
+                    )
                 ),
                 inputs=(
                     InputGroup(
@@ -271,6 +271,11 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                     ),
                 ),
                 selections=(NamedSelection(key="E1", sources=(source,)),),
+                material_sources=(
+                    MaterialSource(
+                        key="E1", material=work.revision_ref, selections=(source,), name="Research"
+                    ),
+                ),
                 mappings=(
                     OutputMapping(
                         output_name="markdown",
@@ -288,31 +293,24 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                 }
             )
             async with runtime.database.write() as tx:
-                product = await runtime.results.adopt_in(tx, facts=facts, prepared_outputs=prepared)
-                await runtime.materials.adopt_sources_in(
+                await runtime.materials.validate_sources_in(
                     tx,
-                    product,
-                    ("markdown",),
-                    (
-                        MaterialSource(
-                            key="E1",
-                            material=work.revision_ref,
-                            selections=(source,),
-                            name="Research",
-                        ),
-                    ),
+                    facts.material_sources,
                     namespace=NamespaceRef(
                         instance_id=work.ref.instance_id, id=work.ref.namespace_id
                     ),
                 )
-                await runtime.materials.adopt_sources_in(
+                product = await runtime.results.adopt_in(
                     tx,
-                    product,
-                    ("other",),
-                    (MaterialSource(key="E1", material=source.artifact, selections=(source,)),),
-                    namespace=NamespaceRef(
-                        instance_id=work.ref.instance_id, id=work.ref.namespace_id
-                    ),
+                    facts=facts,
+                    prepared_outputs=prepared,
+                    output_sources={
+                        "other": (
+                            MaterialSource(
+                                key="E1", material=source.artifact, selections=(source,)
+                            ),
+                        )
+                    },
                 )
             draft = await runtime.app.call(DRAFT_FROM_RESULT, DraftFromResult(result=product.ref))
             assert draft.draft is not None
@@ -323,7 +321,7 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                     markdown=InlineText(text="Reviewed decision [E1](source:E1)."),
                 ),
             )
-            assert revised.context.material_sources[0].material == work.revision_ref
+            assert revised.context.source_bindings[0].material == work.revision_ref
             adopted = await runtime.app.call(
                 ADOPT_DRAFT, AdoptDraft(draft=revised.ref, after=AfterWrite(annotation="skip"))
             )
@@ -338,18 +336,21 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
             markdown = ResultOutputRef(result=product.ref, output="markdown")
             refs = (work.revision_ref, adopted.commit.revision_ref, markdown, source.artifact)
             async with runtime.database.read() as tx:
-                snapshots = await runtime.materials.capture_in(tx, refs)
+                views = await runtime.materials.capture_in(tx, refs)
+                snapshots = await runtime.cognitive_retrieval.capture.index_in(tx, views)
                 current = await runtime.materials.current_in(
                     tx,
                     NamespaceRef(instance_id=work.ref.instance_id, id=work.ref.namespace_id),
                 )
             assert tuple(item.view.ref for item in snapshots) == refs
-            assert all(item.body_digest and not item.view.sections for item in snapshots)
+            assert all(item.body_digest for item in snapshots)
+            assert all(item.view.sections is None for item in snapshots)
             assert len(current) == 3
-            assert all(any(item.view.ref == ref for item in current) for ref in refs[:2])
+            assert all(any(item.ref == ref for item in current) for ref in refs[:2])
             assert snapshots[1].view.material_sources[0].material == work.revision_ref
             reads = await runtime.materials.read_many(
-                tuple(MaterialSelection(material=ref) for ref in (*refs, refs[0]))
+                tuple(MaterialSelection(material=ref) for ref in (*refs, refs[0])),
+                structure=True,
             )
             assert tuple(item.material.ref for item in reads) == (*refs, refs[0])
             assert reads[0].selections[0].body_text and reads[-1].material.sections
@@ -357,7 +358,14 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                 DRAFT_FROM_RESULT,
                 DraftFromResult(
                     result=product.ref,
-                    sources=(SourceBinding(key="E1", selections=(source,), usage="inspiration"),),
+                    sources=(
+                        MaterialSource(
+                            key="E1",
+                            material=work.revision_ref,
+                            selections=(source,),
+                            kind="inspiration",
+                        ),
+                    ),
                 ),
             )
             assert inspired.draft is not None
@@ -365,9 +373,12 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                 ADOPT_DRAFT, AdoptDraft(draft=inspired.draft, after=AfterWrite(annotation="skip"))
             )
             async with runtime.database.read() as tx:
-                inspired_snapshot = (
-                    await runtime.materials.capture_in(tx, (inspired_record.commit.revision_ref,))
-                )[0]
+                views = await runtime.materials.capture_in(
+                    tx, (inspired_record.commit.revision_ref,)
+                )
+                inspired_snapshot = (await runtime.cognitive_retrieval.capture.index_in(tx, views))[
+                    0
+                ]
             assert inspired_snapshot.view.material_sources[0].material == work.revision_ref
             assert inspired_snapshot.view.material_sources[0].kind == "inspiration"
             assert not inspired_snapshot.index.support_relations
@@ -395,8 +406,12 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
                     source_changes=SourceChanges(
                         remove=("E1",),
                         add=(
-                            SourceBinding(
-                                key="E1", selections=(source,), usage="reference", name="Research"
+                            MaterialSource(
+                                key="E1",
+                                material=source.artifact,
+                                selections=(source,),
+                                kind="reference",
+                                name="Research",
                             ),
                         ),
                     ),
@@ -416,6 +431,18 @@ def test_work_source_survives_markdown_draft_and_adoption(tmp_path: Path) -> Non
             )
             assert any(relation.target == work.revision_ref for relation in historical.relations)
         async with open_instance(instance, environment={}) as runtime:
+            result_view = await runtime.app.call(
+                READ_RESULT, ReadResult(ref=product.ref, sources=True)
+            )
+            outputs = {item.name: item for item in result_view.outputs}
+            assert outputs["markdown"].sources is not None
+            assert outputs["other"].sources is not None
+            assert outputs["markdown"].sources[0].material == work.revision_ref
+            assert outputs["other"].sources[0].material == source.artifact
+            assert sum(view.source == source for view in result_view.content_views) == 1
+            reread_draft = await runtime.app.call(READ_DRAFT, ReadDraft(draft=revised.ref))
+            assert reread_draft.context.source_bindings[0].material == work.revision_ref
+            assert reread_draft.context.source_bindings[0].selections == (source,)
             historical = await runtime.app.call(
                 FOLLOW_MATERIAL, FollowMaterial(ref=edited.commit.revision_ref)
             )

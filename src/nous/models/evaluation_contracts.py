@@ -59,14 +59,6 @@ class CandidateEvaluation(EvaluationValue):
     distribution: dict[str, float] | None = None
 
 
-class EvaluationInputFacts(EvaluationValue):
-    question: str
-    candidates: tuple[EvaluationCandidate, ...]
-    rubric: tuple[str, ...] = ()
-    purpose: str = ""
-    scale: EvaluationScale | None = None
-
-
 class EvaluationBatchFacts(EvaluationValue):
     keys: tuple[str, ...]
     producer: ModelProducer
@@ -76,10 +68,7 @@ class EvaluationBatchFacts(EvaluationValue):
 
 class EvaluationOutcome(EvaluationValue):
     items: tuple[CandidateEvaluation, ...]
-    producer: ModelProducer
-    usage: dict[str, JsonValue]
-    actual_input: EvaluationInputFacts
-    batches: tuple[EvaluationBatchFacts, ...] = ()
+    batches: tuple[EvaluationBatchFacts, ...]
 
 
 class RankRequest(EvaluationValue):
@@ -96,10 +85,7 @@ class RankedCandidate(EvaluationValue):
 
 class RankOutcome(EvaluationValue):
     items: tuple[RankedCandidate, ...]
-    producer: ModelProducer
-    usage: dict[str, JsonValue]
-    actual_input: EvaluationInputFacts
-    batches: tuple[EvaluationBatchFacts, ...] = ()
+    batches: tuple[EvaluationBatchFacts, ...]
 
 
 class EvaluationDecision(EvaluationValue):

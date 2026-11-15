@@ -46,7 +46,7 @@ PromptCatalog.restore_package(prompt_id) -> PromptResource
 
 ## 实际请求指纹
 
-区分 `execution_signature` 与 `documentation_signature`。现有 `version`/`template_version` 保存执行签名；CompiledPrompt 同时提供两个具名签名。前者包含实际有序 role、模板及 literal 依赖内容、append_sources 和实际任务输入输出合同；后者包含维护说明。只改人类说明不能使实际请求缓存失效或伪造新语言计算；真实规则或 Schema 改变必须影响执行指纹。
+区分 `execution_signature` 与 `documentation_signature`。执行签名包含实际有序 role、模板及 literal 依赖内容、append_sources 和实际任务输入输出合同，并作为编译缓存的身份；文档签名用于比较维护说明。只改人类说明不能使实际请求缓存失效；真实规则或 Schema 改变必须影响执行指纹。
 
 沿现有冻结操作：根操作固定所需 Prompt 与任务定义，fallback 和后续阶段使用这份资源。不会边生成边读取被人修改的文件。实例覆盖与包内默认不同是正常情况；报告差异，不自动合并正文。
 

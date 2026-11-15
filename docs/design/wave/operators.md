@@ -4,11 +4,11 @@
 
 | 算子 | 主要输入 → 输出 | 职责 |
 |---|---|---|
-| `vcp.observe` | 查询信号、快照 → 观测和 enhanced/local/transfer 向量 | 一次 VCP 传播与场计算 |
-| `ann.search` | 向量、快照、范围 → CandidateSet | 已有向量索引召回；候选组内上限和搜索扩展可分别配置 |
-| `lexical.search` | 问题词项、快照、范围 → CandidateSet | Tantivy 词项召回 |
-| `context.recall` | 检索阶段情境、快照、范围 → CandidateSet | 按父材料质量独立召回情境词项候选 |
-| `concept.direct` | 观测、快照、范围 → CandidateSet | 直接种子到候选的倒排召回 |
+| `vcp.observe` | 查询信号 → 观测和 enhanced/local/transfer 向量 | 一次 VCP 传播与场计算 |
+| `ann.search` | 向量 → CandidateSet | 已有向量索引召回；候选组内上限和搜索扩展可分别配置 |
+| `lexical.search` | 问题词项 → CandidateSet | Tantivy 词项召回 |
+| `context.recall` | 检索阶段情境 → CandidateSet | 按父材料质量独立召回情境词项候选 |
+| `concept.direct` | 观测 → CandidateSet | 直接种子到候选的倒排召回 |
 | `candidates.union` | CandidateSet[] → CandidateSet | 精确身份联合、lane 事实与组公平预算 |
 | `vcp.calibrate` | 观测、CandidateSet → CalibratedPool | 固定校准总体与 BM25 参照 |
 | `river.readout` | 观测、CalibratedPool → RankedSet | RiverMemo 质量与排序键 |
@@ -17,11 +17,11 @@
 | `rank.cosine` | 查询向量、CandidateSet → RankedSet | 在同一候选集计算真实余弦，不进行额外召回 |
 | `rank.context` | RankedSet、情境候选 → RankedSet | 将情境候选按其实际贡献合入排名 |
 | `rank.fuse` | RankedSet[] → RankedSet | 带权 RRF；同一输入节点不重复投票 |
-| `vcp.think` | 观测、阶段输入 → 路线 | 复用同次观测生成显式探索路线 |
-| `passages.locate` | 排名、问题、快照 → PassageSet | 对入选组内的实际局部单元评分 |
-| `passages.evaluate` | PassageSet、问题 → PassageSet | 共同模型评价按 key 添加自身尺度的判断 |
-| `passages.select` | PassageSet、交付预算 → EvidenceSelection | 按相关性、可用预算及实际来源范围选择 |
-| `delivery.read` | EvidenceSelection、材料范围 → EvidenceDelivery | 返回精确原文和组级事实 |
+| `vcp.think` | 观测、阶段输入、排名 → 路线 | 复用同次观测生成显式探索路线 |
+| `passages.locate` | 排名 → PassageSet | 对入选组内的实际局部单元评分 |
+| `passages.evaluate` | PassageSet → PassageSet | 共同模型评价按 key 添加自身尺度的判断 |
+| `passages.select` | PassageSet → EvidenceSelection | 按相关性、可用预算及实际来源范围选择 |
+| `delivery.read` | EvidenceSelection → EvidenceDelivery | 返回精确原文和组级事实 |
 
 RRF 使用 `Σ weight/(k+rank)`；文档分组时同一路最多对同一组贡献一次。共享观测的多个下游算子不重复运行观测。候选联合只合并同一快照中的精确行，同一路重复条目保留较优名次。校准在明确候选总体上执行一次，改变总体时需要新的校准节点。
 

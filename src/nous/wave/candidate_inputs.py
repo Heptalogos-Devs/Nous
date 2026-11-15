@@ -220,9 +220,13 @@ async def titled_semantics(
                     tx,
                     facts=ResultFacts(
                         operation="wave.titled_semantic_text",
-                        producer=ProgramProducer(operation="wave.titled_semantic_text"),
+                        producer=ProgramProducer(),
                         selected_inputs=SelectedInputs(
-                            sources=(SelectedSource(slot_key="body", selections=(source,)),)
+                            sources=(
+                                SelectedSource(
+                                    key="body", material=source.artifact, selections=(source,)
+                                ),
+                            )
                         ),
                         inputs=(
                             InputGroup(
@@ -238,7 +242,7 @@ async def titled_semantics(
                                 ),
                             ),
                         ),
-                        parameters={"cache_key": key, "title": title, "title_field": "title"},
+                        parameters={"title": title, "title_field": "title"},
                         mappings=(
                             OutputMapping(
                                 output_name="text",
@@ -252,6 +256,7 @@ async def titled_semantics(
                         formed_at=preparation.artifacts.clock.utc_now(),
                     ),
                     prepared_outputs=output,
+                    cache_key=key,
                 )
                 adopted[key] = (
                     result.ref,

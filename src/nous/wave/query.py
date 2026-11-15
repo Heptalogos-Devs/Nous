@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -32,9 +32,10 @@ from .contracts import (
     CandidateFilter,
     CandidateSet,
     Concept,
+    ContextContent,
     ContextFragment,
     GroupDescriptor,
-    ProgramRunFacts,
+    SelectedContext,
     ThinkingStage,
     WaveExpression,
     WaveQuery,
@@ -45,10 +46,8 @@ from .mapping import (
 )
 from .program import (
     CompiledProgram,
-    EvaluationParameters,
-    delivery_budget,
-    program_run_facts,
-    resolve_program,
+    ProgramSelection,
+    select_program,
 )
 from .scope import allowed_rows
 from .serialization import encode_json
@@ -111,7 +110,7 @@ def require_bound_query(request: WaveQuery) -> BoundQuery:
 
 @dataclass(frozen=True)
 class QueryPlan:
-    program: CompiledProgram
+    selection: ProgramSelection
     text: str
     raw_vector: npt.NDArray[np.float32] | None
     contextual_vector: npt.NDArray[np.float32] | None
@@ -119,10 +118,11 @@ class QueryPlan:
     allowed: npt.NDArray[np.uint64]
     options: Mapping[str, object]
     candidate_set: nous_native.CandidateSet | None
+    candidate_rows: dict[str, int]
     summary: dict[str, object]
-    program_run: ProgramRunFacts
+    selected_context: tuple[SelectedContext, ...]
+    native_plan_json: str
     aspect_vectors: npt.NDArray[np.float32] | None = None
-    expression: dict[str, object] | None = None
     branch_raw_vectors: npt.NDArray[np.float32] | None = None
     branch_contextual_vectors: npt.NDArray[np.float32] | None = None
 
@@ -149,21 +149,23 @@ class WaveQueries:
     async def _query_inputs(
         self,
         request: WaveQuery,
+        bound: BoundQuery,
         row: SnapshotRow,
         program: CompiledProgram,
         *,
         vectors_required: bool | None = None,
         context_cache: dict[tuple[str, ...], npt.NDArray[np.float32]] | None = None,
+        context_data: dict[str, tuple[ContentSelection, str]],
         include_ghosts: bool = True,
     ) -> tuple[
         npt.NDArray[np.float32] | None,
         npt.NDArray[np.float32] | None,
         npt.NDArray[np.float32] | None,
         dict[str, object],
+        tuple[SelectedContext, ...],
     ]:
         import nous_native as native
 
-        bound = require_bound_query(request)
         concepts = row["mapping"]["concepts"]
         by_key = {item["key"]: item for item in concepts}
         by_label: dict[str, list[ConceptMapping]] = {}
@@ -255,38 +257,48 @@ class WaveQueries:
         )
         fragment_meta: list[dict[str, object]] = []
         vector_meta: list[dict[str, object]] = []
-        resolved_fragments: dict[str, dict[str, object]] = {}
+        resolved_fragments: dict[str, tuple[ContextFragment, ContentSelection | None]] = {}
         resolved_texts: dict[str, str] = {}
+        missing = [
+            fragment
+            for _, fragment in fragments
+            if fragment.content is not None and fragment.key not in context_data
+        ]
+        if missing:
+            artifacts = await self.artifacts.get_many(
+                [cast(ContextContent, fragment.content).artifact for fragment in missing]
+            )
+            selections = await self.artifacts.normalize_selections(
+                tuple(
+                    ContentSelection(
+                        artifact=artifact.ref,
+                        selection=cast(ContextContent, fragment.content).selector,
+                    )
+                    for fragment, artifact in zip(missing, artifacts, strict=True)
+                )
+            )
+            readings = await self.artifacts.read_selections(selections)
+            context_data.update(
+                {
+                    fragment.key: (selection, reading.text)
+                    for fragment, selection, reading in zip(
+                        missing, selections, readings, strict=True
+                    )
+                }
+            )
         for _, fragment in fragments:
             if fragment.content is not None:
-                artifact = await self.artifacts.get(fragment.content.artifact)
-                selected = ContentSelection(
-                    artifact=artifact.ref, selection=fragment.content.selector
-                )
-                selected = (await self.artifacts.normalize_selections((selected,)))[0]
+                selected, text = context_data[fragment.key]
             else:
                 assert fragment.text is not None
-                selected = fragment.text
+                selected = text = fragment.text
             if fragment.stage == "retrieval" and (uses_contextual_signal or not raw_present):
                 query_selections.append(selected)
-            resolved_texts[fragment.key] = (
-                await self.artifacts.read_selection(selected)
-                if isinstance(selected, ContentSelection)
-                else selected
+            resolved_texts[fragment.key] = text
+            resolved_fragments[fragment.key] = (
+                fragment,
+                selected if isinstance(selected, ContentSelection) else None,
             )
-            resolved_fragments[fragment.key] = {
-                "key": fragment.key,
-                "role": fragment.role,
-                "stage": fragment.stage,
-                "parent_key": fragment.parent_key or fragment.key,
-                "sequence": fragment.sequence,
-                "weight": fragment.weight,
-                "time": fragment.time.model_dump(mode="json") if fragment.time else None,
-                "content": selected.model_dump(mode="json")
-                if isinstance(selected, ContentSelection)
-                else None,
-                "text": selected if isinstance(selected, str) else None,
-            }
             fragment_meta.append(
                 {
                     "key": fragment.key,
@@ -332,29 +344,24 @@ class WaveQueries:
             if fragment_meta
             else _ContextDiagnostics()
         )
-        selected_context = [
-            {
-                **resolved_fragments[item.key],
-                "text": resolved_texts[item.key],
-                "decayed_weight": item.decayed_weight,
-                "role_weight": item.role_weight,
-                "contribution": item.contribution,
-            }
+        selected_context = tuple(
+            SelectedContext(
+                key=fragment.key,
+                role=fragment.role,
+                stage=fragment.stage,
+                parent_key=fragment.parent_key or fragment.key,
+                sequence=fragment.sequence,
+                weight=fragment.weight,
+                time=fragment.time,
+                content=content,
+                text=resolved_texts[item.key],
+                decayed_weight=item.decayed_weight,
+                role_weight=item.role_weight,
+                contribution=item.contribution,
+            )
             for item in mass.selected_context
-        ]
-        lexical_context = [
-            {"key": item.key, "text": resolved_texts[item.key], "contribution": item.contribution}
-            for item in mass.selected_context
-            if item.stage == "retrieval"
-        ]
-        localization_context = [
-            {"key": item.key, "text": resolved_texts[item.key], "contribution": item.contribution}
-            for item in mass.selected_context
-            if item.stage == "localization"
-        ]
-        evaluation_context = [
-            resolved_texts[item.key] for item in mass.selected_context if item.stage == "evaluation"
-        ]
+            for fragment, content in (resolved_fragments[item.key],)
+        )
         if not needs_vectors:
             return (
                 None,
@@ -363,15 +370,12 @@ class WaveQueries:
                 {
                     "query_origin": "text",
                     "context_used": bool(mass.selected_context),
-                    "selected_context": selected_context,
                     "roles": list(mass.roles),
                     "omitted_context_count": len(bound.context) - len(mass.selected_context),
                     "core_keys": [concept["key"] for concept in resolved_core],
                     "core_labels": [concept["label"] for concept in resolved_core],
-                    "context_lexical": lexical_context,
-                    "localization_context": localization_context,
-                    "evaluation_context": evaluation_context,
                 },
+                selected_context,
             )
         if space_id is None:
             raise NousError("wave.capability_unavailable", "This snapshot has no vector space")
@@ -453,11 +457,7 @@ class WaveQueries:
             effective = raw
             diagnostic = _ContextDiagnostics()
             summary = {"query_origin": "text", "context_used": bool(mass.selected_context)}
-        summary["selected_context"] = selected_context
         summary["roles"] = list(mass.roles)
-        summary["context_lexical"] = lexical_context
-        summary["localization_context"] = localization_context
-        summary["evaluation_context"] = evaluation_context
         summary["omitted_context_count"] = len(bound.context) - len(selected_context)
         ghosts: npt.NDArray[np.float32] | None = None
         if request.cues and include_ghosts:
@@ -472,33 +472,25 @@ class WaveQueries:
             }
         summary["core_keys"] = [concept["key"] for concept in resolved_core]
         summary["core_labels"] = [concept["label"] for concept in resolved_core]
-        return raw if raw is not None else effective, effective, ghosts, summary
+        return raw if raw is not None else effective, effective, ghosts, summary, selected_context
 
     async def prepare(
-        self, request: WaveQuery, row: SnapshotRow, capabilities: Sequence[str]
+        self,
+        request: WaveQuery,
+        bound: BoundQuery,
+        row: SnapshotRow,
+        capabilities: Sequence[str],
+        selection: ProgramSelection | None = None,
     ) -> QueryPlan:
-        bound = require_bound_query(request)
         await self.time.validate(fragment.time for fragment in bound.context)
         if bound.candidate_filter is not None:
             await self.time.validate(condition.range for condition in bound.candidate_filter.times)
         wave = self.execution.snapshot.values.wave
-        program = resolve_program(
-            wave, request.program or (wave.exploration_program if request.explore else None)
-        )
-        selection: Literal["explicit", "default", "fallback", "exploration"] = (
-            "explicit" if request.program else "exploration" if request.explore else "default"
-        )
-        missing = program.requirements - set(capabilities)
-        if missing and request.program is None and not request.explore and wave.unavailable_program:
-            program = resolve_program(wave, wave.unavailable_program)
-            selection = "fallback"
-            missing = program.requirements - set(capabilities)
-        if missing:
-            raise NousError(
-                "wave.capability_unavailable",
-                "Snapshot cannot execute the requested program",
-                details={"program": program.name, "missing": sorted(missing)},
+        if selection is None or selection.program.requirements - set(capabilities):
+            selection = select_program(
+                wave, request.program, explore=request.explore, capabilities=capabilities
             )
+        program = selection.program
         if (bound.thinking_stages or request.explore) and "thinking" not in program.outputs:
             raise NousError(
                 "wave.capability_unavailable",
@@ -537,14 +529,23 @@ class WaveQueries:
         )
         signal_request = request.model_copy(update={"text": localization_text})
         context_cache: dict[tuple[str, ...], npt.NDArray[np.float32]] = {}
-        raw_vector, contextual_vector, ghosts, query_summary = await self._query_inputs(
+        context_data: dict[str, tuple[ContentSelection, str]] = {}
+        (
+            raw_vector,
+            contextual_vector,
+            ghosts,
+            query_summary,
+            selected_context,
+        ) = await self._query_inputs(
             signal_request,
+            bound,
             row,
             program,
             vectors_required=False
             if not localization_text and not request.core_concepts and not request.cues
             else None,
             context_cache=context_cache,
+            context_data=context_data,
         )
         aspect_vectors = None
         if request.aspects:
@@ -601,8 +602,16 @@ class WaveQueries:
             "ghosts": [{"name": cue.label, "is_core": cue.is_core} for cue in request.cues],
             "thinking_stages": stages,
             "explore": request.explore,
-            "context_lexical": query_summary.get("context_lexical", []),
-            "localization_context": query_summary.get("localization_context", []),
+            "context_lexical": [
+                {"key": item.key, "text": item.text, "contribution": item.contribution}
+                for item in selected_context
+                if item.stage == "retrieval"
+            ],
+            "localization_context": [
+                {"key": item.key, "text": item.text, "contribution": item.contribution}
+                for item in selected_context
+                if item.stage == "localization"
+            ],
             "dedup_threshold": wave.dedup.threshold if wave.dedup.semantic_enabled else None,
             "rrf_k": wave.fusion.rrf_k,
             "preference_weight": controls["preference_weight"],
@@ -668,49 +677,6 @@ class WaveQueries:
                     }
                 )
             )
-        query_summary["effective_query_options"] = {
-            **search_options,
-            "text": query_text,
-            "context": query_summary.get("context_options"),
-            "query_origin": query_summary.get("query_origin"),
-        }
-        budget = delivery_budget(program, request.delivery_budget)
-        signature = row["identity"].get("space_signature")
-        evaluation_tasks: dict[str, object] = {}
-        for node in program.nodes:
-            if node.operator != "passages.evaluate":
-                continue
-            parameters = EvaluationParameters.model_validate(node.parameters)
-            task = parameters.task or (
-                "rank-passages" if parameters.method == "rank" else "evaluate-passages"
-            )
-            assignment = self.execution.snapshot.values.tasks.get(task)
-            evaluation_tasks[task] = (
-                assignment.model_dump(mode="json") if assignment is not None else None
-            )
-        program_run = program_run_facts(
-            program,
-            requested_program=request.program,
-            selection=selection,
-            options=search_options,
-            context_options=wave.context.model_dump(mode="json"),
-            evaluation_options=self.execution.snapshot.values.evaluation.model_dump(mode="json"),
-            evaluation_tasks=evaluation_tasks,
-            budget=budget,
-            space_id=row["space_id"],
-            space_signature=signature if isinstance(signature, str) else None,
-            space_definition=row["space_definition"],
-            candidate_set=bound.candidate_set,
-            expression_kind=expression.kind if expression is not None else None,
-            expression_terms=len(expression_texts),
-        )
-        query_summary["grouping"] = {
-            "by": request.grouping,
-            "top_k": request.top_k or wave.query.top_k,
-            "passages_per_group": request.passages_per_group,
-            "lane_limit_unit": "groups" if request.grouping == "document" else "candidates",
-            "group_scan_limit": wave.query.group_scan_limit,
-        }
         sort_requests: set[str] = {request.sort} if request.sort else set()
 
         def gather_sorts(value: WaveExpression) -> None:
@@ -755,7 +721,7 @@ class WaveQueries:
                 )
             sort_values[axis] = values
         search_options["sort_values"] = sort_values
-        expression_plan: dict[str, object] | None = None
+        native_plan = program.native_plan()
         branch_raw: list[npt.NDArray[np.float32]] = []
         branch_contextual: list[npt.NDArray[np.float32]] = []
         if expression is not None:
@@ -820,13 +786,18 @@ class WaveQueries:
                             branch_effective,
                             _,
                             branch_summary,
+                            _,
                         ) = await self._query_inputs(
                             branch_request,
+                            bound,
                             row,
                             program,
                             context_cache=context_cache,
+                            context_data=context_data,
                             include_ghosts=False,
                         )
+                    if (branch_vector is None) != (branch_effective is None):
+                        raise NousError("wave.invalid_query", "Branch query vectors are incomplete")
                     if branch_vector is not None and branch_effective is not None:
                         if key not in vectors:
                             vectors[key] = len(branch_raw)
@@ -858,15 +829,18 @@ class WaveQueries:
                 return {"kind": "term", "branch": branch_index, "limit": value.limit}
 
             tree = await bind_expression(expression, "0")
-            expression_plan = {
-                "tree": tree,
-                "branches": branches,
-                "prefer": list(request.prefer),
-                "avoid": list(request.avoid),
-                "sort": request.sort,
-            }
+            from .program import compile_expression
+
+            native_plan = compile_expression(
+                program,
+                tree,
+                branches,
+                prefer=request.prefer,
+                avoid=request.avoid,
+                sort=request.sort,
+            )
         return QueryPlan(
-            program,
+            selection,
             query_text,
             raw_vector,
             contextual_vector,
@@ -874,10 +848,11 @@ class WaveQueries:
             np.asarray(allowed, dtype=np.uint64),
             search_options,
             native_candidates,
+            candidate_rows,
             query_summary,
-            program_run,
+            selected_context,
+            encode_json(native_plan),
             aspect_vectors,
-            expression_plan,
             np.stack(branch_raw).astype(np.float32) if branch_raw else None,
             np.stack(branch_contextual).astype(np.float32) if branch_contextual else None,
         )

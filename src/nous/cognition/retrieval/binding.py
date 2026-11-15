@@ -8,12 +8,11 @@ from typing import TYPE_CHECKING
 from nous.application.contracts import CallContext
 from nous.cognition.concept_contracts import ConceptRef, FindConcepts, ReadConcept
 from nous.cognition.contracts import NamespaceRef
-from nous.cognition.material_contracts import (
-    MaterialRef,
-)
+from nous.cognition.material_contracts import material_kind
 from nous.common.errors import NousError
 from nous.content.contracts import (
     ArtifactRef,
+    MaterialRef,
 )
 from nous.temporal.values import Instant, Interval, Known, TimePoint, Unbounded, parse_explicit_time
 from nous.wave.contracts import (
@@ -23,7 +22,6 @@ from nous.wave.contracts import (
 )
 
 from .contracts import (
-    BoundQueryBranch,
     CognitiveGroupContext,
     QueryAny,
     QueryAtom,
@@ -195,9 +193,8 @@ class QueryBinder:
 
     async def _bind(
         self, controls: QueryControls, namespace: NamespaceRef, snapshot: str, call: CallContext
-    ) -> tuple[CandidateFilter | None, tuple[MaterialRef, ...], tuple[ConceptRef, ...]]:
+    ) -> tuple[CandidateFilter | None, tuple[ConceptRef, ...]]:
         materials: list[MaterialRef] = []
-        bound: list[MaterialRef] = []
         concepts: list[ConceptRef] = []
         resources: list[ArtifactRef] = []
         for selector in controls.selectors:
@@ -205,13 +202,11 @@ class QueryBinder:
                 resolved = await self.materials.resolve_identifier(
                     selector.value, namespace=namespace
                 )
-                bound.append(resolved)
                 materials.append(resolved)
             elif selector.kind == "resource":
                 resolved = await self.materials.resolve_identifier(
                     selector.value, namespace=namespace
                 )
-                bound.append(resolved)
                 view = await self.materials.resolve(resolved, namespace=namespace)
                 if view.body is None:
                     raise NousError("material.no_content", "Selected resource has no content")
@@ -271,7 +266,7 @@ class QueryBinder:
                     continue
                 if (
                     controls.return_types
-                    and context.kind not in controls.return_types
+                    and material_kind(context.material) not in controls.return_types
                     and "cognition" not in controls.return_types
                 ):
                     continue
@@ -292,7 +287,7 @@ class QueryBinder:
             if allowed is not None or times
             else None
         )
-        return filters, tuple(bound), tuple(concepts)
+        return filters, tuple(concepts)
 
     async def bind_expression(
         self,
@@ -303,13 +298,7 @@ class QueryBinder:
         call: CallContext,
         *,
         root: bool = False,
-        path: tuple[int, ...] = (),
-    ) -> tuple[
-        WaveExpression,
-        tuple[MaterialRef, ...],
-        tuple[ConceptRef, ...],
-        tuple[BoundQueryBranch, ...],
-    ]:
+    ) -> WaveExpression:
         controls = merge_controls(inherited, expression.controls)
         if isinstance(expression, QueryAtom) and expression.selectors:
             controls = controls.model_copy(
@@ -319,56 +308,32 @@ class QueryBinder:
             )
         local = expression.controls
         if isinstance(expression, QueryAtom):
-            filters, materials, concepts = await self._bind(controls, namespace, snapshot, call)
-            return (
-                WaveExpression(
-                    kind="term",
-                    text=expression.text,
-                    candidate_filter=filters,
-                    core_concepts=tuple(item.identifier for item in concepts),
-                    prefer=() if root else local.prefer,
-                    avoid=() if root else local.avoid,
-                    limit=None if root else local.limit,
-                    sort=None if root else local.sort,
-                ),
-                materials,
-                concepts,
-                (
-                    BoundQueryBranch(
-                        path=path,
-                        controls=controls.model_copy(
-                            update={
-                                "times": await self.time_conditions(controls),
-                                "time_clauses": (),
-                            }
-                        ),
-                        materials=materials,
-                        concepts=concepts,
-                    ),
-                ),
+            filters, concepts = await self._bind(controls, namespace, snapshot, call)
+            return WaveExpression(
+                kind="term",
+                text=expression.text,
+                candidate_filter=filters,
+                core_concepts=tuple(item.identifier for item in concepts),
+                prefer=() if root else local.prefer,
+                avoid=() if root else local.avoid,
+                limit=None if root else local.limit,
+                sort=None if root else local.sort,
             )
         child_controls = controls.model_copy(
             update={"limit": None, "sort": None, "prefer": (), "avoid": ()}
         )
         children = [
-            await self.bind_expression(
-                child, child_controls, namespace, snapshot, call, path=(*path, index)
-            )
-            for index, child in enumerate(expression.children)
+            await self.bind_expression(child, child_controls, namespace, snapshot, call)
+            for child in expression.children
         ]
-        return (
-            WaveExpression(
-                kind="any" if isinstance(expression, QueryAny) else "all",
-                text=expression.text,
-                children=tuple(item[0] for item in children),
-                prefer=() if root else local.prefer,
-                avoid=() if root else local.avoid,
-                limit=None if root else local.limit,
-                sort=None if root else local.sort,
-            ),
-            tuple(dict.fromkeys(ref for item in children for ref in item[1])),
-            tuple(dict.fromkeys(ref for item in children for ref in item[2])),
-            tuple(branch for item in children for branch in item[3]),
+        return WaveExpression(
+            kind="any" if isinstance(expression, QueryAny) else "all",
+            text=expression.text,
+            children=tuple(children),
+            prefer=() if root else local.prefer,
+            avoid=() if root else local.avoid,
+            limit=None if root else local.limit,
+            sort=None if root else local.sort,
         )
 
     @staticmethod

@@ -26,9 +26,6 @@ from ._core import (
     NativeSnapshot as NativeSnapshot,
 )
 from ._core import (
-    QueryObservation as QueryObservation,
-)
-from ._core import (
     SegmentResult as SegmentResult,
 )
 from ._core import (

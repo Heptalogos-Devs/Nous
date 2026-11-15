@@ -10,6 +10,8 @@ import pytest
 
 from nous.application.inputs import StreamInput
 from nous.application.preparation import TextPreparation
+from nous.cognition.material_contracts import ReadMaterial
+from nous.cognition.materials import READ_MATERIAL
 from nous.cognition.retrieval.contracts import QueryAnchor, QueryControls, QueryRequest
 from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import (
@@ -79,12 +81,12 @@ def test_imported_cross_document_candidates_reuse_exact_content(tmp_path: Path) 
                     and hit.basis.candidate.key == "cross-candidate"
                 )
                 fragment = hit.passage.fragments[0]
-                content = fragment.content
+                content = fragment.source
                 assert content.artifact == second.ref
                 read = await runtime.app.call(
                     READ_SELECTIONS, ReadSelections(selections=(content,), representations="none")
                 )
-                assert read[0].body_text == fragment.text
+                assert read[0].body_text == fragment.body_text
             statistics = second_build.statistics
             preparation = cast(dict[str, object], statistics["preparation"])
             assert preparation["reused_projection_units"] == 2
@@ -252,10 +254,12 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
                 QUERY,
                 QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=True)),
             )
-            assert initial.evidence.materials[0].material.ref == journal.commit.revision_ref
+            assert initial.evidence.materials[0].material == journal.commit.revision_ref
+            initial_material = await runtime.app.call(
+                READ_MATERIAL, ReadMaterial(ref=initial.evidence.materials[0].material)
+            )
             assert (
-                initial.evidence.materials[0].material.sources[0].owner_revision
-                == source.commit.revision_ref
+                initial_material.material.material_sources[0].material == source.commit.revision_ref
             )
             corrected = await runtime.app.call(
                 REPLACE_RECORD,
@@ -273,11 +277,12 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
                 QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=True)),
             )
             group = revised.evidence.materials[0]
-            assert group.material.attributes.values["needs_review"] is True
-            assert group.material.ref == journal.commit.revision_ref
-            binding = group.material.sources[0]
-            assert binding.owner_revision == source.commit.revision_ref
-            assert binding.owner_revision != corrected.commit.revision_ref
+            assert group.needs_review is True
+            assert group.material == journal.commit.revision_ref
+            material = await runtime.app.call(READ_MATERIAL, ReadMaterial(ref=group.material))
+            binding = material.material.material_sources[0]
+            assert binding.material == source.commit.revision_ref
+            assert binding.material != corrected.commit.revision_ref
             contents = await runtime.app.call(
                 READ_SELECTIONS,
                 ReadSelections(selections=binding.selections, representations="none"),
@@ -288,7 +293,7 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
                 QueryRequest(text="Reviewmarker", controls=QueryControls(include_review=False)),
             )
             assert all(
-                group.material.ref != journal.commit.revision_ref
+                group.material != journal.commit.revision_ref
                 for group in without_review.evidence.materials
             )
             historical = await runtime.app.call(
@@ -298,11 +303,12 @@ def test_current_basis_correction_keeps_exact_sources_and_review_state(tmp_path:
                     anchor=QueryAnchor(snapshot=initial.evidence.snapshot, view="anchored"),
                 ),
             )
-            assert (
-                historical.evidence.materials[0].material.attributes.values["needs_review"] is False
+            assert historical.evidence.materials[0].needs_review is False
+            historical_material = await runtime.app.call(
+                READ_MATERIAL, ReadMaterial(ref=historical.evidence.materials[0].material)
             )
             assert (
-                historical.evidence.materials[0].material.sources[0].owner_revision
+                historical_material.material.material_sources[0].material
                 == source.commit.revision_ref
             )
 

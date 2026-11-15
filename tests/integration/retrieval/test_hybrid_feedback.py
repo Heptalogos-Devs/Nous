@@ -25,8 +25,8 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
     )
     from nous.cognition.retrieval.contracts import (
         ContextSelection,
-        EvidenceDelivery,
         QueryControls,
+        QueryIntent,
         QueryRequest,
     )
     from nous.cognition.retrieval.operations import QUERY
@@ -36,7 +36,6 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
         ContentSelection,
         ExternalInput,
         InlineText,
-        ResultOutputRef,
         SourceSelection,
     )
     from nous.runtime.bootstrap import open_instance
@@ -135,7 +134,7 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                         ),
                     ),
                 )
-                assert [group.material.ref for group in filtered.evidence.materials] == [
+                assert [group.material for group in filtered.evidence.materials] == [
                     note.commit.revision_ref
                 ]
                 # Manual collections cannot replace the artifact's actual recorded time.
@@ -208,7 +207,7 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                     QueryFeedbackRequest(
                         evidence=answer.evidence_ref,
                         category="retrieval",
-                        passage_key=answer.evidence.passages[0].key,
+                        passage_key=answer.evidence.materials[0].passages[0].key,
                     ),
                 )
             async with open_instance(instance, environment={}) as reopened:
@@ -217,12 +216,28 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                 )
                 assert stored.target.query is not None
                 assert stored.target.query.evidence == answer.evidence_ref
-                artifact = await reopened.results.resolve_output(
-                    ResultOutputRef(result=answer.evidence_ref, output="evidence")
-                )
-                delivery = EvidenceDelivery.model_validate_json(
-                    await reopened.artifacts.read_text(artifact)
-                )
-                assert delivery.intent.context == answer.evidence.intent.context
+                saved = await reopened.results.get(answer.evidence_ref)
+                intent = QueryIntent.model_validate(saved.request["intent"])
+                assert [item.key for item in intent.context] == [
+                    item.key for item in answer.evidence.intent.context
+                ]
+                context_sources = {
+                    item.key: item for item in saved.material_sources if item.kind == "context"
+                }
+                for item, original in zip(
+                    intent.context, answer.evidence.intent.context, strict=True
+                ):
+                    if original.source and original.source.selections:
+                        assert item.source is None
+                        source = context_sources["context:" + item.key]
+                        assert source.material == original.source.material
+                        assert source.selections == original.source.selections
+                        parts = await reopened.artifacts.read_selections(source.selections)
+                    else:
+                        parts = ()
+                    if item.text is None and parts and original.text is not None:
+                        assert "".join(part.text for part in parts) == original.text
+                    else:
+                        assert item.text == original.text
 
         asyncio.run(scenario())

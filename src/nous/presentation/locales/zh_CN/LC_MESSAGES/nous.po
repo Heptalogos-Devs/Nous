@@ -1290,3 +1290,12 @@ msgstr "未定位到正文片段"
 
 msgid "No passage selected"
 msgstr "未选出正文片段"
+
+msgid "Program {requested} unavailable; using {program}; missing capabilities: {capabilities}"
+msgstr "程序 {requested} 不可用，已改用 {program}；缺少的能力：{capabilities}"
+
+msgid "Material changed; results reflect an earlier view. Search again for the latest material."
+msgstr "材料已发生变化；结果基于较早的视图。再次搜索可获取最新材料。"
+
+msgid "Shared context is shown above"
+msgstr "共享的上下文已在上方显示"

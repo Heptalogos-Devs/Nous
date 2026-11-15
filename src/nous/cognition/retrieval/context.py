@@ -9,21 +9,14 @@ from nous.cognition.contracts import NamespaceRef
 from nous.cognition.material_contracts import (
     MaterialSelection,
 )
-from nous.cognition.work.contracts import ListWorkUses, WorkAttributes
-from nous.cognition.work.refs import WorkRevisionRef
 from nous.common.errors import NousError
-from nous.content.contracts import (
-    ResultOutputRef,
-)
 from nous.wave.contracts import (
     ContextContent,
     ContextFragment,
 )
 
-from .contracts import (
-    ContextSelection,
-    EvidenceDelivery,
-)
+from .adoption import read_saved_evidence
+from .contracts import ContextSelection
 
 if TYPE_CHECKING:
     from nous.cognition.materials import Materials
@@ -59,30 +52,11 @@ class ContextPreparer:
         default_stages: dict[str, tuple[str, ...]] = {}
         window = min(call.settings.values.wave.context.window, 200)
         if selection.work is not None:
-            work = await self.materials.resolve_identifier(selection.work, namespace=namespace)
-            if not isinstance(work, WorkRevisionRef):
-                raise NousError("input.invalid_context", "Work context requires a work reference")
-            view = await self.materials.resolve(work, namespace=namespace)
-            attributes = WorkAttributes.model_validate(view.attributes.values)
-            state, fields = attributes.state, attributes.fields
-            choices: list[tuple[str, str]] = [("objective", state.objective)]
-            if state.focus:
-                choices.append(("focus", state.focus))
-            candidates = [
-                ("decision:" + item.key, item.statement)
-                for item in state.decisions
-                if item.state == "active"
-            ]
-            candidates += [
-                ("question:" + item.key, item.question)
-                for item in state.questions
-                if item.state == "open"
-            ]
-            choices.extend(candidates[: max(0, window - len(choices))])
+            work_context = await self.work.context(selection.work, namespace, window)
+            work = work_context.ref
             parent = "material:" + self.materials.key(work)
-            for key, value in choices:
-                identity = f"{parent}:{key}"
-                field = fields.get(key)
+            for field in work_context.fields:
+                identity = f"{parent}:{field.key}"
                 fragments.append(
                     ContextFragment(
                         key=identity,
@@ -90,41 +64,25 @@ class ContextPreparer:
                         stage="retrieval",
                         parent_key=parent,
                         sequence=0,
-                        text=None if field else value,
                         content=ContextContent(
-                            artifact=field.artifact.identifier, selector=field.selection
-                        )
-                        if field
-                        else None,
+                            artifact=field.selection.artifact.identifier,
+                            selector=field.selection.selection,
+                        ),
                         validity=1.0,
                         half_life=None,
                     )
                 )
-                sources[identity] = MaterialSelection(
-                    material=work,
-                    selections=(field,) if field else (),
-                )
-                if key in {"objective", "focus"} or key.startswith("decision:"):
+                sources[identity] = MaterialSelection(material=work, selections=(field.selection,))
+                if field.key in {"objective", "focus"} or field.key.startswith("decision:"):
                     default_stages[identity] = ("retrieval", "localization")
-            uses = await self.work.list_uses(
-                ListWorkUses(ref=work.work_ref, namespace=namespace, limit=max(window, 1)),
-                call,
-            )
-            explicit = [*state.active]
-            explicit.extend(
-                basis
-                for decision in state.decisions
-                if decision.state == "active"
-                for basis in decision.basis
-            )
             active: list[tuple[MaterialSelection, int, float | None, bool]] = [
-                (item, 0, None, True) for item in explicit[:window]
+                (item, 0, None, True) for item in work_context.active
             ]
             half_life = call.settings.values.cognition.search.active_use_half_life
             active.extend(
                 (item, age, half_life, False)
-                for age, use in enumerate(uses)
-                for item in use.selections
+                for age, group in enumerate(work_context.recent)
+                for item in group
             )
             seen: set[MaterialSelection] = set()
             unique: list[tuple[int, MaterialSelection, int, float | None, bool]] = []
@@ -173,17 +131,20 @@ class ContextPreparer:
                     if localize:
                         default_stages[identity] = ("retrieval", "localization")
         for result_ref in selection.prior_deliveries:
-            artifact = await self.results.resolve_output(
-                ResultOutputRef(result=result_ref, output="evidence")
+            result = await read_saved_evidence(self.results, result_ref)
+            await self.scope.resolve_for(namespace, result.namespace)
+            prior_sources = result.sources[:window]
+            capabilities = iter(
+                await self.artifacts.text_capabilities(
+                    tuple(part for source in prior_sources for part in source.selections)
+                )
             )
-            delivery = EvidenceDelivery.model_validate_json(
-                await self.artifacts.read_text(artifact)
-            )
-            await self.scope.resolve_for(namespace, delivery.intent.constraints.namespace)
-            for index, passage in enumerate(delivery.passages[:window]):
-                parent = "material:" + self.materials.key(passage.material)
-                for part_index, part in enumerate((*passage.fragments, *passage.support_context)):
-                    identity = f"delivery:{result_ref.id}:{passage.key}:{part_index}"
+            for index, source in enumerate(prior_sources):
+                parent = "material:" + self.materials.key(source.material)
+                for part_index, part in enumerate(source.selections):
+                    if not next(capabilities):
+                        continue
+                    identity = f"delivery:{result_ref.id}:{source.key}:{part_index}"
                     fragments.append(
                         ContextFragment(
                             key=identity,
@@ -192,13 +153,13 @@ class ContextPreparer:
                             parent_key=parent,
                             sequence=-index,
                             content=ContextContent(
-                                artifact=part.content.artifact.identifier,
-                                selector=part.content.selection,
+                                artifact=part.artifact.identifier,
+                                selector=part.selection,
                             ),
                         )
                     )
                     sources[identity] = MaterialSelection(
-                        material=passage.material, selections=(part.content,)
+                        material=source.material, selections=(part,)
                     )
         if anchors:
             selections = await self.materials.selections(anchors, namespace=namespace)
@@ -229,9 +190,7 @@ class ContextPreparer:
                             ),
                         )
                     )
-                    sources[identity] = MaterialSelection(
-                        material=view.ref, selections=(part,)
-                    )
+                    sources[identity] = MaterialSelection(material=view.ref, selections=(part,))
         if len({item.key for item in fragments}) != len(fragments):
             raise NousError("input.invalid_context", "Context keys must be unique")
         prepared: list[ContextFragment] = []

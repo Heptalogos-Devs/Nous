@@ -52,7 +52,7 @@ uses = sa.Table(
     metadata,
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("revision_id", sa.String, sa.ForeignKey(revisions.c.id), nullable=False, index=True),
-    sa.Column("evidence_id", sa.String, sa.ForeignKey(results.c.id), nullable=False),
+    sa.Column("evidence_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.Column("reading_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.Column("selections", sa.JSON, nullable=False),
     sa.Column("purpose", sa.String, nullable=False),

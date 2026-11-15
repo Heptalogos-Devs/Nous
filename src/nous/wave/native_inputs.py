@@ -23,7 +23,16 @@ if TYPE_CHECKING:
 
 def component_signature(frozen: FrozenInputs, profile: ResolvedBuildProfile) -> str:
     """Hash every Native input, including its stable candidate-to-row layout."""
-    digest = hashlib.sha256(encode_json(profile.model_dump(mode="json")).encode())
+    digest = hashlib.sha256(
+        encode_json(
+            {
+                "space": profile.space_definition.model_dump(mode="json")
+                if profile.space_definition is not None
+                else None,
+                "build": profile.build_config,
+            }
+        ).encode()
+    )
     for field in fields(frozen):
         if field.name in {"preparation_stats", "mapping", "vector_mappings", "candidate_data"}:
             continue

@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from nous.content.contracts import (
-    ContentSelection,
-    NamedSelection,
+    MaterialSource,
     OutputContent,
     OutputMapping,
     SourceSelection,
@@ -36,22 +35,29 @@ class ArrangeReadingTask(TaskDefinition):
         )
 
     @staticmethod
-    def _sources(reading: ReadingInput) -> dict[str, tuple[ContentSelection, ...]]:
-        groups: dict[str, list[ContentSelection]] = {}
-        for source in reading.sources:
-            if source.group is not None:
-                values = groups.setdefault(source.group.slot_key, [])
-                for part in source.group.parts:
-                    for origin in tuple(item.origin for item in part.origins) or (part.content,):
-                        if origin not in values:
-                            values.append(origin)
-        return {key: tuple(values) for key, values in groups.items()}
+    def _sources(reading: ReadingInput) -> dict[str, MaterialSource]:
+        sources: dict[str, MaterialSource] = {}
+        for part in reading.sources:
+            if part.group is None or part.material_source is None:
+                continue
+            key, source = part.group.slot_key, part.material_source
+            previous = sources.get(key)
+            if previous is None:
+                sources[key] = source.model_copy(update={"key": key})
+            else:
+                sources[key] = previous.model_copy(
+                    update={
+                        "selections": tuple(
+                            dict.fromkeys((*previous.selections, *source.selections))
+                        )
+                    }
+                )
+        return sources
 
     def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
         brief = ReadingBrief.model_validate(value)
-        requested = {item.key for item in brief.context_requests}
         cited = {key for item in brief.items for key in item.evidence_keys}
-        unknown = (cited | requested) - self._sources(reading).keys()
+        unknown = cited - self._sources(reading).keys()
         if unknown:
             raise ValueError(f"Unknown evidence keys: {sorted(unknown)}")
         return brief.model_dump(mode="json")
@@ -77,7 +83,9 @@ class ArrangeReadingTask(TaskDefinition):
             start = sum(map(len, chunks))
             chunks.append(text)
             origins = tuple(
-                dict.fromkeys(origin for key in item.evidence_keys for origin in sources[key])
+                dict.fromkeys(
+                    origin for key in item.evidence_keys for origin in sources[key].selections
+                )
             )
             if text and origins:
                 mappings.append(
@@ -115,9 +123,8 @@ class ArrangeReadingTask(TaskDefinition):
                 "markdown": OutputContent(data=b"".join(chunks), display_name="reading.md"),
             },
             mappings=tuple(mappings),
-            selections=tuple(
-                NamedSelection(key=key, sources=values) for key, values in sources.items()
-            ),
+            material_sources=tuple(sources.values()),
+            value=brief,
         )
 
 

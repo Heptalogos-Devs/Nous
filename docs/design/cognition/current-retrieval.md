@@ -18,13 +18,13 @@ Wave 已发布快照保存 covered_generation、profile_signature、space_signat
 
 视图按所选程序需要的资产与实例空间配置构建。词项程序不要求向量空间；需要向量的程序使用 `cognition.search.space`。默认程序及能力不足时使用的程序由 Wave 配置确定，执行结果记录实际程序。
 
-不同空间或证据策略使用不同 profile key。key 包含空间语义、`include_review`、`include_exploration`、`include_work`、材料与组合同、候选布局及构建配置；改变实际资产要求新投影，单次查询参数不要求重建。模型请求失败时返回实际错误。
+不同空间或证据策略使用不同 profile key。key 包含空间语义、`include_review`、`include_exploration`、`include_work`、候选布局及构建配置；改变实际资产要求新投影，单次查询参数不要求重建。模型请求失败时返回实际错误。
 
 ## 捕获与构建算法
 
 1. 根操作固定配置和 Namespace。读取该 profile 已发布快照及 namespace generation，完全匹配时可直接持有 immutable snapshot，热查询不先捕获整库正文/标注。
 2. 需要更新时，取得同 Namespace/profile 的构建协调锁，再检查一次。锁只协调该项构建，不阻塞文稿写入，不是实例级请求锁。
-3. 在一个短 ReadTx 中由各材料 owner 捕获 generation G、当前材料事实和精确内容引用，并按共同资格事实判断组资格。以材料和组合同、精确修订、正文、来源、活动标注及候选布局匹配可复用投影单元；变化材料展开必要来源，未变组按文档键共享祖先节点。正文读取和解析在事务外进行。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
+3. 在一个短 ReadTx 中由各材料 owner 捕获 generation G、当前材料事实和精确内容引用，按共同资格事实判断组资格，并展开实际来源。捕获后的事实直接构造一致的语料视图；正文准备、分块、向量和 Native 组件按各自真实输入复用。正文读取和解析在事务外进行。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
 4. 网络向量、CAS 读取、Native 构建全在事务外。同一正文和表示在一次构建中只准备一次，复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
 5. 在稳定组件目录完成构建并校验完成清单。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
 6. 本次查询使用捕获的 G；后来写入由下一次 current 查询或显式 refresh 处理。返回 captured_generation，必要时提示已有更晚版本。不要让持续写入造成无限追赶或持有数据库事务等待模型。

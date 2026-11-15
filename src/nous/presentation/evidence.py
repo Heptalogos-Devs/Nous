@@ -1,14 +1,17 @@
 """Present a retrieval outcome without changing its exact source ranges."""
 
+import json
 from typing import TYPE_CHECKING
 
+from nous.cognition.material_contracts import material_kind
+from nous.common.operations import OperationIssue
 from nous.content.contracts import ContentReadView, ResultOutputRef
 from nous.presentation import translate
-from nous.wave.contracts import DeliveredText
 
 if TYPE_CHECKING:
-    from nous.cognition.material_contracts import MaterialRead, MaterialRef
+    from nous.cognition.material_contracts import MaterialRead
     from nous.cognition.retrieval.contracts import RetrievalOutcome
+    from nous.content.contracts import MaterialRef
 
 
 def _reference(value: MaterialRef) -> str:
@@ -18,38 +21,38 @@ def _reference(value: MaterialRef) -> str:
 
 
 def format_source_text(
-    fragments: tuple[DeliveredText, ...],
-    support: tuple[DeliveredText, ...],
+    fragments: tuple[ContentReadView, ...],
+    support: tuple[ContentReadView, ...],
     seen: dict[str, list[tuple[int, int]]] | None = None,
 ) -> str:
     """Render non-overlapping source bytes in document order, once per output."""
     if seen is None:
         seen = {}
     order: dict[str, int] = {}
-    items: dict[str, DeliveredText] = {}
+    items: dict[str, ContentReadView] = {}
     for part in (*fragments, *support):
-        order.setdefault(part.content.artifact.id, len(order))
-        items.setdefault(part.content.model_dump_json(), part)
+        order.setdefault(part.source.artifact.id, len(order))
+        items.setdefault(part.source.model_dump_json(), part)
     values = sorted(
         items.values(),
         key=lambda item: (
-            order[item.content.artifact.id],
-            item.content.selection.start_byte
-            if item.content.selection.start_byte is not None
+            order[item.source.artifact.id],
+            item.source.selection.start_byte
+            if item.source.selection.start_byte is not None
             else -1,
-            item.content.selection.end_byte if item.content.selection.end_byte is not None else -1,
+            item.source.selection.end_byte if item.source.selection.end_byte is not None else -1,
         ),
     )
     output: list[str] = []
     last_artifact: str | None = None
     last_end: int | None = None
     for part in values:
-        identity = part.content.artifact.id
-        start, end = part.content.selection.start_byte, part.content.selection.end_byte
-        data = part.text.encode("utf-8")
+        identity = part.source.artifact.id
+        start, end = part.source.selection.start_byte, part.source.selection.end_byte
+        data = (part.body_text or "").encode("utf-8")
         if start is None or end is None or end - start != len(data):
-            if part.text:
-                output.append(("\n" if output else "") + part.text)
+            if part.body_text:
+                output.append(("\n" if output else "") + part.body_text)
             continue
         remaining = [(start, end)]
         for left, right in seen.get(identity, []):
@@ -88,31 +91,49 @@ def format_retrieval(
                 + (f" [{', '.join(item.evidence_keys)}]" if item.evidence_keys else "")
             )
     else:
-        passages = {item.key: item for item in outcome.evidence.passages}
         seen: dict[str, list[tuple[int, int]]] = {}
         if not outcome.evidence.materials:
             coverage = outcome.evidence.coverage
             label = (
                 "No material selected"
-                if coverage is None or coverage.truncated or (coverage.ranked_candidates or 0) > 0
+                if coverage is None or coverage["truncated"] or coverage.get("matched") is not False
                 else "No matching knowledge"
             )
             lines.append(translate(label, language))
         for item in outcome.evidence.materials:
             fallback = (
                 "Untitled work"
-                if item.material.kind == "work"
-                else ("Untitled journal" if item.material.kind == "journal" else "Untitled note")
+                if material_kind(item.material) == "work"
+                else (
+                    "Untitled journal"
+                    if material_kind(item.material) == "journal"
+                    else "Untitled note"
+                )
             )
+            prefix = f"{item.rank}. " if item.rank is not None else ""
             lines.append(
-                f"{item.rank}. {item.material.title or translate(fallback, language)} — {_reference(item.material.ref)}"
+                f"{prefix}{item.title or translate(fallback, language)} — {_reference(item.material)}"
             )
-            for key in item.passage_keys:
-                passage = passages[key]
-                text = format_source_text(passage.fragments, passage.support_context, seen)
+            if item.needs_review:
+                lines.append(translate("Needs review", language))
+            for passage in item.passages:
+                text = format_source_text(passage.views, (), seen)
                 if text:
-                    lines.append(f"[{key}] {text}")
-            if not item.passage_keys:
+                    lines.append(f"[{passage.key}] {text}")
+                elif passage.shared and not passage.views:
+                    lines.append(
+                        f"[{passage.key}] {translate('Passage already included above', language)}"
+                    )
+                if passage.shared and passage.views:
+                    lines.append(
+                        f"[{passage.key}] {translate('Shared context is shown above', language)}"
+                    )
+                for view in passage.views:
+                    if view.body_text is None:
+                        lines.append(
+                            f"[{passage.key}] {view.media_type} — {view.source.artifact.identifier}"
+                        )
+            if not item.passages and item.delivery_status is not None:
                 labels = {
                     "budget_exhausted": "Delivery budget exhausted",
                     "overlap": "Passage already included above",
@@ -126,6 +147,17 @@ def format_retrieval(
         lines.append(f"{translate('Evidence', language)}: {outcome.evidence_ref.identifier}")
     if outcome.reading_ref:
         lines.append(f"{translate('Reading', language)}: {outcome.reading_ref.identifier}")
+    if outcome.evidence.fallback_from is not None:
+        lines.append(
+            translate(
+                "Program {requested} unavailable; using {program}; missing capabilities: {capabilities}",
+                language,
+            ).format(
+                program=outcome.evidence.program,
+                requested=outcome.evidence.fallback_from,
+                capabilities=", ".join(outcome.evidence.unavailable_capabilities),
+            )
+        )
     for link in outcome.evidence.continuation:
         label = translate(
             {"read": "Read material", "read_remaining": "Read remaining"}.get(
@@ -133,10 +165,26 @@ def format_retrieval(
             ),
             language,
         )
-        lines.append(f"{label}: {_reference(link.target)}")
+        lines.append(f"{label}: {_reference(link.selection.material)}")
+        for part in link.selection.selections:
+            lines.append(
+                f"  {part.artifact.identifier} {part.selection.model_dump_json(exclude_none=True, exclude_defaults=True)}"
+            )
     if include_issues:
-        lines.extend(f"{issue.code}: {issue.message}" for issue in outcome.issues)
+        lines.extend(
+            format_issue(issue, language) for issue in (*outcome.evidence.issues, *outcome.issues)
+        )
     return "\n".join(lines).rstrip()
+
+
+def format_issue(issue: OperationIssue, language: str = "zh-CN") -> str:
+    """Keep the actionable service details with an incomplete stage."""
+    details = (
+        f" — {json.dumps(issue.details, ensure_ascii=False)}"
+        if issue.details and issue.code != "cognition.snapshot_changed"
+        else ""
+    )
+    return f"{issue.code}: {translate(issue.message, language)}{details}"
 
 
 def format_material_read(value: MaterialRead, language: str = "zh-CN") -> str:
@@ -147,20 +195,25 @@ def format_material_read(value: MaterialRead, language: str = "zh-CN") -> str:
     seen: dict[str, list[tuple[int, int]]] = {}
 
     def append_views(views: tuple[ContentReadView, ...]) -> None:
-        texts: list[DeliveredText] = []
+        texts: list[ContentReadView] = []
         for item in views:
             if item.body_text is None:
-                lines.append(f"{item.media_type} — {item.export_ref.identifier}")
+                lines.append(f"{item.media_type} — {item.source.artifact.identifier}")
             else:
-                texts.append(DeliveredText(content=item.source, text=item.body_text))
+                texts.append(item)
         text = format_source_text(tuple(texts), (), seen)
         if text:
             lines.append(text)
 
     append_views(value.selections)
-    for source in value.sources:
+    for section in value.material.sections or ():
+        heading = " / ".join(section.heading_path)
+        lines.append(f"{section.key}: {heading} — {section.selection.selection.model_dump_json()}")
+    for source in value.material.material_sources:
+        if source.key not in value.sources:
+            continue
         lines.append(
-            f"{source.source.key}: {source.source.name or translate(source.source.kind, language)} — {_reference(source.source.material)}"
+            f"{source.key}: {source.name or translate(source.kind, language)} — {_reference(source.material)}"
         )
-        append_views(source.views)
+        append_views(value.sources[source.key])
     return "\n".join(lines)

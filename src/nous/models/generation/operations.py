@@ -134,7 +134,7 @@ class GenerationOperations:
             selected = await call.inputs.read_text(
                 value.key, value.selection, call.settings.values.content.text_read_max_bytes
             )
-            return TypeAdapter(dict[str, JsonValue]).validate_json(selected.data)
+            return TypeAdapter(dict[str, JsonValue]).validate_json(selected)
         return value
 
     async def compute(self, request: GenerationRequest, call: CallContext) -> CompletedTask:
@@ -142,9 +142,9 @@ class GenerationOperations:
         if (
             request.input_mode == "independent"
             and sum(
-                len(source.selections)
+                len(source.input_selections)
                 for source in request.inputs.sources
-                if source.role != "context"
+                if source.kind != "context"
             )
             > 1
         ):
@@ -233,7 +233,7 @@ class GenerationOperations:
         actual = tuple(source.group for source in reading.sources if source.group is not None)
         selected = group.unit.inputs
         artifacts = await self.results.artifacts.get_many(
-            [item.artifact for source in selected.sources for item in source.selections]
+            [item.artifact for source in selected.sources for item in source.input_selections]
         )
         dependencies = tuple(
             dict.fromkeys(
@@ -264,6 +264,15 @@ class GenerationOperations:
             producer=ModelProducer.model_validate(generated.producer),
             selected_inputs=selected,
             inputs=actual,
+            material_sources=interpreted.material_sources
+            if interpreted.material_sources is not None
+            else tuple(
+                source.material_source
+                for source in reading.sources
+                if source.material_source is not None
+                and source.material_source.kind
+                in {"source", "reference", "current_basis", "inspiration"}
+            ),
             request=request_facts.model_dump(mode="json", by_alias=True),
             parameters={
                 "attempts": generated.attempts,
@@ -276,7 +285,7 @@ class GenerationOperations:
             dependencies=dependencies,
             formed_at=self.results.artifacts.clock.utc_now(),
         )
-        return CompletedTask(facts=facts, outputs=outputs)
+        return CompletedTask(facts=facts, outputs=outputs, value=interpreted.value)
 
     async def run(self, request: RunModel, call: CallContext) -> ModelOutcome:
         output_schema = await self.resolve_schema(request.output_schema, call)

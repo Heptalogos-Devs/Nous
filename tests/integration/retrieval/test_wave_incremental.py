@@ -90,7 +90,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             )
             assert new_view.body_artifact == old_view.body_artifact
             title = await runtime.app.call(QUERY, QueryRequest(text="uniqueheading"))
-            assert title.evidence.materials[0].material.ref == renamed.commit.revision_ref
+            assert title.evidence.materials[0].material == renamed.commit.revision_ref
             assert title.evidence.snapshot is not None
             async with runtime.database.read() as tx:
                 summary = await tx.connection.scalar(
@@ -115,7 +115,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
             assert {
-                group.material.ref.model_dump_json() for group in after_archive.evidence.materials
+                group.material.model_dump_json() for group in after_archive.evidence.materials
             } == {
                 renamed.commit.revision_ref.model_dump_json(),
                 long.commit.revision_ref.model_dump_json(),
@@ -143,7 +143,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             fresh = await runtime.app.call(
                 QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
-            revisions = {group.material.ref.model_dump_json() for group in fresh.evidence.materials}
+            revisions = {group.material.model_dump_json() for group in fresh.evidence.materials}
             assert revisions == {
                 renamed.commit.revision_ref.model_dump_json(),
                 changed.commit.revision_ref.model_dump_json(),
@@ -160,7 +160,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             after_recall_change = await runtime.app.call(
                 QUERY, QueryRequest(text="sharedterm", controls=QueryControls(limit=5))
             )
-            assert [group.material.ref for group in after_recall_change.evidence.materials] == [
+            assert [group.material for group in after_recall_change.evidence.materials] == [
                 renamed.commit.revision_ref
             ]
             assert after_recall_change.evidence.snapshot is not None
@@ -183,7 +183,7 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
             )
             assert historical.evidence.captured_generation == original.evidence.captured_generation
             assert {
-                group.material.ref.model_dump_json() for group in historical.evidence.materials
+                group.material.model_dump_json() for group in historical.evidence.materials
             } == {
                 first.commit.revision_ref.model_dump_json(),
                 long.commit.revision_ref.model_dump_json(),
@@ -197,10 +197,11 @@ def test_one_revision_reuses_unchanged_bodies_and_old_snapshot(tmp_path: Path) -
                 ),
             )
             assert any(
-                "Final endingquartz" in fragment.text
-                for passage in old_tail.evidence.passages
-                if passage.material == long.commit.revision_ref
-                for fragment in passage.fragments
+                "Final endingquartz" in (fragment.body_text or "")
+                for material in old_tail.evidence.materials
+                if material.material == long.commit.revision_ref
+                for passage in material.passages
+                for fragment in passage.views
             )
             assert fresh.evidence.snapshot is not None
             async with runtime.database.read() as tx:
@@ -292,7 +293,7 @@ def test_snapshot_owner_and_namespace_references_survive_rename(tmp_path: Path) 
                         anchor=QueryAnchor(snapshot=selector, view="anchored"), text="scopequartz"
                     ),
                 )
-                assert result.evidence.intent.constraints.namespace == namespace.ref
+                assert result.evidence.intent.namespace == namespace.ref
                 assert (await runtime.namespaces.read(namespace.ref)).name == "renamed"
                 assert result.evidence.materials
             with pytest.raises(NousError) as error:

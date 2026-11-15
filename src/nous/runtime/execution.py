@@ -164,6 +164,11 @@ class ExecutionManager:
         current = _current.get().get(self._owner)
         return current.settings if current is not None else self._snapshot()
 
+    @property
+    def current_context(self) -> OperationContext | None:
+        """Return this runtime's request context in the current task."""
+        return _current.get().get(self._owner)
+
     def status(self) -> dict[str, object]:
         return {
             "root_operations": self.in_flight,

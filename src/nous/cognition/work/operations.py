@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
 
 from nous.application.contracts import CallContext, define_operation
@@ -17,11 +17,11 @@ from nous.cognition.material_contracts import (
     MaterialSelection,
 )
 from nous.cognition.scope import NamespaceOperations
-from nous.cognition.steward.contracts import ReadingBrief
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier, split_revision
+from nous.common.material_refs import WorkRef, WorkRevisionRef
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ResultOutputRef
+from nous.content.contracts import ContentSelection, ResultOutputRef, SourceSelection
 from nous.content.results import ResultStore
 from nous.presentation import select_language, translate
 from nous.runtime.execution import ExecutionManager
@@ -37,13 +37,13 @@ from .contracts import (
     RecordWorkUse,
     ReviseWork,
     SetActiveWork,
-    WorkAttributes,
+    WorkContext,
+    WorkContextField,
     WorkState,
     WorkUse,
     WorkView,
 )
 from .reading import WorkReader
-from .refs import WorkRef, WorkRevisionRef
 
 if TYPE_CHECKING:
     from nous.cognition.materials import Materials
@@ -160,6 +160,68 @@ class WorkOperations:
         if selected:
             await self.materials.read_many(selected, namespace=namespace)
 
+    async def context(
+        self, target: str | WorkRevisionRef, namespace: NamespaceRef, window: int
+    ) -> WorkContext:
+        """Select a work revision's active context without reading its free-form body."""
+        async with self.database.read() as tx:
+            work, revision, _ = await self.reader.resolve_in(tx, target, namespace)
+            ref = self.reader.ref(work, revision)
+            representation = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.representations).where(
+                            schema.representations.c.revision_id == revision["id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            artifact = await self.artifacts.get_in(tx, str(representation["artifact_id"]))
+            uses = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.uses.c.selections)
+                        .join(schema.revisions, schema.uses.c.revision_id == schema.revisions.c.id)
+                        .where(schema.revisions.c.work_id == work["id"])
+                        .order_by(schema.uses.c.recorded_at.desc(), schema.uses.c.id.desc())
+                        .limit(max(window, 1))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        state = WorkState.model_validate(revision["state"])
+        keys = ["objective"]
+        if state.focus:
+            keys.append("focus")
+        choices = ["decision:" + item.key for item in state.decisions if item.state == "active"]
+        choices.extend("question:" + item.key for item in state.questions if item.state == "open")
+        keys.extend(choices[: max(0, window - len(keys))])
+        ranges = representation["fields"]
+        fields = tuple(
+            WorkContextField(
+                key=key,
+                selection=ContentSelection(
+                    artifact=artifact.ref,
+                    selection=SourceSelection(start_byte=ranges[key][0], end_byte=ranges[key][1]),
+                ),
+            )
+            for key in keys
+        )
+        active = (
+            *state.active,
+            *(basis for item in state.decisions if item.state == "active" for basis in item.basis),
+        )[:window]
+        adapter = TypeAdapter(tuple[MaterialSelection, ...])
+        return WorkContext(
+            ref=ref,
+            fields=fields,
+            active=active,
+            recent=tuple(adapter.validate_python(item) for item in uses),
+        )
+
     async def _prepare_content(
         self, state: WorkState, body: str, language: str
     ) -> tuple[PublishedContent, PublishedContent, dict[str, tuple[int, int]]]:
@@ -238,35 +300,6 @@ class WorkOperations:
                 ],
             )
 
-    @classmethod
-    async def backfill_result_dependencies_in(cls, tx: WriteTx) -> None:
-        """Retain result references already present in saved work and use records."""
-        revisions = (
-            await tx.connection.execute(sa.select(schema.revisions.c.id, schema.revisions.c.state))
-        ).all()
-        uses = (
-            await tx.connection.execute(
-                sa.select(schema.uses.c.revision_id, schema.uses.c.selections)
-            )
-        ).all()
-        await cls._retain_results_in(
-            tx,
-            (
-                *(
-                    (str(revision_id), item)
-                    for revision_id, raw_state in revisions
-                    for _, item in WorkReader.references(WorkState.model_validate(raw_state))
-                ),
-                *(
-                    (str(revision_id), item)
-                    for revision_id, selections in uses
-                    for item in TypeAdapter(tuple[MaterialSelection, ...]).validate_python(
-                        selections
-                    )
-                ),
-            ),
-        )
-
     async def create(self, request: CreateWork, call: CallContext) -> WorkView:
         async with self.execution.operation("work.create"):
             namespace = await self.scope.resolve_for(request.namespace)
@@ -316,10 +349,21 @@ class WorkOperations:
         target: str | WorkRef | WorkRevisionRef,
         expected: str | int | WorkRevisionRef | None,
         state: WorkState,
-        body: str,
+        body: str | None,
         namespace: NamespaceRef,
     ) -> WorkView:
         await self._validate_state(state, namespace)
+        if body is None:
+            async with self.database.read() as tx:
+                work, chosen, _ = await self.reader.resolve_in(tx, target, namespace)
+                expected_target = expected if expected is not None else target
+                if isinstance(expected_target, str) and expected_target.isdecimal():
+                    expected_target = int(expected_target)
+                if isinstance(expected_target, int):
+                    expected_target = f"{work['identifier']}@{expected_target}"
+                _, base, _ = await self.reader.resolve_in(tx, expected_target, namespace)
+                body_artifact = await self.artifacts.get_in(tx, str(base["body_artifact_id"]))
+            body = await self.artifacts.read_text(body_artifact.ref)
         published, rendered_content, fields = await self._prepare_content(
             state,
             body,
@@ -407,68 +451,69 @@ class WorkOperations:
 
     async def record_use(self, request: RecordWorkUse, call: CallContext) -> WorkUse:
         async with self.execution.operation("work.record_use"):
-            namespace = await self.reader.namespace(None, request.revision)
-            view = await self.materials.resolve(request.revision, namespace=namespace)
-            state = WorkAttributes.model_validate(view.attributes.values).state
+            namespace = await self.reader.namespace(request.namespace, request.revision)
+            async with self.database.read() as tx:
+                work, revision, _ = await self.reader.resolve_in(tx, request.revision, namespace)
+                revision_ref = self.reader.ref(work, revision)
+            state = WorkState.model_validate(revision["state"])
             if request.decision_key is not None and request.decision_key not in {
                 item.key for item in state.decisions
             }:
                 raise NousError(
                     "cognition.decision_not_found", "Decision does not exist in this work revision"
                 )
-            await self.materials.read_many(request.selections, namespace=namespace)
-            evidence = await self.results.get(request.evidence)
-            if evidence.operation != "retrieval.query":
-                raise NousError(
-                    "cognition.invalid_evidence", "Result is not a query evidence delivery"
-                )
-            output = next((item for item in evidence.outputs if item.name == "evidence"), None)
-            if output is None:
-                raise NousError("cognition.invalid_evidence", "Evidence output is missing")
-            from nous.cognition.retrieval.contracts import EvidenceDelivery
+            await self.materials.selections(request.selections, namespace=namespace)
+            selections = list(request.selections)
+            evidence_ref = None
+            if request.evidence is not None:
+                from nous.cognition.retrieval.adoption import read_saved_evidence
 
-            delivery = EvidenceDelivery.model_validate_json(
-                await self.artifacts.read_text(output.artifact)
-            )
-            if delivery.intent.constraints.namespace != namespace:
-                raise NousError(
-                    "cognition.namespace_mismatch", "Evidence belongs to another namespace"
-                )
+                evidence = await read_saved_evidence(self.results, request.evidence)
+                evidence_ref = evidence.ref
+                if evidence.namespace != namespace:
+                    raise NousError(
+                        "cognition.namespace_mismatch", "Evidence belongs to another namespace"
+                    )
+                for key in request.evidence_keys:
+                    source = evidence.source(key)
+                    selection = MaterialSelection(material=source.material, selections=source.selections)
+                    if selection not in selections:
+                        selections.append(selection)
+            reading_ref = None
             if request.reading is not None:
                 reading = await self.results.get(request.reading)
+                reading_ref = reading.ref
                 output = next((item for item in reading.outputs if item.name == "reading"), None)
-                if request.evidence not in reading.dependencies or output is None:
+                if output is None or (
+                    evidence_ref is not None and evidence_ref not in reading.dependencies
+                ):
                     raise NousError(
                         "cognition.invalid_reading", "Reading was not produced from this evidence"
                     )
-                try:
-                    ReadingBrief.model_validate_json(
-                        await self.artifacts.read_text(output.artifact)
+                async with self.database.read() as tx:
+                    await self.materials.validate_sources_in(
+                        tx, reading.sources_for("reading"), namespace=namespace
                     )
-                except ValidationError as error:
-                    raise NousError(
-                        "cognition.invalid_reading", "Reading output is not a valid reading brief"
-                    ) from error
             use = WorkUse(
                 id=str(uuid4()),
-                revision=request.revision,
-                evidence=request.evidence,
-                reading=request.reading,
-                selections=request.selections,
+                revision=revision_ref,
+                evidence=evidence_ref,
+                reading=reading_ref,
+                selections=tuple(selections),
                 purpose=request.purpose,
                 decision_key=request.decision_key,
                 recorded_at=self.clock.utc_now(),
             )
             async with self.database.write() as tx:
-                await self.reader.resolve_in(tx, request.revision, namespace)
+                await self.reader.resolve_in(tx, revision_ref, namespace)
                 await self._retain_results_in(
-                    tx, ((request.revision.revision_id, item) for item in request.selections)
+                    tx, ((revision_ref.revision_id, item) for item in selections)
                 )
                 await tx.connection.execute(
                     schema.uses.insert().values(
                         id=use.id,
                         revision_id=use.revision.revision_id,
-                        evidence_id=use.evidence.id,
+                        evidence_id=use.evidence.id if use.evidence else None,
                         reading_id=use.reading.id if use.reading else None,
                         selections=[item.model_dump(mode="json") for item in use.selections],
                         purpose=use.purpose,
@@ -513,8 +558,7 @@ class WorkOperations:
                     )
                 )
                 results = {
-                    result.ref.id: result.ref
-                    for result in await self.results.get_many_in(tx, result_ids)
+                    result.id: result for result in await self.results.refs_in(tx, result_ids)
                 }
                 work_ref = self.reader.ref(work, revision).work_ref
                 return tuple(
@@ -525,7 +569,7 @@ class WorkOperations:
                             revision_id=str(row["revision_id"]),
                             ordinal=int(row["revision_ordinal"]),
                         ),
-                        evidence=results[str(row["evidence_id"])],
+                        evidence=results[str(row["evidence_id"])] if row["evidence_id"] else None,
                         reading=results[str(row["reading_id"])] if row["reading_id"] else None,
                         selections=tuple(
                             MaterialSelection.model_validate(item) for item in row["selections"]

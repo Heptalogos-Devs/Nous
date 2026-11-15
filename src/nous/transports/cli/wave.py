@@ -9,8 +9,9 @@ import typer
 
 from nous.application.inputs import FileInput, InputProvider, StreamInput
 from nous.common.errors import NousError
-from nous.content.contracts import ExternalInput, SourceSelection
+from nous.content.contracts import DeliveryBudget, ExternalInput, SourceSelection
 from nous.models.vector_contracts import VectorRef
+from nous.presentation import translate
 from nous.presentation.evidence import format_source_text
 from nous.storage.file_input import FileReaderPool
 from nous.wave.contracts import (
@@ -18,7 +19,6 @@ from nous.wave.contracts import (
     CandidateSet,
     CollectionManifest,
     ContextFragment,
-    DeliveryBudget,
     PassageDelivery,
     QueryCue,
     ThinkingStage,
@@ -39,7 +39,7 @@ from nous.wave.operations import (
     WAVE_SEGMENT,
 )
 
-from .context import application_call, emit, options
+from .context import application_call, emit, language_for, options
 from .input_files import json_binding
 
 wave_cli = typer.Typer(help="构建、检索和回读内容集合 / Wave retrieval", no_args_is_help=True)
@@ -63,11 +63,22 @@ def _show_passage(value: PassageDelivery, seen: dict[str, list[tuple[int, int]]]
     typer.echo(format_source_text(value.fragments, value.support_context, seen))
     for fragment in (*value.fragments, *value.support_context):
         typer.echo(
-            f"   {fragment.content.artifact.identifier} {fragment.content.selection.model_dump_json()}"
+            f"   {fragment.source.artifact.identifier} {fragment.source.selection.model_dump_json()}"
         )
 
 
-def _hits(value: WaveSearchResult, explain: bool) -> None:
+def _hits(value: WaveSearchResult, explain: bool, language: str) -> None:
+    if value.program_selection == "fallback":
+        typer.echo(
+            translate(
+                "Program {requested} unavailable; using {program}; missing capabilities: {capabilities}",
+                language,
+            ).format(
+                requested=value.fallback_from,
+                program=value.program,
+                capabilities=", ".join(value.unavailable_capabilities),
+            )
+        )
     groups = value.groups
     seen: dict[str, list[tuple[int, int]]] = {}
     if groups:
@@ -241,7 +252,7 @@ def query(
     if options(ctx).json_mode:
         emit(ctx, result.model_dump(mode="json"))
     else:
-        _hits(result, explain)
+        _hits(result, explain, language_for(options(ctx)))
 
 
 @wave_cli.command("read")

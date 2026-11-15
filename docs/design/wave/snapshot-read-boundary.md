@@ -27,7 +27,7 @@ FeedbackOperations.record_query 接收正式证据交付及其中实际交付的
 
 ## 性能与并发
 
-相同视图的并发查询共享准备结果；未变化文稿复用投影单元，Native 完整输入未变化时复用组件。
+同一集合的构建串行；未变化文稿复用候选准备，Native 完整输入未变化时复用组件。
 
 跨多个 Namespace/profile 的读取相互独立，索引/Native 加载仍由 Wave 持有。本轮不改变 quality_score、ranking_score、RRF 或文稿分组 top_k 的含义。
 

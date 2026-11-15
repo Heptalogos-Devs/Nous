@@ -61,10 +61,9 @@ async def main(instance: Path) -> None:
         )
         print("原版本：", old.body)
         found = await runtime.app.call(QUERY, QueryRequest(text="会议日期"))
-        passages = {item.key: item for item in found.evidence.passages}
         for group in found.evidence.materials:
-            for key in group.passage_keys:
-                print(group.material.ref, group.material.title, passages[key].fragments[0].text)
+            for passage in group.passages:
+                print(group.material, group.title, passage.views[0].body_text)
 
 
 if __name__ == "__main__":

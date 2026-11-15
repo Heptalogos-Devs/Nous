@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict
 
 from nous.application.inputs import StreamInput
 from nous.common.errors import NousError
-from nous.content.contracts import ExportOffer
+from nous.content.contracts import ExportContent
+from nous.content.operations import EXPORT_CONTENT
 from nous.runtime.execution import complete_cleanup
 
 from .shared import (
@@ -136,9 +137,9 @@ def create_grpc_server(
         await _authenticate(context, token)
         try:
             payload = CallRequest.model_validate_json(request.value)
-            value = await app.call_name(
-                payload.operation,
-                payload.request,
+            parsed = app.parse(payload.operation, payload.request)
+            value = await app.call_parsed(
+                parsed,
                 inputs=input_bindings(payload.inputs),
                 timeout=_timeout(payload, context),
                 select=payload.select,
@@ -194,9 +195,7 @@ def create_grpc_server(
         await _authenticate(context, token)
         try:
             query = DownloadRequest.model_validate_json(request.value)
-            offer = ExportOffer.model_validate(
-                await app.call_name("content.export_offer", {"ref": query.ref})
-            )
+            offer = await app.call(EXPORT_CONTENT, ExportContent(ref=query.ref))
             blob = await artifacts.blob(offer.artifact_ref)
             yield _message(
                 {

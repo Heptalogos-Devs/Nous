@@ -13,9 +13,7 @@ Rust 核心无 pyo3/numpy 依赖；Python bundle 转成核心自有结构后调�
 ```text
 Engine.build(FrozenAssets, BuildOptions, component_path, cancel) -> BuiltSnapshot
 Engine.open(published_path, expected_identity, cancel) -> Snapshot
-Snapshot.execute(program, query_signals, allowed, cancel) -> 定位结果 JSON
-Snapshot.observe(QuerySignals, ObserveOptions, cancel) -> Observation
-Snapshot.think(Observation, Stages, ThinkingOptions, cancel) -> ThinkingResult
+Snapshot.execute(program, query_signals, allowed, cancel) -> 具名数值输出 JSON
 ```
 
 查询程序由类型化算子连接而成。Native 在同一快照借用内执行数值子图；相同的确定性节点共享执行结果，RiverMemo 和 DTSC 的读出消费图中传入的候选与观测。Python 完成原文映射、可选评价和预算选择。算子端口和配置见 [Wave 程序](program.md)。

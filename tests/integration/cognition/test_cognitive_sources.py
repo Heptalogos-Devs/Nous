@@ -13,7 +13,8 @@ from PIL import Image
 
 from nous.application.configuration import open_configuration_operations
 from nous.application.inputs import FileInput
-from nous.cognition.contracts import SourceBinding
+from nous.cognition.material_contracts import ReadMaterial
+from nous.cognition.materials import READ_MATERIAL
 from nous.cognition.retrieval.contracts import QueryControls, QueryRequest, Selector
 from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import (
@@ -35,17 +36,14 @@ from nous.cognition.writing.operations import (
 )
 from nous.common.errors import NousError
 from nous.content.contracts import (
-    ArtifactRef,
     ContentSelection,
     ExternalInput,
     InlineText,
-    InputGroup,
-    InputPart,
-    OriginSlice,
+    MaterialSource,
     SourceSelection,
 )
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.wave.contracts import WaveBuild, WaveQuery, WaveRead
+from nous.wave.contracts import CandidateRef, WaveBuild, WaveQuery, WaveRead
 from nous.wave.operations import WAVE_BUILD, WAVE_QUERY, WAVE_READ
 
 
@@ -192,7 +190,11 @@ def test_media_selections_are_checked_before_formal_writes(tmp_path: Path) -> No
                         target=original.commit.revision_ref,
                         body=InlineText(text="must not change"),
                         source_changes=SourceChanges(
-                            add=(SourceBinding(key="N1", selections=(invalid[0],)),)
+                            add=(
+                                MaterialSource(
+                                    key="N1", material=invalid[0].artifact, selections=(invalid[0],)
+                                ),
+                            )
                         ),
                         after=policy,
                     ),
@@ -217,49 +219,6 @@ def test_media_selections_are_checked_before_formal_writes(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
-def test_transformed_media_uses_its_declared_original_selection(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        instance = tmp_path / "media-origin"
-        await initialize_instance(instance, environment={})
-        source_path = tmp_path / "original.png"
-        derivative_path = tmp_path / "normalized.png"
-        Image.new("RGB", (20, 20), "white").save(source_path)
-        Image.new("RGB", (10, 10), "white").save(derivative_path)
-
-        async with open_instance(instance, environment={}) as runtime:
-            namespace = await runtime.namespaces.resolve("default")
-            source: ArtifactRef = (await runtime.artifacts.ingest(source_path)).ref
-            derivative: ArtifactRef = (await runtime.artifacts.ingest(derivative_path)).ref
-            selected = ContentSelection(artifact=source)
-            resolver = runtime.written_records.sources
-            prepared = await resolver.prepare(namespace, [SourceChoice(target=selected)])
-            consumed = InputGroup(
-                key="S1:I0",
-                slot_key="S1",
-                name="normalized.png",
-                role="source",
-                parts=(
-                    InputPart(
-                        content=ContentSelection(artifact=derivative),
-                        representation="normalized_image",
-                        media_type="image/png",
-                        origins=(OriginSlice(origin=selected),),
-                    ),
-                ),
-            )
-
-            bindings = await resolver.actual_bindings((consumed,), prepared)
-
-            assert bindings[0].selections == (selected,)
-
-            crop = ContentSelection(artifact=source, selection=SourceSelection(crop=(2, 2, 8, 8)))
-            prepared_crop = await resolver.prepare(namespace, [SourceChoice(target=crop)])
-            crop_bindings = await resolver.actual_bindings((consumed,), prepared_crop)
-            assert crop_bindings[0].selections == (crop,)
-
-    asyncio.run(scenario())
-
-
 def test_inspiration_only_journal_remains_searchable_without_fact_roots(tmp_path: Path) -> None:
     async def scenario() -> None:
         instance = tmp_path / "instance"
@@ -278,22 +237,28 @@ def test_inspiration_only_journal_remains_searchable_without_fact_roots(tmp_path
                     after=policy,
                 ),
             )
-            result = await runtime.app.call(QUERY, QueryRequest(text="ownership"))
+            result = await runtime.app.call(
+                QUERY, QueryRequest(text="ownership", controls=QueryControls(diagnostics=True))
+            )
             group = next(
                 item
                 for item in result.evidence.materials
-                if item.material.ref == journal.commit.revision_ref
+                if item.material == journal.commit.revision_ref
             )
-            assert group.material.sources[0].usage == "inspiration"
-            passage = next(
-                item for item in result.evidence.passages if item.key in group.passage_keys
-            )
-            assert passage.candidate is not None
+            material = await runtime.app.call(READ_MATERIAL, ReadMaterial(ref=group.material))
+            assert material.material.material_sources[0].kind == "inspiration"
+            passage = group.passages[0]
+            diagnostics = result.evidence.diagnostics
+            assert diagnostics is not None and isinstance(diagnostics["passages"], dict)
+            detail = diagnostics["passages"][passage.key]
+            assert isinstance(detail, dict)
+            candidate = CandidateRef.model_validate(detail["candidate"])
+            assert result.evidence.snapshot is not None
             read = await runtime.app.call(
                 WAVE_READ,
                 WaveRead(
                     snapshot=result.evidence.snapshot.identifier,
-                    candidate=passage.candidate.key,
+                    candidate=candidate.key,
                     sources=True,
                 ),
             )
@@ -301,7 +266,7 @@ def test_inspiration_only_journal_remains_searchable_without_fact_roots(tmp_path
             stored = await runtime.app.call(
                 READ_RECORD, ReadRecord(target=journal.commit.revision_ref)
             )
-            assert stored.sources == group.material.sources
+            assert stored.sources == material.material.material_sources
 
     asyncio.run(scenario())
 
@@ -436,23 +401,30 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
                 CREATE_JOURNAL,
                 CreateJournal(body=InlineText(text="资源释放需要明确的持有者。"), after=policy),
             )
-            query = await runtime.app.call(QUERY, QueryRequest(text="资源释放"))
-            assert [group.rank for group in query.evidence.materials] == list(
+            query = await runtime.app.call(
+                QUERY, QueryRequest(text="资源释放", controls=QueryControls(diagnostics=True))
+            )
+            assert [match.rank for match in query.evidence.materials] == list(
                 range(1, len(query.evidence.materials) + 1)
             )
             hit = next(
                 group
                 for group in query.evidence.materials
-                if group.material.ref == journal.commit.revision_ref
+                if group.material == journal.commit.revision_ref
             )
-            passage = next(item for item in query.evidence.passages if item.key in hit.passage_keys)
-            assert passage.fragments[0].content.artifact == raw.body_artifact
-            assert passage.candidate is not None
+            passage = hit.passages[0]
+            assert passage.views[0].source.artifact == raw.body_artifact
+            diagnostics = query.evidence.diagnostics
+            assert diagnostics is not None and isinstance(diagnostics["passages"], dict)
+            detail = diagnostics["passages"][passage.key]
+            assert isinstance(detail, dict)
+            candidate_ref = CandidateRef.model_validate(detail["candidate"])
+            assert query.evidence.snapshot is not None
             candidate = await runtime.app.call(
                 WAVE_READ,
                 WaveRead(
                     snapshot=query.evidence.snapshot.identifier,
-                    candidate=passage.candidate.key,
+                    candidate=candidate_ref.key,
                 ),
             )
             assert candidate.concepts
@@ -469,10 +441,8 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
                     ),
                 ),
             )
-            assert scoped.evidence.intent.bound_concepts == (concept.concept_ref,)
             assert any(
-                group.material.ref == journal.commit.revision_ref
-                for group in scoped.evidence.materials
+                group.material == journal.commit.revision_ref for group in scoped.evidence.materials
             )
             plain = await runtime.artifacts.ingest("普通文字")
             assert (

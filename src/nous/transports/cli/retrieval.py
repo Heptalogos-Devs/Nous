@@ -7,12 +7,7 @@ from typing import Annotated, Literal
 import typer
 from pydantic import TypeAdapter
 
-from nous.cognition.material_contracts import (
-    FollowMaterial,
-    MaterialRef,
-    MaterialSelection,
-    ReadMaterial,
-)
+from nous.cognition.material_contracts import FollowMaterial, MaterialSelection, ReadMaterial
 from nous.cognition.materials import FOLLOW_MATERIAL, READ_MATERIAL
 from nous.cognition.retrieval.contracts import (
     ContextSelection,
@@ -45,11 +40,9 @@ from nous.cognition.work.operations import (
     SET_ACTIVE_WORK,
 )
 from nous.common.errors import NousError
-from nous.content.contracts import ReadResult, ResultOutputRef, ResultRef
-from nous.content.operations import READ_RESULT
+from nous.content.contracts import DeliveryBudget, MaterialRef, ResultOutputRef, ResultRef
 from nous.presentation import translate
-from nous.presentation.evidence import format_material_read, format_retrieval
-from nous.wave.contracts import DeliveryBudget
+from nous.presentation.evidence import format_issue, format_material_read, format_retrieval
 
 from .cognition import journal_cli
 from .context import application_call, emit, language_for, options
@@ -57,10 +50,6 @@ from .groups import cli
 
 work_cli = typer.Typer(help="持续工作 / Persistent work", no_args_is_help=True)
 cli.add_typer(work_cli, name="work")
-
-
-def _result(ctx: typer.Context, ref: str) -> ResultRef:
-    return application_call(ctx, READ_RESULT, ReadResult(ref=ref, sources=False)).ref
 
 
 def _ref(value: MaterialRef | ResultRef) -> str:
@@ -154,12 +143,12 @@ def query(
         ),
     )
     if options(ctx).json_mode:
-        emit(ctx, response.model_dump(mode="json"))
+        emit(ctx, response.model_dump(mode="json", exclude_none=not options(ctx).select))
         return
     language = language_for(options(ctx))
     typer.echo(format_retrieval(response, language, include_issues=False))
-    for issue in response.issues:
-        typer.echo(f"{issue.code}: {issue.message}", err=True)
+    for issue in (*response.evidence.issues, *response.issues):
+        typer.echo(format_issue(issue, language), err=True)
     if explain:
         typer.echo(
             json.dumps(response.evidence.model_dump(mode="json"), ensure_ascii=False, indent=2)
@@ -169,21 +158,37 @@ def query(
 @cli.command("read")
 def read(
     ctx: typer.Context,
-    ref: str,
+    ref: Annotated[str | None, typer.Argument()] = None,
     part: str | None = None,
     namespace: str | None = None,
     sources: bool = False,
+    structure: bool = False,
     blocks: str | None = None,
+    selection: typer.FileBinaryRead | None = None,
 ) -> None:
+    if selection is not None and (ref is not None or part or blocks):
+        raise NousError("input.invalid", "Choose a material selection or a reference")
+    if selection is None and ref is None:
+        raise NousError("input.invalid", "Choose a material selection or a reference")
     if part and blocks:
         raise NousError("input.invalid", "Choose an evidence part or material blocks")
     request = (
-        ReadMaterial(delivery=ref, key=part, namespace=namespace, sources=sources)
+        ReadMaterial(
+            selection=MaterialSelection.model_validate_json(selection.read()),
+            namespace=namespace,
+            sources=sources,
+            structure=structure,
+        )
+        if selection is not None
+        else ReadMaterial(
+            delivery=ref, key=part, namespace=namespace, sources=sources, structure=structure
+        )
         if part
         else ReadMaterial(
             ref=ref,
             namespace=namespace,
             sources=sources,
+            structure=structure,
             blocks=tuple(blocks.split(",")) if blocks else (),
         )
     )
@@ -217,7 +222,12 @@ def follow(
 @cli.command("arrange")
 def arrange(
     ctx: typer.Context,
-    ref: str,
+    ref: Annotated[str | None, typer.Argument()] = None,
+    material: Annotated[list[str] | None, typer.Option("--material")] = None,
+    selection: typer.FileBinaryRead | None = None,
+    namespace: str | None = None,
+    question: str | None = None,
+    aspect: Annotated[list[str] | None, typer.Option("--aspect")] = None,
     purpose: str | None = None,
     detail: Literal["concise", "normal", "expanded"] = "normal",
     language: str | None = None,
@@ -226,7 +236,17 @@ def arrange(
         ctx,
         ARRANGE,
         ArrangeReading(
-            evidence=_result(ctx, ref), purpose=purpose, detail=detail, output_language=language
+            evidence=ref,
+            materials=(
+                *(material or ()),
+                *((MaterialSelection.model_validate_json(selection.read()),) if selection else ()),
+            ),
+            namespace=namespace,
+            question=question,
+            aspects=tuple(aspect) if aspect is not None else None,
+            purpose=purpose,
+            detail=detail,
+            output_language=language,
         ),
     )
     if options(ctx).json_mode:
@@ -311,7 +331,6 @@ def revise_work(
     body: Path | None = None,
     namespace: str | None = None,
 ) -> None:
-    current = application_call(ctx, READ_WORK, ReadWork(ref=ref, namespace=namespace))
     value = application_call(
         ctx,
         REVISE_WORK,
@@ -319,7 +338,7 @@ def revise_work(
             target=ref,
             expected=expected,
             state=WorkState.model_validate_json(state.read_text(encoding="utf-8")),
-            body=body.read_text(encoding="utf-8") if body else current.body,
+            body=body.read_text(encoding="utf-8") if body else None,
             namespace=namespace,
         ),
     )
@@ -351,25 +370,25 @@ def set_active_work(
 def record_work_use(
     ctx: typer.Context,
     ref: str,
-    evidence: str,
     selections: Path,
     purpose: str,
+    evidence: str | None = None,
     reading: str | None = None,
     decision: str | None = None,
     namespace: str | None = None,
 ) -> None:
-    revision = application_call(ctx, READ_WORK, ReadWork(ref=ref, namespace=namespace)).revision_ref
     actual = TypeAdapter(tuple[MaterialSelection, ...]).validate_json(selections.read_bytes())
     value = application_call(
         ctx,
         RECORD_WORK_USE,
         RecordWorkUse(
-            revision=revision,
-            evidence=_result(ctx, evidence),
-            reading=_result(ctx, reading) if reading else None,
+            revision=ref,
+            evidence=evidence,
+            reading=reading,
             selections=actual,
             purpose=purpose,
             decision_key=decision,
+            namespace=namespace,
         ),
     )
     emit(ctx, value.model_dump(mode="json")) if options(ctx).json_mode else typer.echo(value.id)
@@ -382,4 +401,5 @@ def list_work_uses(ctx: typer.Context, ref: str, namespace: str | None = None) -
         emit(ctx, {"uses": [item.model_dump(mode="json") for item in values]})
     else:
         for item in values:
-            typer.echo(f"{item.revision.identifier} · {item.purpose} · {item.evidence.identifier}")
+            evidence = f" · {item.evidence.identifier}" if item.evidence else ""
+            typer.echo(f"{item.revision.identifier} · {item.purpose}{evidence}")

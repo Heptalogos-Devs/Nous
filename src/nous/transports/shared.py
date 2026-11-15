@@ -11,7 +11,7 @@ import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
@@ -112,15 +112,20 @@ async def call_events(
 
     async def run() -> None:
         try:
-            value = await app.call_name(
-                payload.operation,
-                payload.request,
+            parsed = app.parse(payload.operation, payload.request)
+            value = await app.call_parsed(
+                parsed,
                 inputs=input_bindings(payload.inputs),
                 observer=observe,
                 timeout=timeout if timeout is not None else payload.timeout,
                 select=payload.select,
             )
-            await queue.put({"kind": "result", "value": select_json(value)})
+            await queue.put(
+                {
+                    "kind": "result",
+                    "value": cast(JsonValue, value) if payload.select else select_json(value),
+                }
+            )
         except Exception as error:
             await queue.put({"kind": "error", "error": error_value(error)})
 

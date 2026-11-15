@@ -5,8 +5,9 @@ import math
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from pydantic import JsonValue
 from starlette.applications import Starlette
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -14,7 +15,8 @@ from starlette.routing import Route
 
 from nous.application.inputs import StreamInput
 from nous.common.errors import NousError
-from nous.content.contracts import ExportOffer
+from nous.content.contracts import ExportContent
+from nous.content.operations import EXPORT_CONTENT
 from nous.presentation.json_selection import select_json
 from nous.runtime.execution import complete_cleanup
 
@@ -82,10 +84,10 @@ async def _call_until_disconnect(
             if message["type"] == "http.disconnect":
                 return
 
+    parsed = app.parse(payload.operation, payload.request)
     work = asyncio.create_task(
-        app.call_name(
-            payload.operation,
-            payload.request,
+        app.call_parsed(
+            parsed,
             inputs=input_bindings(payload.inputs),
             timeout=payload.timeout,
             select=payload.select,
@@ -131,7 +133,9 @@ def create_http_app(
         try:
             payload = CallRequest.model_validate_json(await _body(request, max_request_bytes))
             value = await _call_until_disconnect(app, payload, request)
-            return JSONResponse({"value": select_json(value)})
+            return JSONResponse(
+                {"value": cast(JsonValue, value) if payload.select else select_json(value)}
+            )
         except ClientDisconnect:
             raise
         except Exception as error:
@@ -160,9 +164,7 @@ def create_http_app(
 
     async def download(request: Request) -> Response:
         try:
-            offer = ExportOffer.model_validate(
-                await app.call_name("content.export_offer", {"ref": request.path_params["ref"]})
-            )
+            offer = await app.call(EXPORT_CONTENT, ExportContent(ref=request.path_params["ref"]))
             await artifacts.blob(offer.artifact_ref)
             return StreamingResponse(
                 content_chunks(artifacts, offer.artifact_ref.identifier),

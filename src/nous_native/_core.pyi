@@ -73,22 +73,13 @@ class Associations:
 
 class CandidateSet:
     def __init__(self, value_json: str) -> None: ...
-    @property
-    def value_json(self) -> str: ...
-
-class QueryObservation:
-    @property
-    def diagnostics_json(self) -> str: ...
 
 class NativeSnapshot:
     """Immutable loaded snapshot whose calculations use its engine's worker pool.
 
-    Observations and candidate pools are tied to the snapshot that produced
-    them. Keep the engine open while using the snapshot and pass a cancellation
+    Candidate pools are tied to their snapshot. Keep the engine open and pass a cancellation
     token to long-running operations when cooperative cancellation is needed.
     """
-    @property
-    def identity_json(self) -> str: ...
     @property
     def capabilities(self) -> list[str]: ...
     @property
@@ -101,21 +92,11 @@ class NativeSnapshot:
         aspects: Array[np.float32] | None = None,
         cancel: CancellationToken | None = None,
     ) -> Array[np.float64]: ...
-    def observe(
-        self,
-        vector: Array[np.float32],
-        *,
-        text: str = "",
-        options_json: str = "{}",
-        ghost_vectors: Array[np.float32] | None = None,
-        cancel: CancellationToken | None = None,
-    ) -> QueryObservation: ...
     def execute(
         self,
         *,
         name: str,
         program_json: str,
-        expression_json: str | None = None,
         text: str = "",
         raw_vector: Array[np.float32] | None = None,
         contextual_vector: Array[np.float32] | None = None,
@@ -125,14 +106,6 @@ class NativeSnapshot:
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
         candidate_set: CandidateSet | None = None,
-        cancel: CancellationToken | None = None,
-    ) -> str: ...
-    def think(
-        self,
-        observation: QueryObservation,
-        stages_json: str,
-        *,
-        options_json: str = "{}",
         cancel: CancellationToken | None = None,
     ) -> str: ...
     def neighborhood(

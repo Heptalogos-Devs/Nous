@@ -6,10 +6,9 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from nous.cognition.contracts import CognitiveValue, NamespaceSelector
-from nous.cognition.material_contracts import MaterialRef, MaterialSelection
-from nous.content.contracts import ArtifactRef, ContentSelection, ResultRef
-
-from .refs import WorkRef, WorkRevisionRef
+from nous.cognition.material_contracts import MaterialSelection
+from nous.common.material_refs import WorkRef, WorkRevisionRef
+from nous.content.contracts import ArtifactRef, ContentSelection, MaterialRef, ResultRef
 
 
 class WorkDecision(CognitiveValue):
@@ -46,12 +45,6 @@ class WorkState(CognitiveValue):
         return self
 
 
-class WorkAttributes(CognitiveValue):
-    state: WorkState
-    recorded_at: datetime
-    fields: dict[str, ContentSelection]
-
-
 class WorkView(CognitiveValue):
     ref: WorkRef
     revision_ref: WorkRevisionRef
@@ -62,6 +55,18 @@ class WorkView(CognitiveValue):
     fields: dict[str, ContentSelection]
     body: str
     recorded_at: datetime
+
+
+class WorkContextField(CognitiveValue):
+    key: str
+    selection: ContentSelection
+
+
+class WorkContext(CognitiveValue):
+    ref: WorkRevisionRef
+    fields: tuple[WorkContextField, ...]
+    active: tuple[MaterialSelection, ...]
+    recent: tuple[tuple[MaterialSelection, ...], ...]
 
 
 class CreateWork(CognitiveValue):
@@ -85,7 +90,7 @@ class ReviseWork(CognitiveValue):
     target: str | WorkRef | WorkRevisionRef
     expected: str | int | WorkRevisionRef | None = None
     state: WorkState
-    body: str
+    body: str | None = None
     namespace: NamespaceSelector = None
 
 
@@ -97,15 +102,21 @@ class SetActiveWork(CognitiveValue):
 
 
 class RecordWorkUse(CognitiveValue):
-    revision: WorkRevisionRef
-    evidence: ResultRef
-    reading: ResultRef | None = None
-    selections: tuple[MaterialSelection, ...] = Field(min_length=1)
+    revision: str | WorkRevisionRef
+    evidence: str | ResultRef | None = None
+    reading: str | ResultRef | None = None
+    selections: tuple[MaterialSelection, ...] = ()
+    evidence_keys: tuple[str, ...] = ()
     purpose: str = Field(min_length=1)
     decision_key: str | None = None
+    namespace: NamespaceSelector = None
 
     @model_validator(mode="after")
     def selections_are_explicit(self) -> RecordWorkUse:
+        if not self.selections and not self.evidence_keys:
+            raise ValueError("A work use must identify the selections actually used")
+        if self.evidence_keys and self.evidence is None:
+            raise ValueError("Evidence keys require their saved evidence")
         if any(not item.selections for item in self.selections):
             raise ValueError("A work use must identify the selections actually used")
         return self
@@ -114,7 +125,7 @@ class RecordWorkUse(CognitiveValue):
 class WorkUse(CognitiveValue):
     id: str
     revision: WorkRevisionRef
-    evidence: ResultRef
+    evidence: ResultRef | None = None
     reading: ResultRef | None = None
     selections: tuple[MaterialSelection, ...]
     purpose: str

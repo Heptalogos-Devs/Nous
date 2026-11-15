@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from nous.common.material_refs import RecordRef, RecordRevisionRef, WorkRevisionRef
 from nous.common.operations import OperationIssue
 from nous.content.contracts import (
     ArtifactRef,
@@ -11,6 +12,7 @@ from nous.content.contracts import (
     ContentReadView,
     ContentSelection,
     ExternalInput,
+    MaterialSource,
     ResultOutputRef,
     ResultRef,
     SourceTarget,
@@ -23,15 +25,11 @@ from ..contracts import (
     Namespace,
     NamespaceRef,
     NamespaceSelector,
-    RecordRef,
-    RecordRevisionRef,
     RevisionSelection,
-    SourceBinding,
     TitleSource,
 )
 from ..maintenance.contracts import MaintenanceOutcome
-from ..material_contracts import MaterialSelection, MaterialSource
-from ..work.refs import WorkRevisionRef
+from ..material_contracts import MaterialSelection
 
 WritingIntent = Literal["new", "edit", "rewrite", "reflection"]
 
@@ -40,10 +38,10 @@ class SourceChanges(CognitiveValue):
     """Describe how to retain, remove and add bindings when creating a revision."""
 
     preserve: bool = True
-    add: tuple[SourceBinding, ...] = ()
+    add: tuple[MaterialSource, ...] = ()
     remove: tuple[str, ...] = ()
 
-    def apply_to(self, inherited: tuple[SourceBinding, ...]) -> tuple[SourceBinding, ...]:
+    def apply_to(self, inherited: tuple[MaterialSource, ...]) -> tuple[MaterialSource, ...]:
         """Apply source changes while preserving retained and added input order.
 
         Raises:
@@ -88,8 +86,7 @@ class NormalizedEdit(CognitiveValue):
 
 
 class CitationContext(CognitiveValue):
-    inherited_sources: tuple[SourceBinding, ...] = ()
-    new_sources: tuple[SourceBinding, ...] = ()
+    inherited_sources: tuple[MaterialSource, ...] = ()
     targets: dict[str, ContentSelection] = Field(default_factory=dict)
 
 
@@ -252,8 +249,6 @@ class WritingProductContext(CognitiveValue):
 
     namespace_ref: NamespaceRef
     intent: WritingIntent
-    selected_sources: tuple[SourceBinding, ...]
-    material_sources: tuple[MaterialSource, ...] = ()
     base_revision: RecordRevisionRef | None = None
     citation_context: CitationContext = Field(default_factory=CitationContext)
     selected_edit_ranges: tuple[ContentSelection, ...] = ()
@@ -277,8 +272,20 @@ class WritingProductContext(CognitiveValue):
         return self
 
 
-class DraftContext(WritingProductContext):
-    source_bindings: tuple[SourceBinding, ...] = ()
+class DraftContext(CognitiveValue):
+    """Facts needed to save or continue an already completed draft."""
+
+    namespace_ref: NamespaceRef
+    base_revision: RecordRevisionRef | None = None
+    feedback_refs: tuple[str, ...] = ()
+    feedback_mappings: dict[str, str] = Field(default_factory=dict)
+    change_kind: Literal["edit", "correction"] = "edit"
+    purpose: str | None = "record"
+    author: str | None = None
+    viewpoint: str | None = None
+    times: CognitiveTimes
+    title: str | None = None
+    source_bindings: tuple[MaterialSource, ...] = ()
     normalized_edits: tuple[NormalizedEdit, ...] = ()
     issues: tuple[OperationIssue, ...] = ()
 
@@ -355,7 +362,7 @@ class DraftFromResult(CognitiveValue):
     result: ResultRef | str
     output: str | None = None
     namespace: NamespaceSelector = None
-    sources: tuple[SourceBinding, ...] | None = None
+    sources: tuple[MaterialSource, ...] | None = None
     title: str | None = None
 
 

@@ -5,12 +5,20 @@ from __future__ import annotations
 from collections.abc import Sequence
 from graphlib import CycleError, TopologicalSorter
 from heapq import heappop, heappush
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NotRequired
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from typing_extensions import TypedDict
 
 from nous.configuration.metadata import ConfigSequence
-from nous.content.contracts import ArtifactRef, ContentSelection, ExternalInput, SourceSelection
+from nous.content import contracts as content_contracts
+from nous.content.contracts import (
+    ArtifactRef,
+    ContentReadView,
+    ContentSelection,
+    ExternalInput,
+    SourceSelection,
+)
 from nous.models.vector_contracts import SpaceDefinition, VectorRef
 from nous.temporal.values import CognitiveTimes, Interval
 
@@ -103,11 +111,6 @@ class RankEvidence(WaveValue):
     details: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class DeliveredText(WaveValue):
-    content: ContentSelection
-    text: str
-
-
 class ScoreValue(WaveValue):
     name: str
     value: float = Field(allow_inf_nan=False)
@@ -119,8 +122,8 @@ class ScoreValue(WaveValue):
 class PassageDelivery(WaveValue):
     candidate: CandidateRef
     scored_ranges: tuple[ContentSelection, ...] = Field(min_length=1)
-    fragments: tuple[DeliveredText, ...] = Field(min_length=1)
-    support_context: tuple[DeliveredText, ...] = ()
+    fragments: tuple[ContentReadView, ...] = Field(min_length=1)
+    support_context: tuple[ContentReadView, ...] = ()
     shared_context: tuple[ContentSelection, ...] = ()
     scores: tuple[ScoreValue, ...] = ()
     assessment: dict[str, JsonValue] | None = None
@@ -128,23 +131,26 @@ class PassageDelivery(WaveValue):
     matched_fields: tuple[Literal["body", "title"], ...] = ()
     evidence: RankEvidence | None = None
 
+    @model_validator(mode="after")
+    def text_available(self) -> PassageDelivery:
+        if any(item.body_text is None for item in (*self.fragments, *self.support_context)):
+            raise ValueError("Wave passages require readable text")
+        return self
+
     @property
     def text(self) -> str:
-        return "…".join(fragment.text for fragment in self.fragments)
+        return "…".join(
+            fragment.body_text for fragment in self.fragments if fragment.body_text is not None
+        )
 
     @property
     def selections(self) -> tuple[ContentSelection, ...]:
-        return tuple(fragment.content for fragment in self.fragments)
+        return tuple(fragment.source for fragment in self.fragments)
 
 
 type DeliveryStatus = Literal[
     "selected", "budget_exhausted", "overlap", "no_candidates", "not_selected"
 ]
-
-
-class DeliveryBudget(WaveValue):
-    amount: int = Field(ge=1)
-    unit: Literal["characters", "bytes", "tokens"] = "characters"
 
 
 class GroupHit(WaveValue):
@@ -196,22 +202,44 @@ class CandidateHit(WaveValue):
     passage: PassageDelivery
 
 
-class ProgramRunFacts(WaveValue):
-    """The effective program and bounded settings for this particular query."""
+class ThinkingRoute(TypedDict):
+    source: str | None
+    target: str | None
+    previous: str | None
+    hop: int
+    flow: float
+    wormhole: bool
+    immediateReturn: bool
 
+
+class ThinkingResult(TypedDict):
+    candidate: str
+    parents: tuple[str, ...]
+    score: float
+    relation: str
+    chosen_path: dict[str, JsonValue] | None
+    route: ThinkingRoute | None
+
+
+class ThinkingStageResult(TypedDict):
     name: str
-    signature: str
-    definition_signature: str
-    requested_program: str | None
-    selection: Literal["explicit", "default", "fallback", "exploration"]
-    requirements: tuple[str, ...]
-    nodes: tuple[ProgramNode, ...]
-    outputs: dict[str, JsonValue]
-    options: dict[str, JsonValue]
-    budget: DeliveryBudget | None
-    space_id: str | None
-    space_signature: str | None
-    space_definition: SpaceDefinition | None
+    results: tuple[ThinkingResult, ...]
+    branch: NotRequired[str]
+
+
+class ThinkingUnavailable(TypedDict):
+    code: str
+    message: NotRequired[str]
+
+
+class BranchThinkingUnavailable(ThinkingUnavailable):
+    branch: str
+
+
+class ThinkingReadout(TypedDict):
+    stages: NotRequired[tuple[ThinkingStageResult, ...]]
+    unavailable: NotRequired[ThinkingUnavailable]
+    branch_unavailable: NotRequired[tuple[BranchThinkingUnavailable, ...]]
 
 
 class WaveSearchResult(WaveValue):
@@ -219,7 +247,10 @@ class WaveSearchResult(WaveValue):
 
     snapshot: SnapshotRef
     program: str
-    program_run: ProgramRunFacts | None = None
+    program_selection: Literal["explicit", "default", "fallback", "exploration"]
+    unavailable_capabilities: tuple[str, ...] = ()
+    fallback_from: str | None = None
+    budget: content_contracts.DeliveryBudget | None = None
     score_kind: str
     used_lanes: tuple[str, ...]
     skipped_lanes: tuple[dict[str, JsonValue], ...]
@@ -227,13 +258,11 @@ class WaveSearchResult(WaveValue):
     groups: tuple[GroupHit, ...]
     grouping: Literal["candidate", "document"]
     rank_scope: str
+    selected_context: tuple[SelectedContext, ...] = ()
     context_summary: dict[str, JsonValue]
-    cue_summary: tuple[dict[str, JsonValue], ...]
-    algorithm_versions: dict[str, str]
-    scope: dict[str, JsonValue]
     coverage: SearchCoverage
     branch_coverage: tuple[WaveBranchCoverage, ...] = ()
-    thinking: dict[str, JsonValue] | None = None
+    thinking: ThinkingReadout | None = None
     diagnostics: dict[str, JsonValue] | None = None
     issues: tuple[dict[str, JsonValue], ...] = ()
 
@@ -531,7 +560,6 @@ class CorpusView(CollectionManifest):
     profile: str | None = None
     manifest_artifact: ArtifactRef | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
-    capture_stamps: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def accepted_documents(self) -> CorpusView:
@@ -556,32 +584,12 @@ class ResolvedBuildProfile(WaveValue):
     build_config: dict[str, JsonValue]
 
 
-class ProjectionFacts(WaveValue):
-    """One document's candidate and graph declarations, without source closure."""
-
-    source_document: bool
-    concepts: tuple[Concept, ...] = ()
-    candidates: tuple[Candidate | DocumentCandidates, ...] = ()
-    source_sequences: tuple[SourceSequence, ...] = ()
-    support_groups: tuple[SupportGroup, ...] = ()
-    associations: tuple[Association, ...] = ()
-
-
-class ReusableDocument(WaveValue):
-    document: Document
-    roots: dict[str, tuple[ArtifactRef, ...]]
-    memberships: tuple[str, ...]
-    projection: ProjectionFacts
-
-
 class ProjectionUnit(WaveValue):
     """A reusable document projection and its stable candidate data."""
 
     signature: str
     input_signature: str
     layout_signature: str | None = None
-    capture_stamp: str | None = None
-    projection: ProjectionFacts | None = None
     roots: dict[str, JsonValue]
     document_key: str
     document: dict[str, JsonValue]
@@ -844,7 +852,7 @@ class WaveQuery(WaveValue):
     sort: str | None = None
     explore: bool = False
     top_k: int | None = Field(default=None, ge=1)
-    delivery_budget: DeliveryBudget | None = None
+    delivery_budget: content_contracts.DeliveryBudget | None = None
     program: str | None = None
     include_trace: bool = False
     include_counterevidence: bool | None = None
@@ -856,12 +864,15 @@ class WaveQuery(WaveValue):
             self.aspects
         ):
             raise ValueError("aspects must be nonempty and unique")
+        self.check_context_keys()
+        return self
+
+    def check_context_keys(self) -> None:
         if isinstance(self.context, ExternalInput):
-            return self
+            return
         keys = [item.key for item in self.context]
         if len(keys) != len(set(keys)):
             raise ValueError("context keys must be unique")
-        return self
 
 
 class WaveSegment(WaveValue):
