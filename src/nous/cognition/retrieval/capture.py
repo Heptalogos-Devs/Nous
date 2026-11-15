@@ -1,235 +1,270 @@
-"""Capture formal revisions and adopted annotations in the caller's consistent read view."""
+"""Capture one namespace's eligible materials in a consistent read view."""
 
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING
 
-import sqlalchemy as sa
+from pydantic import Field
 
-from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ArtifactRef
+from nous.cognition.basis import needs_review_in
+from nous.cognition.concept_contracts import AnnotationView
+from nous.cognition.contracts import CognitiveValue, Namespace, NamespaceRef
+from nous.cognition.material_contracts import (
+    CognitiveMaterialView,
+    MaterialRelation,
+)
+from nous.cognition.materials import Materials
+from nous.cognition.scope import NamespaceOperations
+from nous.common.errors import NousError
+from nous.common.material_refs import RecordRevisionRef, WorkRevisionRef
+from nous.content.contracts import ArtifactRef, MaterialRef, ResultOutputRef
+from nous.content.selections import subtract_selection
 from nous.storage.database import ReadTx
 
-from .. import basis, concept_schema, schema
-from ..annotation.operations import AnnotationOperations
-from ..concept_contracts import AnnotationView
-from ..contracts import Namespace, RecordRevisionRef, SourceBinding
-from ..scope import NamespaceOperations
-from ..writing.reading import RecordReader, RecordRow, RevisionRow
+if TYPE_CHECKING:
+    from nous.cognition.annotation.operations import AnnotationOperations
+    from nous.cognition.work.reading import WorkReader
+    from nous.cognition.writing.reading import RecordReader
+    from nous.content.artifacts import ArtifactStore
+    from nous.content.results import ResultStore
 
 
-@dataclass(frozen=True)
-class CapturedRecord:
-    record: RecordRow
-    revision: RevisionRow
-    ref: RecordRevisionRef
-    body: ArtifactRef
-    sources: tuple[SourceBinding, ...]
+class MaterialRoot(CognitiveValue):
+    key: str = Field(min_length=1)
+    artifact: ArtifactRef
 
 
-@dataclass(frozen=True)
-class CapturedCorpus:
-    namespace: Namespace
-    records: dict[str, CapturedRecord]
-    current: tuple[str, ...]
-    annotations: dict[str, AnnotationView]
-    needs_review: frozenset[str]
-    origins: dict[str, ArtifactRef]
+class MaterialIndex(CognitiveValue):
+    key: str = Field(min_length=1)
+    group_key: str = Field(min_length=1)
+    namespace: NamespaceRef | None = None
+    available: bool = True
+    opt_in: str | None = None
+    purpose: str | None = None
+    needs_review: bool = False
+    annotation: AnnotationView | None = None
+    interpretation: bool = False
+    root: MaterialRoot | None = None
+    provenance: ArtifactRef | None = None
+    support_relations: tuple[MaterialRelation, ...] = ()
 
 
-@dataclass(frozen=True)
-class DirectoryEntry:
-    record: RecordRow
-    revision: RevisionRow
-    ref: RecordRevisionRef
-    body_digest: str
-    annotation_id: str | None
-    needs_review: bool
+class MaterialSnapshot(CognitiveValue):
+    view: CognitiveMaterialView
+    body_digest: str | None
+    index: MaterialIndex
 
 
 @dataclass(frozen=True)
 class CaptureDirectory:
     namespace: Namespace
-    entries: dict[str, DirectoryEntry]
+    entries: dict[str, MaterialSnapshot]
     needs_review_count: int
 
 
+@dataclass(frozen=True)
+class CapturedCorpus:
+    namespace: Namespace
+    materials: dict[str, MaterialSnapshot]
+    current: tuple[str, ...]
+
+
 class CorpusCapture:
-    """Capture retrieval inputs from formal records in a caller-owned read view."""
+    """Apply retrieval eligibility to material facts captured by their owners."""
 
     def __init__(
         self,
         scope: NamespaceOperations,
-        records: RecordReader,
+        materials: Materials,
         artifacts: ArtifactStore,
+        results: ResultStore,
+        records: RecordReader,
+        work: WorkReader,
         annotations: AnnotationOperations,
     ):
-        self.scope, self.records, self.artifacts, self.annotations = (
-            scope,
-            records,
+        self.scope, self.materials = scope, materials
+        self.artifacts, self.results, self.records, self.work, self.annotations = (
             artifacts,
+            results,
+            records,
+            work,
             annotations,
         )
 
+    async def index_in(
+        self, tx: ReadTx, views: tuple[CognitiveMaterialView, ...]
+    ) -> tuple[MaterialSnapshot, ...]:
+        """Capture retrieval-only facts for these exact materials in the same read view."""
+        records = tuple(view.ref for view in views if isinstance(view.ref, RecordRevisionRef))
+        annotations = await self.annotations.read_many_in(tx, records) if records else {}
+        review: set[str] = set()
+        revision_ids = list(dict.fromkeys(ref.revision_id for ref in records))
+        for offset in range(0, len(revision_ids), 800):
+            review.update(await needs_review_in(tx, revision_ids[offset : offset + 800]))
+        record_facts = await self.records.search_facts_in(tx, records)
+        output_refs = tuple(view.ref for view in views if isinstance(view.ref, ResultOutputRef))
+        output_mappings = await self.results.output_mappings_in(tx, output_refs)
+        bodies = tuple(view.body.artifact for view in views if view.body is not None)
+        blobs = await self.artifacts.content.resolve_many_in(tx, [body.id for body in bodies])
+        digests = {body.id: blob.digest for body, blob in zip(bodies, blobs, strict=True)}
+        support_kinds = {"reference", "current_basis", "source", "derived", "identity", "atomic"}
+        snapshots: list[MaterialSnapshot] = []
+        for view in views:
+            ref = view.ref
+            if isinstance(ref, RecordRevisionRef):
+                facts = record_facts[ref.revision_id]
+                annotation = annotations.get(ref.revision_id)
+                needs_review = ref.revision_id in review
+                index = MaterialIndex(
+                    key=self.materials.key(ref),
+                    group_key=ref.identifier,
+                    namespace=NamespaceRef(
+                        instance_id=ref.record_ref.instance_id, id=ref.record_ref.namespace_id
+                    ),
+                    available=facts.available,
+                    purpose=facts.purpose,
+                    needs_review=needs_review,
+                    annotation=annotation,
+                    interpretation=view.kind == "journal",
+                    root=MaterialRoot(
+                        key="record:" + ref.record_ref.id, artifact=facts.original_body
+                    )
+                    if facts.original_body
+                    else None,
+                    support_relations=tuple(
+                        MaterialRelation(
+                            kind=source.kind, target=source.material, evidence=source.selections
+                        )
+                        for source in view.material_sources
+                        if source.kind in support_kinds
+                    ),
+                )
+            elif isinstance(ref, WorkRevisionRef):
+                index = MaterialIndex(
+                    key=self.work.material_key(ref),
+                    group_key=ref.identifier,
+                    namespace=self.work.material_namespace(ref),
+                    opt_in="work",
+                    support_relations=self.work.search_support(view),
+                )
+            elif isinstance(ref, ArtifactRef):
+                index = MaterialIndex(
+                    key=self.materials.key(ref),
+                    group_key=ref.identifier,
+                    available=False,
+                    provenance=ref,
+                )
+            else:
+                assert isinstance(ref, ResultOutputRef) and view.body is not None
+                source_relations = tuple(
+                    MaterialRelation(
+                        kind=source.kind, target=source.material, evidence=source.selections
+                    )
+                    for source in view.material_sources
+                )
+                covered = tuple(
+                    part for source in view.material_sources for part in source.selections
+                )
+                mapping_relations = (
+                    MaterialRelation(
+                        kind=mapping.relation,
+                        target=origin.artifact,
+                        scope=(view.body.model_copy(update={"selection": mapping.selection}),),
+                        evidence=(origin,),
+                    )
+                    for mapping in output_mappings.get((ref.result.id, ref.output), ())
+                    for origin in mapping.origins
+                )
+                support = tuple(
+                    item for item in source_relations if item.kind in support_kinds
+                ) + tuple(
+                    relation.model_copy(update={"evidence": (part,)})
+                    for relation in mapping_relations
+                    for origin in relation.evidence
+                    for part in subtract_selection(origin, covered)
+                )
+                index = MaterialIndex(
+                    key=self.materials.key(ref),
+                    group_key=f"{ref.result.identifier}:{ref.output}",
+                    available=False,
+                    provenance=view.body.artifact if not view.material_sources else None,
+                    support_relations=support,
+                )
+            snapshots.append(
+                MaterialSnapshot(
+                    view=view,
+                    body_digest=digests.get(view.body.artifact.id) if view.body else None,
+                    index=index,
+                )
+            )
+        return tuple(snapshots)
+
     async def directory_in(
-        self, tx: ReadTx, namespace: str, *, include_review: bool, include_exploration: bool
+        self,
+        tx: ReadTx,
+        namespace: str,
+        *,
+        include_review: bool,
+        include_exploration: bool,
+        include_work: bool,
     ) -> CaptureDirectory:
-        """Read lightweight immutable identities and authoritative eligibility facts."""
         ns = await self.scope.get_in(tx, namespace)
-        current_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.records).where(
-                        schema.records.c.namespace_id == ns.id,
-                        schema.records.c.archived.is_(False),
-                        schema.records.c.recall.is_(True),
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        current = tuple(str(row["head_revision_id"]) for row in current_rows)
-        if not current:
-            return CaptureDirectory(ns, {}, 0)
-        revision_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.revisions).where(schema.revisions.c.id.in_(current))
-                )
-            )
-            .mappings()
-            .all()
-        )
-        revisions = {str(row["id"]): cast(RevisionRow, dict(row)) for row in revision_rows}
-        records = {str(row["id"]): cast(RecordRow, dict(row)) for row in current_rows}
-        body_ids = [revisions[revision]["body_artifact_id"] for revision in current]
-        blobs = await self.artifacts.content.resolve_many_in(tx, body_ids)
-        annotation_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(concept_schema.annotation_heads).where(
-                        concept_schema.annotation_heads.c.record_revision_id.in_(current)
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        annotations = {
-            str(row["record_revision_id"]): str(row["annotation_id"]) for row in annotation_rows
-        }
-        needs_review = await basis.needs_review_in(tx, current)
-        entries: dict[str, DirectoryEntry] = {}
-        for identifier, blob in zip(current, blobs, strict=True):
-            revision = revisions[identifier]
-            record = records[revision["record_id"]]
-            if (identifier in needs_review and not include_review) or (
-                revision["purpose"] == "exploration" and not include_exploration
-            ):
+        snapshots = await self.index_in(tx, await self.materials.current_in(tx, ns.ref))
+        entries: dict[str, MaterialSnapshot] = {}
+        groups: dict[str, MaterialRef] = {}
+        review_count = 0
+        enabled: set[str] = {"work"} if include_work else set()
+        for snapshot in snapshots:
+            view = snapshot.view
+            index = snapshot.index
+            if not index.available:
                 continue
-            entries[identifier] = DirectoryEntry(
-                record=record,
-                revision=revision,
-                ref=self.records.revision_ref(record, revision),
-                body_digest=blob.digest,
-                annotation_id=annotations.get(identifier),
-                needs_review=identifier in needs_review,
-            )
-        return CaptureDirectory(ns, entries, len(needs_review))
+            if index.opt_in is not None and index.opt_in not in enabled:
+                continue
+            if index.needs_review:
+                review_count += 1
+            if index.needs_review and not include_review:
+                continue
+            if index.purpose == "exploration" and not include_exploration:
+                continue
+            if view.body is not None:
+                if index.group_key in groups and groups[index.group_key] != view.ref:
+                    raise NousError(
+                        "material.identity_conflict",
+                        "Searchable materials have conflicting identities",
+                    )
+                entries[index.key] = snapshot
+                groups[index.group_key] = view.ref
+        return CaptureDirectory(ns, entries, review_count)
 
     async def expand_in(
         self, tx: ReadTx, directory: CaptureDirectory, needed_keys: tuple[str, ...]
     ) -> CapturedCorpus:
-        """Expand selected groups and their exact source ancestors in the same view."""
-        ns = directory.namespace
-        current = needed_keys
-        if not current:
-            return CapturedCorpus(ns, {}, (), {}, frozenset(), {})
-
-        ancestors = (
-            sa.select(schema.revisions.c.id.label("id"))
-            .where(schema.revisions.c.id.in_(current))
-            .cte("cognition_ancestors", recursive=True)
-        )
-        ancestors = ancestors.union(
-            sa.select(schema.sources.c.target_revision_id.label("id"))
-            .join(ancestors, schema.sources.c.revision_id == ancestors.c.id)
-            .where(
-                schema.sources.c.target_revision_id.is_not(None),
-                schema.sources.c.usage != "inspiration",
+        """Resolve precise source ancestors through the common material registry."""
+        captured = {key: directory.entries[key] for key in needed_keys}
+        frontier: list[MaterialSnapshot] = list(captured.values())
+        while frontier:
+            pending: dict[str, MaterialRef] = {}
+            for snapshot in frontier:
+                for relation in snapshot.index.support_relations:
+                    key = self.materials.key(relation.target)
+                    if key not in captured:
+                        pending[key] = relation.target
+                    for selection in relation.evidence:
+                        artifact_key = self.materials.key(selection.artifact)
+                        if artifact_key not in captured:
+                            pending[artifact_key] = selection.artifact
+            if not pending:
+                break
+            values = await self.index_in(
+                tx,
+                await self.materials.capture_in(
+                    tx, tuple(pending.values()), namespace=directory.namespace.ref
+                ),
             )
-        )
-        revision_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.revisions).where(
-                        schema.revisions.c.id.in_(sa.select(ancestors.c.id))
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        revisions = {str(row["id"]): cast(RevisionRow, dict(row)) for row in revision_rows}
-        record_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.records).where(
-                        schema.records.c.id.in_([row["record_id"] for row in revisions.values()])
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        records = {str(row["id"]): cast(RecordRow, dict(row)) for row in record_rows}
-        sources = await self.records.sources_many_in(tx, list(revisions))
-        # A formal original keeps its first accepted body as the immutable witness
-        # while each later revision supplies only the current text and graph.
-        origin_rows = (
-            (
-                await tx.connection.execute(
-                    sa.select(
-                        schema.revisions.c.record_id, schema.revisions.c.body_artifact_id
-                    ).where(
-                        schema.revisions.c.record_id.in_(list(records)),
-                        schema.revisions.c.ordinal == 1,
-                        ~sa.select(1)
-                        .where(schema.sources.c.revision_id == schema.revisions.c.id)
-                        .exists(),
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        artifact_ids = {row["body_artifact_id"] for row in revisions.values()}
-        artifact_ids.update(row["body_artifact_id"] for row in origin_rows)
-        artifact_ids.update(
-            selection.artifact.id
-            for bindings in sources.values()
-            for binding in bindings
-            for selection in binding.selections
-        )
-        artifact_values = await self.artifacts.get_many_in(tx, list(artifact_ids))
-        artifacts = {item.ref.id: item.ref for item in artifact_values}
-        captured: dict[str, CapturedRecord] = {}
-        for identifier, revision in revisions.items():
-            record = records[revision["record_id"]]
-            captured[identifier] = CapturedRecord(
-                record=record,
-                revision=revision,
-                ref=self.records.revision_ref(record, revision),
-                body=artifacts[revision["body_artifact_id"]],
-                sources=tuple(sources[identifier]),
-            )
-        annotations = await self.annotations.read_many_in(
-            tx, [captured[identifier].ref for identifier in current]
-        )
-        needs_review = {
-            identifier for identifier in current if directory.entries[identifier].needs_review
-        }
-        origins = {
-            str(row["record_id"]): artifacts[str(row["body_artifact_id"])] for row in origin_rows
-        }
-        return CapturedCorpus(ns, captured, current, annotations, frozenset(needs_review), origins)
+            frontier = []
+            for value in values:
+                key = value.index.key
+                if key not in captured:
+                    captured[key] = value
+                    frontier.append(value)
+        return CapturedCorpus(directory.namespace, captured, needed_keys)

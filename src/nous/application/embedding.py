@@ -18,7 +18,6 @@ from nous.common.errors import NousError
 from nous.common.operations import record_completed
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
-    ArtifactRef,
     ContentSelection,
     InputGroup,
     InputPart,
@@ -171,12 +170,7 @@ class EmbeddingOperations:
                     producer=ModelProducer.model_validate(generated.producer),
                     selected_inputs=SelectedInputs(
                         sources=tuple(
-                            SelectedSource(
-                                slot_key=group.slot_key,
-                                role=group.role,
-                                selections=(source,),
-                                display_name=group.name,
-                            )
+                            SelectedSource(material=source.artifact, key=group.slot_key, kind=group.role, selections=(source,), name=group.name)
                             for group, source in zip(groups, inputs, strict=True)
                         )
                     ),
@@ -218,13 +212,13 @@ class EmbeddingOperations:
         async with self.execution.operation("embedding.run"):
             _, sources = await self._inputs(request.sources, call, adopt=True)
             batch = await self.ensure(sources, request.space, request.purpose)
-            results: dict[str, ResultRef] = {}
-            artifacts: dict[str, ArtifactRef] = {}
-            for row in batch.rows:
-                if row.result_id not in results:
-                    result = await self.results.get(row.result_id)
-                    results[row.result_id] = result.ref
-                    artifacts.update({item.artifact.id: item.artifact for item in result.outputs})
+            result_ids = tuple(dict.fromkeys(row.result_id for row in batch.rows))
+            artifact_ids = tuple(dict.fromkeys(row.artifact_id for row in batch.rows))
+            async with self.results.database.read() as tx:
+                refs = await self.results.refs_in(tx, result_ids)
+                contents = await self.results.artifacts.get_many_in(tx, artifact_ids)
+            results = dict(zip(result_ids, refs, strict=True))
+            artifacts = {item.ref.id: item.ref for item in contents}
             return EmbeddingOutcome(
                 space=batch.space,
                 purpose=request.purpose,

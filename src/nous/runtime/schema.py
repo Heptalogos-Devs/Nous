@@ -3,6 +3,7 @@
 from nous.cognition.concept_schema import metadata as concept_metadata
 from nous.cognition.feedback_schema import metadata as feedback_metadata
 from nous.cognition.schema import metadata as cognition_metadata
+from nous.cognition.work.schema import metadata as work_metadata
 from nous.content.schema import metadata as content_metadata
 from nous.models.embedding_schema import metadata as embedding_metadata
 from nous.storage.content_schema import metadata as blob_metadata
@@ -14,6 +15,7 @@ BUSINESS_METADATA = (
     embedding_metadata,
     wave_metadata,
     cognition_metadata,
+    work_metadata,
     concept_metadata,
     feedback_metadata,
 )

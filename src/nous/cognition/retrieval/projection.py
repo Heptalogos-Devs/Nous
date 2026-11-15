@@ -8,10 +8,8 @@ from pydantic import JsonValue
 from nous.common.errors import NousError
 from nous.content.contracts import ArtifactRef
 from nous.content.results import ResultStore
-from nous.temporal.values import CognitiveTimes
 from nous.wave.contracts import (
     Association,
-    Candidate,
     CandidateContent,
     CandidateOccurrence,
     CandidatePath,
@@ -25,14 +23,14 @@ from nous.wave.contracts import (
     EvidenceProjection,
     GroupDescriptor,
     PathStep,
-    ReusableDocument,
     SourceSequence,
     SupportGroup,
     document_order,
 )
 
 from ..concept_contracts import AnnotationView
-from .capture import CapturedCorpus
+from ..materials import Materials
+from .capture import CapturedCorpus, MaterialSnapshot
 from .contracts import CognitiveGroupContext
 
 
@@ -107,90 +105,26 @@ def interpretation_contributions(
 class ProjectionBuilder:
     """Build Wave projections from a frozen cognitive corpus."""
 
-    def __init__(self, results: ResultStore):
-        self.results = results
+    def __init__(self, results: ResultStore, materials: Materials):
+        self.results, self.materials = results, materials
 
     @staticmethod
-    def combine(
-        collection: str,
-        profile: str,
-        namespace_id: str,
-        generation: int,
-        needs_review_count: int,
-        fragments: Sequence[tuple[str, str, CorpusView | ReusableDocument, GroupDescriptor]],
-        sources: dict[str, ReusableDocument],
-    ) -> CorpusView:
-        """Assemble independent group projections without expanding unchanged sources."""
-        documents: dict[str, Document] = {}
-        concepts: dict[str, Concept] = {}
-        candidates: dict[str, Candidate | DocumentCandidates] = {}
-        associations: dict[str, Association] = {}
-        support_groups: dict[str, SupportGroup] = {}
-        sequences: dict[str, SourceSequence] = {}
-        roots: dict[str, tuple[ArtifactRef, ...]] = {}
-        memberships: dict[str, tuple[str, ...]] = {}
-        source_documents: dict[str, None] = {}
-        groups: list[GroupDescriptor] = []
-        stamps: dict[str, str] = {}
-
-        def merge[T](target: dict[str, T], key: str, value: T) -> None:
-            if key in target and target[key] != value:
-                raise NousError(
-                    "wave.projection_conflict",
-                    "Projection fragments disagree",
-                    details={"key": key},
+    def group(snapshot: MaterialSnapshot) -> GroupDescriptor:
+        view, index = snapshot.view, snapshot.index
+        context = CognitiveGroupContext(
+            material=view.ref,
+            needs_review=index.needs_review,
+            sources=tuple(
+                dict.fromkeys(
+                    part for source in view.material_sources for part in source.selections
                 )
-            target[key] = value
-
-        for value in sources.values():
-            merge(documents, value.document.key, value.document)
-            for key, refs in value.roots.items():
-                merge(roots, key, refs)
-            merge(memberships, value.document.key, value.memberships)
-            if value.projection.source_document:
-                source_documents[value.document.key] = None
-
-        for document_key, stamp, fragment, group in fragments:
-            if isinstance(fragment, CorpusView):
-                for value in fragment.documents:
-                    merge(documents, value.key, value)
-                for key, refs in fragment.evidence.roots.items():
-                    merge(roots, key, refs)
-                for key, value in fragment.evidence.documents.items():
-                    merge(memberships, key, value)
-                source_documents.update(dict.fromkeys(fragment.evidence.source_documents))
-                declarations = fragment
-            else:
-                declarations = fragment.projection
-            for value in declarations.concepts:
-                merge(concepts, value.key, value)
-            for value in declarations.candidates:
-                merge(candidates, value.key, value)
-            for value in declarations.associations:
-                merge(associations, value.key, value)
-            for value in declarations.support_groups:
-                merge(support_groups, value.key, value)
-            for value in declarations.source_sequences:
-                sequences.setdefault(value.model_dump_json(), value)
-            groups.append(group)
-            stamps[document_key] = stamp
-        return CorpusView(
-            name=collection,
-            owner=CognitionOwner(namespace_id=namespace_id),
-            generation=generation,
-            profile=profile,
-            metadata={"needs_review_count": needs_review_count},
-            documents=tuple(documents.values()),
-            groups=tuple(groups),
-            evidence=EvidenceProjection(
-                roots=roots, documents=memberships, source_documents=tuple(source_documents)
             ),
-            concepts=tuple(concepts.values()),
-            candidates=tuple(candidates.values()),
-            source_sequences=tuple(sequences.values()),
-            support_groups=tuple(support_groups.values()),
-            associations=tuple(associations.values()),
-            capture_stamps=stamps,
+        )
+        return GroupDescriptor(
+            key=index.group_key,
+            document_key=index.key,
+            title=view.title,
+            context=cast(dict[str, JsonValue], context.model_dump(mode="json")),
         )
 
     async def build(
@@ -200,110 +134,85 @@ class ProjectionBuilder:
         profile: str,
         *,
         candidate_limit: int,
+        needs_review_count: int,
     ) -> CorpusView:
-        """Project the captured revisions, sources and annotations for a Wave collection.
-
-        The directory has already selected eligible revisions. Input revisions and
-        their source references stay exact.
-        """
+        """Project frozen common material views and their exact source relations."""
+        views = {key: item.view for key, item in captured.materials.items()}
         documents: list[Document] = []
-        external: dict[str, ArtifactRef] = {}
-        relevant: set[str] = set()
-        pending = list(captured.current)
-        while pending:
-            object_id = pending.pop()
-            if object_id in relevant:
-                continue
-            relevant.add(object_id)
-            pending.extend(
-                source.owner_revision.revision_id
-                for source in captured.records[object_id].sources
-                if source.usage != "inspiration" and source.owner_revision is not None
+        for key, view in views.items():
+            if view.body is None:
+                raise NousError("wave.projection_incomplete", "Captured material has no body")
+            parents = tuple(
+                dict.fromkeys(
+                    self.materials.key(relation.target)
+                    for relation in captured.materials[key].index.support_relations
+                    if self.materials.key(relation.target) != key
+                )
             )
-        for object_id, item in captured.records.items():
-            if object_id not in relevant:
-                continue
-            parents: list[str] = []
-            for source in item.sources:
-                if source.usage == "inspiration":
-                    continue
-                if source.owner_revision:
-                    parents.append("revision:" + source.owner_revision.revision_id)
-                else:
-                    for selection in source.selections:
-                        ref = selection.artifact
-                        external[ref.id] = ref
-                        parents.append("artifact:" + ref.id)
             documents.append(
                 Document(
-                    key="revision:" + object_id,
-                    input=DocumentInput(artifact=item.body.identifier),
-                    title=item.revision["title"],
-                    derived_from=tuple(dict.fromkeys(parents)),
-                    times=CognitiveTimes.model_validate(item.revision["cognitive_times"]),
+                    key=key,
+                    input=DocumentInput(artifact=view.body.artifact.identifier),
+                    title=view.title,
+                    derived_from=parents,
+                    times=view.times,
                 )
             )
-        documents.extend(
-            Document(key="artifact:" + key, input=DocumentInput(artifact=ref.identifier))
-            for key, ref in external.items()
-        )
         document_values = {document.key: document for document in documents}
-        root_refs: dict[str, tuple[ArtifactRef, ...]] = {}
-        document_roots: dict[str, tuple[str, ...]] = {}
+        external = {
+            key: item.index.provenance
+            for key, item in captured.materials.items()
+            if item.index.provenance is not None
+        }
+        lineage = await self.results.provenance(tuple(external.values()))
+        roots: dict[str, tuple[ArtifactRef, ...]] = {}
+        memberships: dict[str, tuple[str, ...]] = {}
         source_documents: list[str] = []
-        external_lineage = await self.results.provenance(tuple(external.values()))
-        for object_id, ref in external.items():
-            summary = external_lineage[object_id]
-            if not summary.complete:
-                raise NousError(
-                    "wave.provenance_incomplete",
-                    "External source lineage is incomplete",
-                    details={"artifact": ref.identifier},
-                )
-            keys: list[str] = []
-            for origin in summary.support_roots:
-                root = "artifact:" + origin.id
-                root_refs[root] = (origin,)
-                keys.append(root)
-            document_roots["artifact:" + object_id] = tuple(dict.fromkeys(keys))
-            if summary.support_roots == (ref,) and summary.terminal_roots == (ref,):
-                source_documents.append("artifact:" + object_id)
-
         for key in document_order(documents):
-            if key in document_roots:
-                continue
             document = document_values[key]
+            index = captured.materials[key].index
             if document.derived_from:
-                value = tuple(
+                memberships[key] = tuple(
                     dict.fromkeys(
-                        root for parent in document.derived_from for root in document_roots[parent]
+                        root for parent in document.derived_from for root in memberships[parent]
                     )
                 )
-            else:
-                item = captured.records[key.removeprefix("revision:")]
-                origin = captured.origins.get(item.record["id"])
-                if origin is None:
-                    value = ()
-                else:
-                    root = "record:" + item.record["id"]
-                    root_refs[root] = (origin,)
-                    value = (root,)
+            elif index.root is not None:
+                roots[index.root.key] = (index.root.artifact,)
+                memberships[key] = (index.root.key,)
+                source_documents.append(key)
+            elif index.provenance is not None:
+                artifact = external[key]
+                summary = lineage[artifact.id]
+                if not summary.complete:
+                    raise NousError(
+                        "wave.provenance_incomplete",
+                        "External source lineage is incomplete",
+                        details={"artifact": artifact.identifier},
+                    )
+                items: list[str] = []
+                for origin in summary.support_roots:
+                    root = "artifact:" + origin.id
+                    roots[root] = (origin,)
+                    items.append(root)
+                memberships[key] = tuple(dict.fromkeys(items))
+                if summary.support_roots == (artifact,) and summary.terminal_roots == (artifact,):
                     source_documents.append(key)
-            document_roots[key] = value
+            else:
+                memberships[key] = ()
         evidence = EvidenceProjection(
-            roots=root_refs, documents=document_roots, source_documents=tuple(source_documents)
+            roots=roots, documents=memberships, source_documents=tuple(source_documents)
         )
-        candidates: list[DocumentCandidates] = []
         groups: list[GroupDescriptor] = []
-        support_groups: list[SupportGroup] = []
-        associations: list[Association] = []
+        candidates: list[DocumentCandidates] = []
         concepts: dict[str, Concept] = {}
         sequences: list[SourceSequence] = []
-        source_documents_set = set(evidence.source_documents)
-        for object_id in captured.current:
-            item = captured.records[object_id]
-            doc = "revision:" + object_id
-            annotation = captured.annotations.get(object_id)
+        supports: list[SupportGroup] = []
+        associations: list[Association] = []
+        for key in captured.current:
+            view = views[key]
+            index = captured.materials[key].index
+            annotation = index.annotation
             paths = annotation_paths(annotation) if annotation else ()
             occurrences = annotation_occurrences(annotation) if annotation else ()
             if annotation:
@@ -318,34 +227,20 @@ class ProjectionBuilder:
                         for meaning in annotation.bindings.values()
                     }
                 )
-                if doc in source_documents_set:
+                if key in source_documents:
                     sequences.extend(
                         SourceSequence(
-                            document=doc,
+                            document=key,
                             concepts=tuple(step.concept for step in path.steps),
                             ordered=True,
                         )
                         for path in paths
                     )
-            context = CognitiveGroupContext(
-                revision_ref=item.ref,
-                kind=item.record["kind"],
-                purpose=item.revision["purpose"],
-                needs_review=object_id in captured.needs_review,
-                sources=item.sources,
-            )
-            groups.append(
-                GroupDescriptor(
-                    key=item.ref.identifier,
-                    document_key=doc,
-                    title=item.revision["title"],
-                    context=cast(dict[str, JsonValue], context.model_dump(mode="json")),
-                )
-            )
+            groups.append(self.group(captured.materials[key]))
             candidates.append(
                 DocumentCandidates(
-                    document=doc,
-                    group_key=item.ref.identifier,
+                    document=key,
+                    group_key=index.group_key,
                     whole=True,
                     local_layout=CompleteBlocks(target_bytes=candidate_limit),
                     paths=paths,
@@ -354,25 +249,29 @@ class ProjectionBuilder:
                 )
             )
             if (
-                item.record["kind"] == "journal"
-                and document_values[doc].derived_from
-                and evidence.documents[doc]
+                index.interpretation
+                and document_values[key].derived_from
+                and memberships[key]
                 and paths
             ):
-                premises = tuple(
-                    CandidateContent(
-                        document="revision:" + source.owner_revision.revision_id
-                        if source.owner_revision
-                        else "artifact:" + part.artifact.id,
-                        selector=part.selection,
-                    )
-                    for source in item.sources
-                    if source.usage != "inspiration"
-                    for part in source.selections
-                )
-                group, edges = interpretation_contributions(doc, paths, premises)
+                premises: list[CandidateContent] = []
+                for relation in index.support_relations:
+                    target_key = self.materials.key(relation.target)
+                    target = views[target_key]
+                    if not relation.evidence:
+                        premises.append(CandidateContent(document=target_key))
+                    for part in relation.evidence:
+                        part_key = (
+                            target_key
+                            if target.body and target.body.artifact == part.artifact
+                            else self.materials.key(part.artifact)
+                        )
+                        premises.append(
+                            CandidateContent(document=part_key, selector=part.selection)
+                        )
+                group, edges = interpretation_contributions(key, paths, tuple(premises))
                 if group is not None:
-                    support_groups.append(group)
+                    supports.append(group)
                     associations.extend(edges)
         return CorpusView(
             name=collection,
@@ -380,12 +279,12 @@ class ProjectionBuilder:
             owner=CognitionOwner(namespace_id=captured.namespace.id),
             generation=captured.namespace.content_generation,
             profile=profile,
-            metadata={"needs_review_count": len(captured.needs_review)},
+            metadata={"needs_review_count": needs_review_count},
             documents=tuple(documents),
             groups=tuple(groups),
             concepts=tuple(concepts.values()),
             source_sequences=tuple(sequences),
             candidates=tuple(candidates),
-            support_groups=tuple(support_groups),
+            support_groups=tuple(supports),
             associations=tuple(associations),
         )

@@ -6,10 +6,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from nous.cognition.contracts import RecordRef, RecordRevisionRef, RecordView
+from nous.cognition.contracts import RecordView
 from nous.cognition.writing.contracts import AfterWrite
 from nous.common.errors import NousError
 from nous.common.files import write_text
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.runtime.paths import ResolvedPaths
 
 

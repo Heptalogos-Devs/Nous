@@ -295,7 +295,7 @@ def test_video_fallback_preserves_scope_across_physical_batches(tmp_path: Path) 
     assert reread.returncode == source.returncode == 0
     result_view, source_view = json.loads(reread.stdout), json.loads(source.stdout)
     assert (
-        result_view["input_views"]
+        result_view["content_views"]
         and result_view["outputs"][0]["view"]["body_text"] == "Frames received."
     )
     description = next(

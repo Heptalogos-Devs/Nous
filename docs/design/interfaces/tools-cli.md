@@ -29,6 +29,7 @@ nous tools content add ./clip.mp4
 nous tools media inspect "<完整Artifact标识符>"
 nous tools media analyze "<完整Artifact标识符>" --strategy describe_then_structure
 nous tools result read "<完整结果标识符>" --sources --details
+nous tools result delete "<完整结果标识符>"
 nous tools embedding run --space chosen-text --purpose document --input ./notes.md
 ```
 
@@ -37,6 +38,8 @@ nous tools embedding run --space chosen-text --purpose document --input ./notes.
 ## 返回、流与错误
 
 model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。已完成的描述和转写保留正式引用；结构化失败后可用描述引用发起新的媒体分析。
+
+`result delete` 删除不再使用的结果；仍被其他结果、工作或文稿引用的结果会保留，并返回 `content.result_in_use`。
 
 CLI 保留取消、总超时和部分成功信息。文本流直接交付；JSON 流以 NDJSON 输出 text_delta 和已提交的 saved 事件，最后返回正常结果或错误。失败信息保留 partial_output_delivered 和已完成引用。
 

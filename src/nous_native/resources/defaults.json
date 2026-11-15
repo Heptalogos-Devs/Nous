@@ -71,8 +71,8 @@
   },
   "context": {
     "context_mix": 0.2,
-    "decay": 0.75,
     "default_role_weight": 1.0,
+    "null_mass": 1.0,
     "role_weights": {
       "assistant": 0.5,
       "ego": 0.25,
@@ -219,7 +219,10 @@
     "transferTolerance": 1e-9
   },
   "query": {
+    "ann_search_effort": 32,
+    "candidates_per_group": 2,
     "group_scan_limit": 4096,
+    "preference_weight": 0.25,
     "rrf_k": 60.0,
     "thinking_min_closure": 0.2,
     "top_k": 10

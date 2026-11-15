@@ -4,13 +4,13 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.common.operations import OperationIssue
 from nous.runtime.execution import RunningOperationRef
 from nous.wave.contracts import SnapshotRef
 
 from ..annotation.contracts import AnnotationNotRequested, AnnotationOutcome
-from ..contracts import CognitiveValue, NamespaceRef, RecordRef, RecordRevisionRef
-from ..retrieval.contracts import Mode
+from ..contracts import CognitiveValue, NamespaceRef
 
 
 class MaintainRecord(CognitiveValue):
@@ -18,7 +18,6 @@ class MaintainRecord(CognitiveValue):
     namespace: str | NamespaceRef | None = None
     annotation: bool = True
     refresh: bool = False
-    mode: Mode | None = None
     task: str | None = None
     require_recall: bool = False
     execution: Literal["wait", "background"] = "wait"

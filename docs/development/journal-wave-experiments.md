@@ -71,7 +71,7 @@ python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/inst
 示例计划包含项目架构、写作和恢复、来源与检索，以及多语言文本和媒体材料的查询。只运行部分问题或通道时，使用独立结果目录，例如：
 
 ```powershell
-python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/selected query --contains 资源 --contains 取消 --mode hybrid --mode lexical
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/selected query --contains 资源 --contains 取消 --program hybrid --program lexical
 ```
 
 `--contains` 可重复，匹配任一问题文本；`--mode` 可重复，从计划中选择已有通道。`query` 会替换该结果目录的查询结果；`query --retry-failed` 保留既有结果，只重试失败项，也接受这些筛选条件。

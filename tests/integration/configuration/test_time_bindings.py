@@ -115,13 +115,10 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
                     tx,
                     facts=ResultFacts(
                         operation="embedding",
-                        producer=ProgramProducer(operation="embedding"),
+                        producer=ProgramProducer(),
                         selected_inputs=SelectedInputs(
                             sources=(
-                                SelectedSource(
-                                    slot_key="S1",
-                                    selections=(ContentSelection(artifact=source.ref),),
-                                ),
+                                SelectedSource(material=source.ref, key='S1', selections=(ContentSelection(artifact=source.ref),)),
                             )
                         ),
                         inputs=(

@@ -37,7 +37,6 @@ class ImportPrompt(PromptRequest):
 class PromptResourceView(TypedDict):
     id: str
     contract_id: str
-    version: str
     execution_signature: str
     documentation_signature: str
     origin: str
@@ -61,7 +60,6 @@ class PromptDiffView(TypedDict):
 
 class PromptValidationView(TypedDict):
     id: str
-    version: str
     valid: bool
     contract_id: str
     templates: list[str]
@@ -222,12 +220,12 @@ class PromptCalls:
                     "prompt.invalid_path", "Prompt paths must be relative resource paths"
                 )
             selected = await context.inputs.read_text(source.key, source.selection, limit)
-            total += len(selected.data)
+            total += len(selected.encode("utf-8"))
             if total > limit:
                 raise NousError(
                     "content.too_large", "Prompt input exceeds the configured read limit"
                 )
-            files[name] = selected.text
+            files[name] = selected
 
         def adopt() -> PromptImportView:
             assert self.temp is not None

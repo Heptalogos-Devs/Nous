@@ -64,9 +64,12 @@ class SchemaHandler(BaseHTTPRequestHandler):
             self.entered.set()
         if self.release is not None and not self.release.wait(15):
             return
-        field = answer_schema(wire_schema(request))
-        answer = cast(list[JsonValue], field["enum"])[0]
-        output = json.dumps({"answer": answer, "other": field["description"]})
+        if "response_format" not in request and "tools" not in request:
+            output = json.dumps({"answer": "A", "other": "prompted result"})
+        else:
+            field = answer_schema(wire_schema(request))
+            answer = cast(list[JsonValue], field["enum"])[0]
+            output = json.dumps({"answer": answer, "other": field["description"]})
         is_tool = "tools" in request
         message: dict[str, JsonValue] = {"role": "assistant", "content": output}
         if is_tool:
@@ -203,6 +206,56 @@ def test_schema_mutation_during_preparation_does_not_change_accepted_request(
                 assert answer_schema(wire_schema(SchemaHandler.requests[0]))["enum"] == ["A"]
                 await runtime.app.call(MODEL_RUN, request)
                 assert answer_schema(wire_schema(SchemaHandler.requests[1]))["enum"] == ["B"]
+
+        asyncio.run(scenario())
+
+
+def test_prompted_schema_uses_text_route_and_validates_output(tmp_path: Path) -> None:
+    from nous.application.configuration import open_configuration_operations
+    from nous.common.errors import NousError
+    from nous.content.contracts import InlineText
+    from nous.models.generation.contracts import RunModel
+    from nous.models.generation.operations import MODEL_RUN
+
+    reset_handler()
+    instance = tmp_path / "instance"
+    with model_server(SchemaHandler) as server:
+        configure_models(instance, server, "prompted")
+
+        async def scenario() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "models.reader.capabilities": ["text"],
+                        "models.reader.output_modes": ["text"],
+                        "model_execution.structured_retries": 0,
+                    }
+                )
+            async with open_instance(instance, environment={}) as runtime:
+                result = await runtime.app.call(
+                    MODEL_RUN,
+                    RunModel(
+                        task="read",
+                        sources=(InlineText(text="Source"),),
+                        output_schema=schema_for("Alice", "A"),
+                    ),
+                )
+                saved = await runtime.results.get(result.results[0])
+                body = await runtime.artifacts.read_text(saved.outputs[0].artifact)
+                assert json.loads(body)["answer"] == "A"
+                request = SchemaHandler.requests[0]
+                assert "tools" not in request and "response_format" not in request
+                assert "Return Alice's answer" in json.dumps(request["messages"])
+                with pytest.raises(NousError) as failure:
+                    await runtime.app.call(
+                        MODEL_RUN,
+                        RunModel(
+                            task="read",
+                            sources=(InlineText(text="Source"),),
+                            output_schema=schema_for("Bob", "B"),
+                        ),
+                    )
+                assert failure.value.code == "model.output_invalid"
 
         asyncio.run(scenario())
 

@@ -2,6 +2,8 @@
 
 import sqlalchemy as sa
 
+from nous.content.schema import results
+
 from .schema import namespaces, revisions
 
 metadata = sa.MetaData()
@@ -24,6 +26,7 @@ feedback = sa.Table(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),
     sa.Column("target", sa.JSON, nullable=False),
+    sa.Column("evidence_result_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.Column("category", sa.String, nullable=False),
     sa.Column("value", sa.String),
     sa.Column("comment", sa.String),

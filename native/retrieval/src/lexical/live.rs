@@ -236,7 +236,7 @@ mod tests {
             doc("d", "red yellow", "yellow", 3, 1, false),
         ];
         let old_path = root.path().join("updated");
-        let index = RetrievalIndex::open(&old_path)?;
+        let index = RetrievalIndex::open_for_update(&old_path)?;
         index.rebuild(&original, 1)?;
         let mut stats = LiveStats::default();
         for doc in &original {
@@ -245,7 +245,7 @@ mod tests {
         index.close()?;
         drop(index);
         stats.save(&old_path)?;
-        let index = RetrievalIndex::open(&old_path)?;
+        let index = RetrievalIndex::open_for_update(&old_path)?;
         let old_hits = index.search("red green", "snapshot", "snapshot", 10)?.hits;
         let changes = vec![
             doc(
@@ -280,7 +280,7 @@ mod tests {
             changes[3].clone(),
         ];
         let full_path = root.path().join("full");
-        let full = RetrievalIndex::open(&full_path)?;
+        let full = RetrievalIndex::open_for_update(&full_path)?;
         full.rebuild(&expected, 2)?;
         for query in ["red", "green", "blue yellow", "red green", "中文检索"] {
             let actual = updated.search(query, "snapshot", "snapshot", 10)?.hits;
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn mass_deletion_compacts_postings() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let index = RetrievalIndex::open(root.path())?;
+        let index = RetrievalIndex::open_for_update(root.path())?;
         let documents: Vec<_> = (0..520)
             .map(|i| doc(&format!("{i}"), "shared test", "title", i, 1, false))
             .collect();

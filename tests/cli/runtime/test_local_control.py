@@ -159,7 +159,7 @@ os.environ['NOUS__LOCALIZATION__TIMEZONE'] = 'Asia/Shanghai'
         assert created.returncode == 0, created.stderr
         revision = json.loads(created.stdout)["commit"]["revision_ref"]
         ref = revision["record_ref"]["identifier"]
-        queried = command(instance, "query", "alpha", "--mode", "lexical")
+        queried = command(instance, "query", "alpha")
         assert queried.returncode == 0 and "alpha original body" in queried.stdout
         editor = tmp_path / "editor.py"
         editor.write_text(
@@ -179,7 +179,7 @@ os.environ['NOUS__LOCALIZATION__TIMEZONE'] = 'Asia/Shanghai'
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(add_parallel, range(4)))
         assert all(result.returncode == 0 for result in results), [r.stderr for r in results]
-        check = command(instance, "query", "parallel", "--mode", "lexical")
+        check = command(instance, "query", "parallel")
         assert check.returncode == 0 and "parallel note" in check.stdout
         previous_endpoint = read_endpoint(path)
         assert previous_endpoint is not None
@@ -220,7 +220,7 @@ os.environ['NOUS__LOCALIZATION__TIMEZONE'] = 'Asia/Shanghai'
 
         wait_for(restarted)
         assert host.poll() is None
-        restored = command(instance, "query", "edited_via_client", "--mode", "lexical")
+        restored = command(instance, "query", "edited_via_client")
         assert restored.returncode == 0 and "edited_via_client" in restored.stdout
     finally:
         if host.poll() is None:

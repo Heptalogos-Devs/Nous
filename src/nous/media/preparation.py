@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from weakref import WeakValueDictionary
 
 from PIL import Image, UnidentifiedImageError
@@ -29,6 +29,7 @@ from nous.content.contracts import (
     ResultRef,
     SelectedInputs,
     SelectedSource,
+    SourceFacts,
     SourceSelection,
     is_text_media_type,
     is_utf8_text_prefix,
@@ -205,20 +206,19 @@ class MediaPreparer:
                 cached = await self.results.adopt(
                     facts=ResultFacts(
                         operation="media.text-view",
-                        producer=ProgramProducer(
-                            operation="media.text-view", parameters=parameters
-                        ),
+                        producer=ProgramProducer(),
                         selected_inputs=SelectedInputs(
                             sources=(
                                 SelectedSource(
-                                    slot_key="S1",
+                                    material=source.artifact,
+                                    key="S1",
                                     selections=(source,),
-                                    display_name=original.display_name,
+                                    name=original.display_name,
                                 ),
                             )
                         ),
                         inputs=tuple(inputs),
-                        parameters={**parameters, "cache_key": key},
+                        parameters=parameters,
                         coverage=plan.coverage,
                         mappings=tuple(mappings),
                         formed_at=self.artifacts.clock.utc_now(),
@@ -231,6 +231,7 @@ class MediaPreparer:
                             representation_kind="text",
                         )
                     },
+                    cache_key=key,
                 )
         track_completed(cached.ref)
         body = cached.outputs[0].artifact
@@ -267,26 +268,36 @@ class MediaPreparer:
         async with self.artifacts.borrow_local(original.ref) as path:
             return await self._inspect_local(original, blob.byte_length, path, settings)
 
+    async def inspect_facts(
+        self, refs: Sequence[ArtifactRef], settings: MediaConfig
+    ) -> tuple[SourceFacts, ...]:
+        """Inspect immutable originals and return the facts used by input planning."""
+        facts: list[SourceFacts] = []
+        for artifact in await self.artifacts.get_many(tuple(dict.fromkeys(refs))):
+            info = await self.inspect(artifact, settings)
+            facts.append(
+                SourceFacts(
+                    artifact=artifact.ref,
+                    declared_mime=artifact.media_type,
+                    detected_mime=str(info["media_type"]),
+                    kind=cast(Literal["text", "image", "pdf", "audio", "video"], info["kind"]),
+                    details=info,
+                )
+            )
+        return tuple(facts)
+
     async def validate_selections(
-        self,
-        values: Sequence[ContentSelection],
-        *,
-        settings: MediaConfig,
-        facts: dict[str, dict[str, JsonValue]] | None = None,
-    ) -> tuple[ContentSelection, ...]:
-        """Normalize text and inspect media coordinates without creating derivatives."""
-        originals = await self.artifacts.get_many([value.artifact for value in values])
-        inspected = dict(facts or {})
-        for artifact in originals:
-            if artifact.ref.id not in inspected:
-                inspected[artifact.ref.id] = await self.inspect(artifact, settings)
+        self, values: Sequence[ContentSelection], *, settings: MediaConfig
+    ) -> tuple[tuple[ContentSelection, ...], tuple[SourceFacts, ...]]:
+        """Normalize external selections and retain the inspected media facts."""
+        facts = await self.inspect_facts([value.artifact for value in values], settings)
+        by_id = {fact.artifact.id: fact for fact in facts}
         normalized = await self.artifacts.normalize_selections(
-            values, media_types={key: str(value["media_type"]) for key, value in inspected.items()}
+            values, media_types={key: value.detected_mime for key, value in by_id.items()}
         )
-        for value, artifact in zip(normalized, originals, strict=True):
-            selection = value.selection
-            validate_selection_bounds(inspected[artifact.ref.id], selection)
-        return normalized
+        for value in normalized:
+            validate_selection_bounds(by_id[value.artifact.id].details, value.selection)
+        return normalized, facts
 
     async def _inspect_local(
         self, original: Artifact, byte_length: int, path: Path, settings: MediaConfig

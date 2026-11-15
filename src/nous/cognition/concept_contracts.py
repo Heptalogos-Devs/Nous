@@ -5,10 +5,11 @@ from typing import Literal
 
 from pydantic import Field
 
+from nous.common.material_refs import RecordRevisionRef
 from nous.content.annotations import AnnotationSet
 from nous.content.contracts import ContentSelection, ResultRef
 
-from .contracts import CognitiveValue, NamespaceRef, RecordRevisionRef
+from .contracts import CognitiveValue, NamespaceRef
 
 
 class ConceptRef(CognitiveValue):

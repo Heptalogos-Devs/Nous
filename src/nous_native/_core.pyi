@@ -71,82 +71,41 @@ class Associations:
         group_root_indices: Array[np.uint64],
     ) -> None: ...
 
-class CandidatePool:
+class CandidateSet:
     def __init__(self, value_json: str) -> None: ...
-    @property
-    def value_json(self) -> str: ...
-
-class QueryObservation:
-    @property
-    def diagnostics_json(self) -> str: ...
-
-class NativeQueryResult:
-    @property
-    def row_ids(self) -> Array[np.uint64]: ...
-    @property
-    def quality_scores(self) -> Array[np.float64]: ...
-    @property
-    def ranking_scores(self) -> Array[np.float64]: ...
-    @property
-    def result_json(self) -> str: ...
 
 class NativeSnapshot:
     """Immutable loaded snapshot whose calculations use its engine's worker pool.
 
-    Observations and candidate pools are tied to the snapshot that produced
-    them. Keep the engine open while using the snapshot and pass a cancellation
+    Candidate pools are tied to their snapshot. Keep the engine open and pass a cancellation
     token to long-running operations when cooperative cancellation is needed.
     """
-    @property
-    def identity_json(self) -> str: ...
     @property
     def capabilities(self) -> list[str]: ...
     @property
     def statistics_json(self) -> str: ...
-    def observe(
+    def passage_similarities(
         self,
-        vector: Array[np.float32],
+        rows: Array[np.uint64],
         *,
+        references: Array[np.uint64] | None = None,
+        aspects: Array[np.float32] | None = None,
+        cancel: CancellationToken | None = None,
+    ) -> Array[np.float64]: ...
+    def execute(
+        self,
+        *,
+        name: str,
+        program_json: str,
         text: str = "",
+        raw_vector: Array[np.float32] | None = None,
+        contextual_vector: Array[np.float32] | None = None,
+        branch_raw_vectors: Array[np.float32] | None = None,
+        branch_contextual_vectors: Array[np.float32] | None = None,
+        allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
-        cancel: CancellationToken | None = None,
-    ) -> QueryObservation: ...
-    def search(
-        self,
-        *,
-        mode: str,
-        text: str = "",
-        vector: Array[np.float32] | None = None,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        ghost_vectors: Array[np.float32] | None = None,
-        candidate_pool: CandidatePool | None = None,
-        cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
-    def recall(
-        self,
-        observation: QueryObservation,
-        *,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        cancel: CancellationToken | None = None,
-    ) -> CandidatePool: ...
-    def readout(
-        self,
-        observation: QueryObservation,
-        candidate_pool: CandidatePool,
-        *,
-        allowed_rows: Array[np.uint64] | None = None,
-        options_json: str = "{}",
-        cancel: CancellationToken | None = None,
-    ) -> NativeQueryResult: ...
-    def think(
-        self,
-        observation: QueryObservation,
-        stages_json: str,
-        *,
-        options_json: str = "{}",
+        candidate_set: CandidateSet | None = None,
         cancel: CancellationToken | None = None,
     ) -> str: ...
     def neighborhood(
@@ -196,6 +155,7 @@ class ContextResult:
     @property
     def diagnostics_json(self) -> str: ...
 
+def context_masses(metadata_json: str, options_json: str = "{}") -> str: ...
 def aggregate_context(
     raw_query: Array[np.float32] | None,
     context_vectors: Array[np.float32],

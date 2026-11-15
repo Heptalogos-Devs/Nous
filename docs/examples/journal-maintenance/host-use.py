@@ -6,7 +6,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from nous.cognition.retrieval.contracts import CognitiveQuery
+from nous.cognition.retrieval.contracts import QueryRequest
 from nous.cognition.retrieval.operations import QUERY
 from nous.cognition.writing.contracts import (
     AfterWrite,
@@ -60,11 +60,10 @@ async def main(instance: Path) -> None:
             READ_RECORD, ReadRecord(target=original.revision_ref, sources=True)
         )
         print("原版本：", old.body)
-        found = await runtime.app.call(QUERY, CognitiveQuery(text="会议日期", mode="lexical"))
-        for group in found.groups:
-            print(
-                group.context.revision_ref.identifier, group.title, group.passages[0].delivery.text
-            )
+        found = await runtime.app.call(QUERY, QueryRequest(text="会议日期"))
+        for group in found.evidence.materials:
+            for passage in group.passages:
+                print(group.material, group.title, passage.views[0].body_text)
 
 
 if __name__ == "__main__":

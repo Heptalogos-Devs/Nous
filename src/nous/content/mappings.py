@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
+from sqlalchemy.engine import RowMapping
 
 from nous.common.errors import NousError
 
@@ -36,23 +37,33 @@ async def map_origins(
             WITH RECURSIVE lineage(artifact_id) AS (
                 SELECT :source_id
                 UNION
-                SELECT json_extract(origin.value, '$.artifact.id')
+                SELECT origin.artifact_id
                 FROM lineage
                 JOIN processing_outputs AS output ON output.artifact_id = lineage.artifact_id
                 JOIN content_output_mappings AS mapping
                   ON mapping.result_id = output.result_id AND mapping.output_name = output.name
-                JOIN json_each(mapping.origins) AS origin
+                JOIN content_output_mapping_origins AS origin
+                  ON origin.result_id = mapping.result_id
+                 AND origin.output_name = mapping.output_name
+                 AND origin.mapping_ordinal = mapping.ordinal
                 WHERE lineage.artifact_id != :target_id AND mapping.relation != 'derived'
             )
             SELECT output.artifact_id, result.id AS transform_id, result.identifier,
-                   mapping.output_name, mapping.selection, mapping.relation, mapping.origins
+                   mapping.output_name, mapping.ordinal AS mapping_ordinal,
+                   mapping.selection, mapping.relation, origin.artifact_id AS source_id,
+                   source.identifier AS source_identifier, origin.selector
             FROM lineage
             JOIN processing_outputs AS output ON output.artifact_id = lineage.artifact_id
             JOIN processing_results AS result ON result.id = output.result_id
             JOIN content_output_mappings AS mapping
               ON mapping.result_id = output.result_id AND mapping.output_name = output.name
+            JOIN content_output_mapping_origins AS origin
+              ON origin.result_id = mapping.result_id
+             AND origin.output_name = mapping.output_name
+             AND origin.mapping_ordinal = mapping.ordinal
+            JOIN content_artifacts AS source ON source.id = origin.artifact_id
             WHERE mapping.relation != 'derived'
-            ORDER BY output.artifact_id, mapping.ordinal
+            ORDER BY output.artifact_id, mapping.ordinal, origin.ordinal
         """),
                     {"source_id": root.artifact.id, "target_id": target.id},
                 )
@@ -60,16 +71,29 @@ async def map_origins(
             .mappings()
             .all()
         )
+    grouped: dict[tuple[str, str, int], tuple[RowMapping, list[ContentSelection]]] = {}
+    for row in rows:
+        key = (str(row["artifact_id"]), str(row["output_name"]), int(row["mapping_ordinal"]))
+        _, origins = grouped.setdefault(key, (row, []))
+        origins.append(
+            ContentSelection(
+                artifact=ArtifactRef(
+                    id=str(row["source_id"]),
+                    identifier=str(row["source_identifier"]),
+                    instance_id=artifacts.instance_id,
+                ),
+                selection=SourceSelection.model_validate(json.loads(row["selector"])),
+            )
+        )
+    rows = [row for row, _ in grouped.values()]
     raw_mappings = [
         OutputMapping(
             output_name=str(row["output_name"]),
             selection=SourceSelection.model_validate(json.loads(row["selection"])),
             relation=row["relation"],
-            origins=tuple(
-                ContentSelection.model_validate(item) for item in json.loads(row["origins"])
-            ),
+            origins=tuple(origins),
         )
-        for row in rows
+        for row, origins in grouped.values()
     ]
     normalized_origins = await artifacts.normalize_selections(
         [origin for mapping in raw_mappings for origin in mapping.origins]

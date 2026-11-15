@@ -34,6 +34,7 @@ from nous.common.operations import exception_context
 from nous.configuration import Configuration
 from nous.content.contracts import ExternalInput
 from nous.presentation import error_message, render_error, translate
+from nous.presentation.json_selection import validate_json_pointers
 from nous.runtime.instance import (
     InstanceLocator,
     InstanceProfiles,
@@ -66,13 +67,25 @@ def configure(
     json_mode: Annotated[
         bool, typer.Option("--json", help="输出类型化 JSON / Typed JSON output")
     ] = False,
+    select: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--select", help="选择 JSON Pointer，可重复 / Select JSON Pointer, repeatable"
+        ),
+    ] = None,
     language: Annotated[str | None, typer.Option(help="显示语言 / Language: zh-CN or en")] = None,
     debug: Annotated[bool, typer.Option(help="显示错误堆栈 / Show error traceback")] = False,
 ) -> None:
     if language not in {None, "zh-CN", "en"}:
         raise NousError("configuration.invalid_language", "Language must be zh-CN or en")
+    if select and not json_mode:
+        raise NousError("input.invalid", "Selecting result fields requires --json")
     ctx.obj = Options(
-        InstanceLocator.resolve(instance, profile=profile), json_mode, language, debug
+        locator=InstanceLocator.resolve(instance, profile=profile),
+        json_mode=json_mode,
+        language=language,
+        debug=debug,
+        select=validate_json_pointers(select or ()),
     )
     current_options.set(ctx.obj)
 

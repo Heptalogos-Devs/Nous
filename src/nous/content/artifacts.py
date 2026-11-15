@@ -5,9 +5,10 @@ from __future__ import annotations
 import mimetypes
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -31,6 +32,7 @@ from .contracts import (
     ContentReadView,
     ContentRepresentation,
     ContentSelection,
+    DeliveryBudget,
     OriginSlice,
     ResultRef,
     SelectedText,
@@ -39,7 +41,18 @@ from .contracts import (
     is_text_media_type,
     is_utf8_text_prefix,
 )
+from .selections import subtract_selection, union_selections
 from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
+
+if TYPE_CHECKING:
+    from .budget import SelectionBudget
+
+
+@dataclass(frozen=True)
+class ContentDelivery:
+    views: tuple[ContentReadView, ...]
+    shared: tuple[ContentSelection, ...] = ()
+    remaining: tuple[ContentSelection, ...] = ()
 
 
 class ArtifactStore:
@@ -57,6 +70,7 @@ class ArtifactStore:
         instance_id: str,
         *,
         text_read_max_bytes: Callable[[], int] | None = None,
+        config_root: Path,
         text_cache_root: Path | None = None,
         text_cache_settings: Callable[[], TextCacheConfig] | None = None,
         clock: Clock | None = None,
@@ -65,6 +79,7 @@ class ArtifactStore:
         self.clock = clock or Clock()
         from .text_cache import TextStructureCache
 
+        self.config_root = config_root
         self.text_cache = TextStructureCache(text_cache_root, text_cache_settings)
         self.text_read_max_bytes = text_read_max_bytes or (
             lambda: ContentConfig().text_read_max_bytes
@@ -264,13 +279,114 @@ class ArtifactStore:
                 )
             return await self.content.resolve_in(tx, str(row.id))
 
+    async def _detected_types_in(self, tx: ReadTx, object_ids: set[str]) -> dict[str, str]:
+        direct = sa.select(schema.parts.c.result_id).where(
+            schema.parts.c.artifact_id.in_(object_ids)
+        )
+        origins = sa.select(schema.origins.c.result_id).where(
+            schema.origins.c.artifact_id.in_(object_ids)
+        )
+        selected = sa.select(schema.material_source_targets.c.result_id).where(
+            schema.material_source_targets.c.artifact_id.in_(object_ids)
+        )
+        result_ids = list((await tx.connection.execute(direct.union(origins, selected))).scalars())
+        if not result_ids:
+            return {}
+        rows = await tx.connection.execute(
+            sa.select(schema.results.c.selected_facts).where(schema.results.c.id.in_(result_ids))
+        )
+        detected: dict[str, str] = {}
+        for row in rows.scalars():
+            for value in row or ():
+                fact = SourceFacts.model_validate(value)
+                detected[fact.artifact.id] = fact.detected_mime
+        return detected
+
+    async def text_capabilities(self, selections: Sequence[ContentSelection]) -> tuple[bool, ...]:
+        """Determine whether selected artifacts have readable text without loading their bodies."""
+        if not selections:
+            return ()
+        async with self.database.read() as tx:
+            artifacts = await self.get_many_in(tx, [item.artifact for item in selections])
+            blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in artifacts])
+            detected = await self._detected_types_in(tx, {item.ref.id for item in artifacts})
+        statuses: dict[str, bool] = {}
+        for artifact, blob in zip(artifacts, blobs, strict=True):
+            if artifact.ref.id in statuses:
+                continue
+            media_type = detected.get(artifact.ref.id)
+            if media_type is not None:
+                statuses[artifact.ref.id] = is_text_media_type(media_type)
+            else:
+                async with self.content.borrow_local(blob) as path:
+                    statuses[artifact.ref.id] = await self.content.execution.blocking(
+                        self._looks_like_text, path
+                    )
+        return tuple(statuses[item.ref.id] for item in artifacts)
+
     async def read_view_many(
         self,
         selections: Sequence[ContentSelection],
         *,
-        representations: Literal["existing", "none"] = "existing",
+        representations: Literal["existing", "metadata", "none"] = "existing",
     ) -> tuple[ContentReadView, ...]:
         """Read exact text or media references, expanding adopted representations without generation."""
+        deliveries = await self._read_views(selections, representations=representations)
+        return tuple(item.views[0] for item in deliveries)
+
+    async def read_budgeted_views(
+        self, selections: Sequence[ContentSelection], budget: SelectionBudget
+    ) -> tuple[ContentDelivery, ...]:
+        """Read selected content under the caller's shared range budget."""
+        return await self._read_views(selections, representations="metadata", budget=budget)
+
+    async def deduplicate_views(
+        self, views: Sequence[ContentReadView]
+    ) -> tuple[tuple[ContentDelivery, ...], int]:
+        """Represent overlapping already-read text once without reparsing it."""
+        text_views = tuple(view for view in views if view.body_text)
+        normalized = await self.normalize_selections(
+            tuple(view.source for view in text_views),
+            media_types={view.source.artifact.id: "text/plain" for view in text_views},
+        )
+        text_ranges = iter(normalized)
+        covered: tuple[ContentSelection, ...] = ()
+        used = 0
+        deliveries: list[ContentDelivery] = []
+        for view in views:
+            if view.body_text is None or not view.body_text:
+                deliveries.append(ContentDelivery(views=(view,)))
+                continue
+            selected = next(text_ranges)
+            fresh = subtract_selection(selected, covered)
+            shared = subtract_selection(selected, fresh)
+            raw = view.body_text.encode("utf-8")
+            start = selected.selection.start_byte or 0
+            parts: list[ContentReadView] = []
+            for item in fresh:
+                low = (item.selection.start_byte or 0) - start
+                high = (item.selection.end_byte or 0) - start
+                text = raw[low:high].decode("utf-8")
+                used += len(text)
+                parts.append(
+                    view.model_copy(
+                        update={
+                            "source": item,
+                            "body_text": text,
+                        }
+                    )
+                )
+            covered = union_selections((*covered, selected))
+            deliveries.append(ContentDelivery(views=tuple(parts), shared=shared))
+        return tuple(deliveries), used
+
+    async def _read_views(
+        self,
+        selections: Sequence[ContentSelection],
+        *,
+        representations: Literal["existing", "metadata", "none"],
+        budget: SelectionBudget | None = None,
+    ) -> tuple[ContentDelivery, ...]:
         async with self.content.execution.operation("content.read_view_many"):
             if not selections:
                 return ()
@@ -283,125 +399,34 @@ class ArtifactStore:
                 represented: dict[
                     str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
                 ] = {}
-                detected_types: dict[str, str] = {}
-                direct = sa.select(schema.parts.c.result_id).where(
-                    schema.parts.c.artifact_id.in_(object_ids)
-                )
-                origins = sa.select(schema.origins.c.result_id).where(
-                    schema.origins.c.artifact_id.in_(object_ids)
-                )
-                selected_results = sa.select(schema.selected_targets.c.result_id).where(
-                    schema.selected_targets.c.artifact_id.in_(object_ids)
-                )
-                result_ids = list(
-                    (await tx.connection.execute(direct.union(origins, selected_results))).scalars()
-                )
-                if result_ids:
-                    fact_rows = await tx.connection.execute(
-                        sa.select(schema.results.c.selected_facts).where(
-                            schema.results.c.id.in_(result_ids)
-                        )
+                detected_types = await self._detected_types_in(tx, object_ids)
+                if representations != "none":
+                    representation_ids = list(
+                        (
+                            await tx.connection.execute(
+                                sa.select(schema.mapping_origins.c.result_id)
+                                .select_from(
+                                    schema.mapping_origins.join(
+                                        schema.outputs,
+                                        sa.and_(
+                                            schema.mapping_origins.c.result_id
+                                            == schema.outputs.c.result_id,
+                                            schema.mapping_origins.c.output_name
+                                            == schema.outputs.c.name,
+                                        ),
+                                    )
+                                )
+                                .where(
+                                    schema.mapping_origins.c.artifact_id.in_(object_ids),
+                                    schema.outputs.c.representation_kind.is_not(None),
+                                    schema.outputs.c.role != "diagnostic",
+                                )
+                                .distinct()
+                            )
+                        ).scalars()
                     )
-                    for row in fact_rows.scalars():
-                        for value in row or ():
-                            fact = SourceFacts.model_validate(value)
-                            detected_types[fact.artifact.id] = fact.detected_mime
-                if representations == "existing":
-                    if result_ids:
-                        used = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.parts.c.result_id,
-                                        schema.parts.c.group_ordinal,
-                                        schema.parts.c.part_ordinal,
-                                        schema.parts.c.artifact_id,
-                                        schema.parts.c.selector,
-                                    ).where(schema.parts.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        roots = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.origins.c.result_id,
-                                        schema.origins.c.group_ordinal,
-                                        schema.origins.c.part_ordinal,
-                                        schema.origins.c.artifact_id,
-                                        schema.origins.c.selector,
-                                    ).where(schema.origins.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        chosen = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.selected_targets.c.result_id,
-                                        schema.selected_targets.c.slot_key,
-                                        schema.selected_targets.c.artifact_id,
-                                        schema.selected_targets.c.selector,
-                                    ).where(schema.selected_targets.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        source_artifacts = await self.get_many_in(
-                            tx, [str(row["artifact_id"]) for row in (*chosen, *used, *roots)]
-                        )
-                        relations: dict[str, list[ContentSelection]] = {}
-                        parts_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
-                        origins_by_group: dict[tuple[str, int], list[ContentSelection]] = {}
-                        targets_by_slot: dict[tuple[str, str], list[ContentSelection]] = {}
-                        offset = 0
-                        for kind, rows in (("selected", chosen), ("part", used), ("origin", roots)):
-                            for row, artifact in zip(
-                                rows, source_artifacts[offset : offset + len(rows)], strict=True
-                            ):
-                                selected = ContentSelection(
-                                    artifact=artifact.ref,
-                                    selection=SourceSelection.model_validate(row["selector"]),
-                                )
-                                result_id = str(row["result_id"])
-                                if selected not in relations.setdefault(result_id, []):
-                                    relations[result_id].append(selected)
-                                if kind == "selected":
-                                    targets_by_slot.setdefault(
-                                        (result_id, str(row["slot_key"])), []
-                                    ).append(selected)
-                                elif kind == "part":
-                                    parts_by_group.setdefault(
-                                        (result_id, int(row["group_ordinal"])), []
-                                    ).append(selected)
-                                else:
-                                    origins_by_group.setdefault(
-                                        (result_id, int(row["group_ordinal"])), []
-                                    ).append(selected)
-                            offset += len(rows)
-                        group_rows = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(
-                                        schema.inputs.c.result_id,
-                                        schema.inputs.c.group_ordinal,
-                                        schema.inputs.c.slot_key,
-                                    ).where(schema.inputs.c.result_id.in_(result_ids))
-                                )
-                            )
-                            .mappings()
-                            .all()
-                        )
-                        group_slots = {
-                            (str(row["result_id"]), int(row["group_ordinal"])): str(row["slot_key"])
-                            for row in group_rows
-                        }
-                        outputs = (
+                    if representation_ids:
+                        rows = (
                             (
                                 await tx.connection.execute(
                                     sa.select(
@@ -412,70 +437,54 @@ class ArtifactStore:
                                         schema.outputs.c.name,
                                         schema.outputs.c.artifact_id,
                                         schema.outputs.c.representation_kind,
+                                        schema.mapping_origins.c.artifact_id.label("source_id"),
+                                        schema.mapping_origins.c.selector,
                                     )
-                                    .join(schema.outputs)
+                                    .select_from(
+                                        schema.results.join(schema.outputs).join(
+                                            schema.mapping_origins,
+                                            sa.and_(
+                                                schema.mapping_origins.c.result_id
+                                                == schema.outputs.c.result_id,
+                                                schema.mapping_origins.c.output_name
+                                                == schema.outputs.c.name,
+                                            ),
+                                        )
+                                    )
                                     .where(
-                                        schema.results.c.id.in_(result_ids),
-                                        schema.outputs.c.role != "diagnostic",
+                                        schema.results.c.id.in_(representation_ids),
                                         schema.outputs.c.representation_kind.is_not(None),
+                                        schema.outputs.c.role != "diagnostic",
                                     )
                                     .order_by(
-                                        schema.results.c.recorded_at, schema.outputs.c.ordinal
+                                        schema.results.c.recorded_at,
+                                        schema.outputs.c.ordinal,
+                                        schema.mapping_origins.c.mapping_ordinal,
+                                        schema.mapping_origins.c.ordinal,
                                     )
                                 )
                             )
                             .mappings()
                             .all()
                         )
-                        mappings = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(schema.output_mappings)
-                                    .where(schema.output_mappings.c.result_id.in_(result_ids))
-                                    .order_by(schema.output_mappings.c.ordinal)
-                                )
-                            )
-                            .mappings()
-                            .all()
+                        source_artifacts = await self.get_many_in(
+                            tx, [str(row["source_id"]) for row in rows]
                         )
-                        mapped_sources: dict[tuple[str, str], list[ContentSelection]] = {}
-                        for mapping in mappings:
-                            key = (str(mapping["result_id"]), str(mapping["output_name"]))
-                            for item in mapping["origins"]:
-                                origin = ContentSelection.model_validate(item)
-                                if origin not in mapped_sources.setdefault(key, []):
-                                    mapped_sources[key].append(origin)
-                        for row in outputs:
+                        relations: dict[
+                            tuple[str, str], tuple[dict[str, object], list[ContentSelection]]
+                        ] = {}
+                        for row, source in zip(rows, source_artifacts, strict=True):
                             key = (str(row["id"]), str(row["name"]))
-                            mapped = mapped_sources.get(key, [])
-                            exact_sources = list(mapped)
-                            if mapped:
-                                for group, parts in parts_by_group.items():
-                                    if group[0] != key[0] or not any(
-                                        left.artifact == right.artifact
-                                        and self._overlaps(left.selection, right.selection)
-                                        for left in mapped
-                                        for right in (*parts, *origins_by_group.get(group, ()))
-                                    ):
-                                        continue
-                                    for source in (
-                                        *origins_by_group.get(group, ()),
-                                        *targets_by_slot.get((group[0], group_slots[group]), ()),
-                                    ):
-                                        if source not in exact_sources:
-                                            exact_sources.append(source)
-                            else:
-                                exact_sources.extend(relations.get(key[0], ()))
-                            exact = tuple(exact_sources)
-                            if any(item.artifact.instance_id != self.instance_id for item in exact):
-                                raise NousError(
-                                    "content.instance_mismatch",
-                                    "A representation belongs to another instance",
-                                )
-                            details: dict[str, object] = {
-                                **dict(row),
-                            }
-                            for object_id in {item.artifact.id for item in exact} & object_ids:
+                            details, selected_sources = relations.setdefault(key, (dict(row), []))
+                            origin = ContentSelection(
+                                artifact=source.ref,
+                                selection=SourceSelection.model_validate(row["selector"]),
+                            )
+                            if origin not in selected_sources:
+                                selected_sources.append(origin)
+                        for details, sources in relations.values():
+                            exact = tuple(sources)
+                            for object_id in {source.artifact.id for source in exact} & object_ids:
                                 represented.setdefault(object_id, []).append((details, exact))
                 derived = await self.get_many_in(
                     tx,
@@ -489,15 +498,18 @@ class ArtifactStore:
                 )
             derived_map = {artifact.ref.id: artifact for artifact in derived}
             texts: dict[str, str] = {}
-            cached_views: dict[str, ContentReadView] = {}
+            cached_views: dict[str, ContentDelivery] = {}
             normalized_relations: dict[tuple[str, ...], tuple[ContentSelection, ...]] = {}
-            views: list[ContentReadView] = []
+            deliveries: list[ContentDelivery] = []
             for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
                 selection_key = selected.model_dump_json()
-                if selection_key in cached_views:
-                    views.append(cached_views[selection_key])
+                if budget is None and selection_key in cached_views:
+                    deliveries.append(cached_views[selection_key])
                     continue
                 detected_type = detected_types.get(artifact.ref.id)
+                data = b""
+                normalized_selected = selected
+                text_view: TextView | None = None
                 async with self.content.borrow_local(blob) as path:
                     if detected_type is None:
                         is_text = await self.content.execution.blocking(self._looks_like_text, path)
@@ -505,14 +517,83 @@ class ArtifactStore:
                             detected_type = "text/plain"
                     else:
                         is_text = is_text_media_type(detected_type)
-                    if is_text:
-                        data, _, _ = await self.content.execution.blocking(
+                    unread: tuple[ContentSelection, ...] = ()
+                    shared: tuple[ContentSelection, ...] = ()
+                    fresh: tuple[ContentSelection, ...] = ()
+                    if is_text and budget is not None:
+                        if (
+                            budget.amount is not None
+                            and budget.used >= budget.amount
+                            and budget.unit != "tokens"
+                            and blob.byte_length > 0
+                            and not (
+                                selected.selection.start_byte is not None
+                                and selected.selection.start_byte == selected.selection.end_byte
+                            )
+                            and not any(
+                                item.artifact == selected.artifact for item in budget.covered
+                            )
+                        ):
+                            deliveries.append(ContentDelivery(views=(), remaining=(selected,)))
+                            continue
+                        text_view = budget.views.get(artifact.ref.id)
+                        if text_view is None:
+                            full, _, _ = await self.content.execution.blocking(
+                                self._selected_bytes,
+                                path,
+                                SourceSelection(),
+                                self.text_read_max_bytes(),
+                                blob.byte_length,
+                            )
+                            try:
+                                full_text = full.decode("utf-8")
+                            except UnicodeDecodeError as error:
+                                raise NousError(
+                                    "content.not_text", "Input is not UTF-8 text"
+                                ) from error
+                            text_view, _ = await self.text_cache.view(
+                                artifact.ref, blob, full_text, self.content.execution
+                            )
+                            budget.views[artifact.ref.id] = text_view
+                        start, end = text_view.selection_bounds(selected)
+                        normalized = ContentSelection(
+                            artifact=selected.artifact,
+                            selection=SourceSelection(start_byte=start, end_byte=end),
+                        )
+                        previous = budget.covered
+                        accepted, _ = await self.content.execution.blocking(
+                            budget.fit_prefix, normalized
+                        )
+                        unread = subtract_selection(normalized, accepted)
+                        if not accepted:
+                            deliveries.append(ContentDelivery(views=(), remaining=unread))
+                            continue
+                        selected = accepted[0]
+                        fresh = subtract_selection(selected, previous)
+                        shared = subtract_selection(selected, fresh)
+                        if not fresh:
+                            deliveries.append(
+                                ContentDelivery(views=(), shared=shared, remaining=unread)
+                            )
+                            continue
+                        low, high = text_view.selection_bounds(selected)
+                        data = text_view.raw[
+                            low - text_view.byte_offset : high - text_view.byte_offset
+                        ]
+                        normalized_selected = selected
+                    elif is_text:
+                        data, start, _ = await self.content.execution.blocking(
                             self._selected_bytes,
                             path,
                             selected.selection,
                             self.text_read_max_bytes(),
                             blob.byte_length,
                         )
+                        normalized_selected = ContentSelection(
+                            artifact=selected.artifact,
+                            selection=SourceSelection(start_byte=start, end_byte=start + len(data)),
+                        )
+                    if is_text:
                         try:
                             body = data.decode("utf-8")
                         except UnicodeDecodeError as error:
@@ -521,17 +602,8 @@ class ArtifactStore:
                             ) from error
                     else:
                         body = None
+                        normalized_selected = selected
                 available: list[ContentRepresentation] = []
-                normalized_selected = (
-                    (
-                        await self.normalize_selections(
-                            (selected,),
-                            media_types={artifact.ref.id: detected_type or artifact.media_type},
-                        )
-                    )[0]
-                    if is_text
-                    else selected
-                )
                 for row, exact in represented.get(artifact.ref.id, []):
                     relation_key = tuple(item.model_dump_json() for item in exact)
                     if relation_key not in normalized_relations:
@@ -548,7 +620,7 @@ class ArtifactStore:
                     output = derived_map[str(row["artifact_id"])]
                     if output.ref.id == artifact.ref.id:
                         continue
-                    if is_text_media_type(output.media_type):
+                    if representations == "existing" and is_text_media_type(output.media_type):
                         if output.ref.id not in texts:
                             texts[output.ref.id] = await self.read_text(output.ref)
                         text = texts[output.ref.id]
@@ -572,20 +644,31 @@ class ArtifactStore:
                             body_text=text,
                         )
                     )
-                view = ContentReadView(
-                    source=selected,
-                    name=artifact.display_name,
-                    media_type=artifact.media_type,
-                    detected_media_type=detected_type,
-                    byte_length=blob.byte_length,
-                    body_text=body,
-                    export_ref=artifact.ref,
-                    available_representations=tuple(available),
-                    coverage={"selection": selected.selection.model_dump(mode="json")},
-                )
-                cached_views[selection_key] = view
-                views.append(view)
-            return tuple(views)
+                views: list[ContentReadView] = []
+                for actual in fresh if budget is not None and is_text else (selected,):
+                    text = body
+                    if budget is not None and is_text:
+                        assert text_view is not None
+                        low, high = text_view.selection_bounds(actual)
+                        text = text_view.raw[
+                            low - text_view.byte_offset : high - text_view.byte_offset
+                        ].decode("utf-8")
+                    views.append(
+                        ContentReadView(
+                            source=actual,
+                            name=artifact.display_name,
+                            media_type=artifact.media_type,
+                            detected_media_type=detected_type,
+                            byte_length=blob.byte_length,
+                            body_text=text,
+                            available_representations=tuple(available),
+                        )
+                    )
+                delivery = ContentDelivery(views=tuple(views), shared=shared, remaining=unread)
+                if budget is None:
+                    cached_views[selection_key] = delivery
+                deliveries.append(delivery)
+            return tuple(deliveries)
 
     @staticmethod
     def _looks_like_text(path: Path) -> bool:
@@ -683,10 +766,7 @@ class ArtifactStore:
                     SelectedText(
                         content=content,
                         blob=blob,
-                        data=data,
                         text=text,
-                        start_byte=start,
-                        end_byte=start + len(data),
                         first_line=line,
                     )
                 )
@@ -746,7 +826,10 @@ class ArtifactStore:
         async with self.content.execution.operation("content.text_views"):
             result: list[TextView] = []
             for item in await self.read_selections(values):
-                if item.start_byte == 0 and item.end_byte == item.blob.byte_length:
+                start = item.content.selection.start_byte
+                end = item.content.selection.end_byte
+                assert start is not None and end is not None
+                if start == 0 and end == item.blob.byte_length:
                     view, _ = await self.text_cache.view(
                         item.content.artifact, item.blob, item.text, self.content.execution
                     )
@@ -755,11 +838,45 @@ class ArtifactStore:
                         TextView.parse,
                         item.content,
                         item.text,
-                        byte_offset=item.start_byte,
+                        byte_offset=start,
                         first_line=item.first_line,
                     )
                 result.append(view)
             return tuple(result)
+
+    async def selection_budget(
+        self,
+        budget: DeliveryBudget | None,
+        selections: Sequence[ContentSelection],
+        *,
+        views: Mapping[str, TextView] | None = None,
+    ) -> SelectionBudget:
+        """Prepare shared range accounting for already selected text."""
+        from .budget import SelectionBudget
+
+        available = dict(views or {})
+        missing = tuple(
+            dict.fromkeys(
+                value.artifact for value in selections if value.artifact.id not in available
+            )
+        )
+        if missing:
+            loaded = await self.text_views(
+                tuple(ContentSelection(artifact=item) for item in missing)
+            )
+            available.update({item.id: view for item, view in zip(missing, loaded, strict=True)})
+        configured = self.content.execution.snapshot.values.content.tokenizer_path
+        path = None
+        if budget is not None and budget.unit == "tokens" and configured is not None:
+            path = Path(configured)
+            path = (self.config_root / path if not path.is_absolute() else path).resolve()
+        return await self.content.execution.blocking(
+            SelectionBudget,
+            available,
+            amount=budget.amount if budget else None,
+            unit=budget.unit if budget else "characters",
+            tokenizer_path=path,
+        )
 
     async def text_view(self, ref: ContentSelection | ArtifactRef | str) -> TextView:
         body = (

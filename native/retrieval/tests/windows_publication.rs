@@ -9,7 +9,7 @@ fn commit_replaces_metadata_while_previous_readers_remain_open() -> anyhow::Resu
     let temporary_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../temp");
     std::fs::create_dir_all(&temporary_root)?;
     let directory = tempfile::tempdir_in(temporary_root)?;
-    let index = RetrievalIndex::open(directory.path())?;
+    let index = RetrievalIndex::open_for_update(directory.path())?;
     let meta_path = directory.path().join("meta.json");
     let managed_path = directory.path().join(".managed.json");
     let initial_meta = std::fs::read(&meta_path)?;

@@ -24,5 +24,6 @@
     "**/.venv/**": true,
     "**/target/**": true
   },
-  "markdown.validate.enabled": true
+  "markdown.validate.enabled": true,
+  "python.analysis.typeCheckingMode": "off"
 }

@@ -6,8 +6,8 @@
 
 ```text
 CognitiveRetrieval.directory_in(ReadTx)
-  → 轻量资格、精确修订、活动标注与来源签名
-  → 匹配计算单元，仅展开变化组和必要来源节点
+  → 资格、精确修订、活动标注与实际来源
+  → 一次捕获所有需要的来源节点
 ProjectionBuilder
   → 文稿引用、候选布局、概念出现/路径、证据及 owner
 Wave.build_product(CorpusView, ResolvedBuildProfile)
@@ -44,7 +44,7 @@ AnnotationOperations 提供 `read_many_in(ReadTx, exact_revisions)`，包括活�
 
 ## 准备结果复用
 
-复用 [共同内容准备](../content/reading-and-preparation.md)及[统一选区](../content/selection-and-text.md)。每组的计算签名包含精确修订、正文、标题、标注、来源、解析与候选布局；纳入复核或探索组的选择属于目录资格，不改变共同组的计算签名。未变单元直接复用正文布局、语义文本和路径映射。文稿单元持有本篇的正文、来源 roots、候选向量引用和局部图声明；祖先各有独立节点，多组按精确文档键共享，整体概念、关系、支持和概念向量由图单元持有。变化的文稿通过 ArtifactStore 归一化范围与准备结构。
+复用 [共同内容准备](../content/reading-and-preparation.md)及[统一选区](../content/selection-and-text.md)。候选准备按实际正文、标题、标注、来源、解析与候选布局识别；纳入复核或探索组的选择属于目录资格，不改变共同文稿的候选准备身份。未变输入复用正文布局、语义文本和路径映射。文稿单元持有正文、来源 roots 和候选向量引用，整体概念、关系、支持和概念向量由图单元持有。变化的文稿通过 ArtifactStore 归一化范围与准备结构。
 
 正文与布局另按实际 Artifact 选区、解析配置、布局参数和当前分段规则标识。超长普通段落形成有界、UTF-8 安全的局部选区，长代码块和列表保持完整。标题或活动标注变化时，复用单元中的正文和精确候选选区；按新标注重新计算覆盖与路径，按新标题更新词项和标题相关向量输入。正文读取量与整组复用量分别记录。
 

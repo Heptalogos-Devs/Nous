@@ -17,7 +17,9 @@ input_parts(result_id, group_ordinal, part_ordinal,
 part_origins(result_id, group_ordinal, part_ordinal, origin_ordinal,
              artifact_id, selector, transform_result_id?)
 result_outputs(result_id, ordinal, name, artifact_id)
-content_output_mappings(result_id, output_name, ordinal, selection, relation, origins)
+content_output_mappings(result_id, output_name, ordinal, selection, relation)
+content_output_mapping_origins(result_id, output_name, mapping_ordinal, ordinal,
+                               artifact_id, selector)
 content_result_dependencies(result_id, ordinal, artifact_id?, dependency_result_id?)
 ```
 

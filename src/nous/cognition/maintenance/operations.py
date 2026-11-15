@@ -11,6 +11,7 @@ from nous.application.contracts import (
 )
 from nous.application.inputs import InputReader
 from nous.common.errors import NousError, failure_code, failure_message
+from nous.common.material_refs import RecordRevisionRef
 from nous.common.operations import OperationIssue, completed_references
 from nous.runtime.execution import ExecutionManager, OperationContext
 from nous.storage.database import Database
@@ -22,7 +23,7 @@ from ..annotation.contracts import (
     AnnotationOutcome,
 )
 from ..annotation.operations import AnnotationOperations
-from ..contracts import NamespaceRef, RecordRevisionRef
+from ..contracts import NamespaceRef
 from ..retrieval.operations import CognitiveRetrieval
 from ..scope import NamespaceOperations
 from ..writing.contracts import AfterWrite, CommittedRecord
@@ -94,7 +95,6 @@ class MaintenanceOperations:
                 namespace=commit.namespace.ref,
                 annotation=annotate,
                 refresh=refresh,
-                mode=policy.mode,
                 require_recall=policy.annotation == "default",
                 execution=policy.execution,
             ),
@@ -166,9 +166,7 @@ class MaintenanceOperations:
                 await call.events.emit(Notice(issue=issue))
         if request.refresh:
             try:
-                result = await self.retrieval.refresh(
-                    target.record_ref.namespace_id, mode=request.mode
-                )
+                result = await self.retrieval.refresh(target.record_ref.namespace_id)
                 if result.captured_generation is None:
                     raise NousError(
                         "cognition.invalid_snapshot", "Published snapshot has no generation"

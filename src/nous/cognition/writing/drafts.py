@@ -17,7 +17,8 @@ from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 
 from .. import schema
-from ..contracts import RecordRevisionRef
+from ..source_storage import read_sources_in, save_sources_in
+from nous.common.material_refs import RecordRevisionRef
 from .contracts import DraftContext, DraftRef, DraftView
 from .reading import RecordReader
 from .records import WrittenRecords
@@ -62,10 +63,8 @@ class DraftStore:
         """Insert a complete draft in the caller's transaction."""
         ns = await self.reader.scope.get_in(tx, context.namespace_ref)
         await self.core.validate_sources_in(tx, ns, context.source_bindings)
-        await self.results.get_in(tx, product)
+        await self.results.refs_in(tx, (product, *((composition,) if composition else ())))
         await self.results.artifacts.get_in(tx, body)
-        if composition is not None:
-            await self.results.get_in(tx, composition)
         if context.base_revision is not None:
             await self.reader.resolve_in(tx, context.base_revision, ns.id)
         if parent is not None:
@@ -81,7 +80,7 @@ class DraftStore:
                 "result_id": product.id,
                 "composition_result_id": composition.id if composition else None,
                 "body_artifact_id": body.id,
-                "context": context.model_dump(mode="json"),
+                "context": context.model_dump(mode="json", exclude={"source_bindings"}),
                 "base_revision_id": context.base_revision.revision_id
                 if context.base_revision
                 else None,
@@ -91,6 +90,7 @@ class DraftStore:
                 "recorded_at": self.results.artifacts.clock.utc_now().isoformat(),
             },
         )
+        await save_sources_in(tx, object_id, context.source_bindings, draft=True)
         return DraftRef(
             instance_id=self.results.artifacts.instance_id,
             namespace_id=ns.id,
@@ -135,13 +135,13 @@ class DraftStore:
             raise NousError(
                 "cognition.namespace_mismatch", "Draft does not belong to this namespace"
             )
-        product = await self.results.get_in(tx, str(row["result_id"]))
-        body = await self.results.artifacts.get_in(tx, str(row["body_artifact_id"]))
-        composition = (
-            (await self.results.get_in(tx, str(row["composition_result_id"]))).ref
-            if row["composition_result_id"]
-            else None
+        product_ids: tuple[str, ...] = (
+            str(row["result_id"]),
+            *((str(row["composition_result_id"]),) if row["composition_result_id"] else ()),
         )
+        product_refs = await self.results.refs_in(tx, product_ids)
+        body = await self.results.artifacts.get_in(tx, str(row["body_artifact_id"]))
+        composition = next(iter(product_refs[1:]), None)
         parent = None
         if row["parent_draft_id"]:
             parent_row = (
@@ -163,10 +163,17 @@ class DraftStore:
                 id=str(parent_row["id"]),
                 identifier=str(parent_row["identifier"]),
             )
+        sources = (await read_sources_in(tx, self.results.artifacts, (ref.id,), draft=True))[ref.id]
+        context = DraftContext.model_validate(
+            {
+                **row["context"],
+                "source_bindings": sources,
+            }
+        )
         return DraftDescriptor(
             ref=ref,
-            context=DraftContext.model_validate(row["context"]),
-            product=product.ref,
+            context=context,
+            product=product_refs[0],
             body=body.ref,
             composition=composition,
             parent=parent,

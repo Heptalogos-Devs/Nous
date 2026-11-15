@@ -5,8 +5,9 @@ from typing import Annotated
 from pydantic import Field
 
 from nous.cognition.concept_contracts import AnnotationRef, ConceptRevisionRef
-from nous.cognition.contracts import FeedbackRef, NamespaceRef, RecordRevisionRef
+from nous.cognition.contracts import FeedbackRef, NamespaceRef
 from nous.cognition.writing.contracts import DraftRef
+from nous.common.material_refs import RecordRevisionRef, WorkRef, WorkRevisionRef
 from nous.content.contracts import ArtifactRef, ResultRef
 from nous.wave.contracts import SnapshotRef
 
@@ -19,6 +20,8 @@ type ProductRef = Annotated[
     | AnnotationRef
     | FeedbackRef
     | DraftRef
+    | WorkRef
+    | WorkRevisionRef
     | SnapshotRef,
     Field(discriminator="kind"),
 ]

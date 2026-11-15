@@ -25,7 +25,7 @@ Concept 是有名称、完整描述、别名和向量的检索线索。认知领
 
 VCP Tag 对应 Concept 的计算节点；原来的短 Tag 名保留为 label/alias，向量可以来自完整描述。VCP file 是有序出现的事实单位，candidate/chunk 是召回单位；两者与 Nous Artifact/Journal 没有强制一一对应。
 
-VCP QueryObservation 是一次数值计算的观测。它与 Nous 将来的 Observation 接触事实分开。VCP anchor_gain/direct_anchor 是数值机制；Nous Anchor 的长期中心语义由领域与清单关系提供。Thinking 返回有真实传播前驱的候选路线，不替代语言推理、自由 Dream 或执行工作流。
+VCP QueryObservation 是数值图内的一次观测。它与 Nous 将来的 Observation 接触事实分开。VCP anchor_gain/direct_anchor 是数值机制；Nous Anchor 的长期中心语义由领域与清单关系提供。Thinking 返回有真实传播前驱的候选路线，不替代语言推理、自由 Dream 或执行工作流。
 
 ## 本轮扩展
 

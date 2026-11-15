@@ -10,15 +10,15 @@ class RevisionSelection(CognitiveValue):
     selections: tuple[ContentSelection, ...]  # 至少一项，允许不连续
 
 
-class SourceBinding(CognitiveValue):
+class MaterialSource(ContentValue):
     key: str
+    material: MaterialRef
     selections: tuple[ContentSelection, ...]
-    owner_revision: RecordRevisionRef | None
-    usage: Literal["reference", "current_basis", "inspiration"]
+    kind: str
     name: str | None
 ```
 
-SourceBinding 是固定后的存储值。RecordView 和 RevisionPassage 返回 RevisionSelection；通用 Wave 返回 CandidateDescriptor 与 GroupDescriptor，认知检索从组级正式上下文构造 RevisionSelection。
+MaterialSource 将正式材料身份、用途和精确范围作为一份来源事实保存。结果可将不同来源关联到不同输出；同一来源供多个输出使用时只保存一次。
 
 ## 一个共同解析能力
 
@@ -37,14 +37,14 @@ class SourceResolver:
         usage: Literal["reference", "current_basis", "inspiration"] = "reference",
         preserve_keys: bool = False,
         input_reader: InputReader | None = None,
-    ) -> PreparedSources: ...
+    ) -> SelectedInputs: ...
 
     async def validate_in(
-        self, tx: ReadTx, namespace: NamespaceRef, sources: Sequence[SourceBinding]
+        self, tx: ReadTx, namespace: NamespaceRef, sources: Sequence[MaterialSource]
     ) -> None: ...
 ```
 
-`SourceResolver.prepare` 返回的 `PreparedSources` 同时包含正式 `bindings` 和供语言规划使用的 `SelectedInputs`，按逻辑槽连接两者。写入采用正文坐标；语言请求保留实际消费表示。消费后的正式来源由 SourceResolver 按逻辑槽与生产者登记的坐标映射解析，不能从后续消费记录推测坐标。
+`SourceResolver.prepare` 返回 `SelectedInputs`。每个所选来源直接持有正式材料、用途和精确原文选区；当选用的实际表示不同时，附带该表示及其原文映射。模型准备在每条执行路线中确定实际消费范围，成果采用最终执行路线的来源与输入。
 
 使用共同的键分配规则，保持输入组、顺序、usage、显示名称和不连续范围。source:S1:C1 的局部键是这次输入目录中的键，不承担认知身份。
 
@@ -62,9 +62,9 @@ class SourceResolver:
 
 准备时由 ArtifactStore 校验 artifact、实例身份、文本范围和 UTF-8 边界，MediaPreparer 使用确定性 inspect 校验媒体页、帧、时间和裁剪范围。文本按行的输入归一成原件绝对 UTF-8 半开区间；多选区分别保留。媒体校验不创建转换产物或触发语言解释。
 
-大文件读取、媒体探测与解析在事务外；短事务重新检查正式 owner、不可变 body 绑定以及需要修改的可变前置条件。不可变源正文已经冻结，提交不再读一遍整个文件。调用者直接提供 SourceBinding 也必须经过该能力，不能成为绕过范围校验的后门。
+大文件读取、媒体探测与解析在事务外；短事务重新检查正式 owner、不可变 body 绑定以及需要修改的可变前置条件。不可变源正文已经冻结，提交不再读一遍整个文件。调用者直接提供 MaterialSource 时同样校验其身份和范围。
 
-`validate_sources_in` 不再只是确认 Artifact 行存在；它对“这些规范化选区对应哪个正式修订”负责。底层 content 不查询 cognition 表，跨领域归属在 cognition 完成。采用表示选区时，准备结果同时保留实际消费的表示及明确的原文映射；SourceBinding 用于认知依赖的 selections 归一到所声明 owner 的正文坐标，模型 actual_inputs 继续保存真正消费的表示。不能在采用时丢弃表示，再靠内容相似度找回原文。
+`validate_sources_in` 校验规范化选区与正式材料的归属。底层 content 保存来源事实；跨领域归属由 cognition 校验。采用表示选区时，准备结果同时保留实际消费的表示及明确的原文映射；MaterialSource 的 selections 固定所声明材料的正文坐标，模型输入保留真正消费的表示。
 
 ## current_basis 的失效
 
@@ -72,7 +72,7 @@ class SourceResolver:
 
 RevisionRef 和 RevisionSelection 表示正式依赖；裸 ContentSelection 只表达内容，不能作为 current_basis。更新依据后通过新 revision 完成复核，精确旧版仍可阅读。
 
-来源范围和依赖范围不能无意扩大：不连续片段不转为 min/max 的连续区间；表示的原始页/时段也不能替换成整份媒体。字段在 input planning → actual_inputs → DraftContext → adoption → CorpusCapture → QueryResult 的每一步都有原样或明确变换后的消费者。
+来源范围和依赖范围不能无意扩大：不连续片段不转为 min/max 的连续区间；表示的原始页/时段也不能替换成整份媒体。字段在输入规划、实际输入、草稿、采用、材料捕获和证据交付之间保留原样或明确的坐标变换。
 
 ## 来源独立性
 

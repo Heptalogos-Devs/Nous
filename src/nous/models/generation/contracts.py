@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
 from nous.content.contracts import (
     Artifact,
@@ -101,6 +101,7 @@ class GenerationRequest:
 class CompletedTask:
     facts: ResultFacts
     outputs: Mapping[str, OutputContent]
+    value: BaseModel | None = None
 
 
 class RunModel(ContentValue):

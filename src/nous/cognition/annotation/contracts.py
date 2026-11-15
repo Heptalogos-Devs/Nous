@@ -5,18 +5,13 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.common.operations import OperationIssue
 from nous.content.annotations import AnnotationProposal
 from nous.content.contracts import ExternalInput, ResultRef
 
 from ..concept_contracts import AnnotationRef, ConceptRef, ConceptRevisionRef, ConceptView
-from ..contracts import (
-    CognitiveValue,
-    NamespaceRef,
-    RecordRef,
-    RecordRevisionRef,
-    RevisionSelection,
-)
+from ..contracts import CognitiveValue, NamespaceRef, RevisionSelection
 
 
 class AnnotationRequest(CognitiveValue):

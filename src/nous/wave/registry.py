@@ -175,10 +175,6 @@ class SnapshotRegistry:
                         "signature": unit.signature,
                         "input_signature": unit.input_signature,
                         "layout_signature": unit.layout_signature,
-                        "capture_stamp": unit.capture_stamp,
-                        "projection": unit.projection.model_dump(mode="json")
-                        if unit.projection is not None
-                        else None,
                         "document_key": unit.document_key,
                         "document": unit.document,
                         "roots": unit.roots,

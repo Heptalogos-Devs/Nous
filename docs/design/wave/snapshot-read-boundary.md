@@ -21,15 +21,13 @@ typed SnapshotRef 核验 instance/id/identifier；cognition owner 核验 namespa
 
 ## 反馈路径
 
-FeedbackOperations.record_query 接收正式 QueryResult，校验真实 snapshot、实际 selected_context、各组交付片段及 target。候选与组分别批量读取；绑定已知 exact revision/selection 时保留 RevisionSelection。
-
-持久 feedback 的 `QueryFeedback` 保存 QueryContext、操作关联、所选组排名依据及实际交付候选，目标使用精确修订/选区；同一事务登记对原快照的正式保留引用。未交付候选不被推成负反馈。
+FeedbackOperations.record_query 接收正式证据交付及其中实际交付的 E 键，校验精确材料和选区。持久 feedback 保存该证据引用与 E 键；查询意图和排名依据从对应证据读取。需要保留的历史快照在同一事务登记正式保留引用。未交付候选不被推成负反馈。
 
 保留 category/value/comment 与 accuracy/agreement/usefulness/retrieval 的含义。普通意见不调用模型、不改文稿、不推进 generation。明确更正通过文稿 owner 并与 resolution 同事务提交。
 
 ## 性能与并发
 
-相同视图的并发查询共享准备结果；未变化文稿复用投影单元，Native 完整输入未变化时复用组件。
+同一集合的构建串行；未变化文稿复用候选准备，Native 完整输入未变化时复用组件。
 
 跨多个 Namespace/profile 的读取相互独立，索引/Native 加载仍由 Wave 持有。本轮不改变 quality_score、ranking_score、RRF 或文稿分组 top_k 的含义。
 

@@ -61,7 +61,7 @@ PDF 第 3 页的 PNG，其 `content` 是该 PNG 的 Whole；`origins` 指原 PDF
 
 CAS `owner/slot → BlobRef` 是正文唯一映射。Artifact 表不复制另一份可更新 digest。输入组、实际 parts 与 origins 按 [来源读取](provenance.md) 规范化保存；公开 InputGroup 由唯一正式数据重建，不再维护第二份可更新 group JSON。origin artifact/result 的存在和实例归属在采用中检查。输出 Artifact 由同一结果所有者建立。
 
-`prepare_outputs` 发布字节；`adopt_in(tx)` 提交结果、输入关系、输出 Artifact 与 CAS 引用。上层使用同一个 WriteTx；读取完整结果和来源尽量批量完成，避免逐节点 SQL。
+`prepare_outputs` 发布字节；`adopt_in(tx)` 提交结果、输入关系、输出 Artifact 与 CAS 引用。上层使用同一个 WriteTx；`get_many_in(tx, refs)` 在调用方的同一读取事务批量装配完整结果、输入、输出、映射和依赖，保持请求顺序，单项读取使用相同路径。
 
 发布成功而 SQL 失败的字节可以被之后显式清理。没有启用 GC 时不要建设租约平台；今后 GC 需避开正在发布/采用的内容。
 

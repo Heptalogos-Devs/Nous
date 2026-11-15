@@ -1,0 +1,19 @@
+contract_id = "evaluate-candidates"
+
+[documentation]
+title = "评价候选材料"
+purpose = "按照问题和评价标准逐项评价候选。"
+consumers = ["EvaluationOperations"]
+input_notes = "question 是问题，instructions 包含用途、rubric 和统一评价尺度；来源键对应本次候选。"
+output_notes = "按 Schema 返回每项候选的键和符合所声明尺度的评价值。"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+description = "评价职责和输出要求。"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+description = "本次问题、标准与候选。"
+append_sources = true

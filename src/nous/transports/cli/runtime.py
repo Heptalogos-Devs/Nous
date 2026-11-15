@@ -1,12 +1,14 @@
 """Run the local host and inspect its current background operations."""
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import asdict
 
 import typer
 
 from nous.runtime.bootstrap import Runtime
-from nous.runtime.host import run_host
+from nous.runtime.host import run_host, serve_configured_transports
 from nous.runtime.operations import (
     CANCEL_OPERATION,
     LIST_OPERATIONS,
@@ -34,7 +36,19 @@ def run(ctx: typer.Context) -> None:
         await asyncio.Event().wait()
 
     locator = options(ctx).locator
-    run_host(locator, application, service=lambda runtime: serve_cli(runtime, locator))
+
+    @asynccontextmanager
+    async def services(runtime: Runtime) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(serve_cli(runtime, locator))
+            addresses = await stack.enter_async_context(
+                serve_configured_transports(runtime, locator)
+            )
+            for name, address in addresses.items():
+                typer.echo(f"{name}: {address.host}:{address.port}")
+            yield
+
+    run_host(locator, application, service=services)
 
 
 @operations_cli.command("list")

@@ -12,11 +12,14 @@ from pydantic import JsonValue
 from nous.common.errors import NousError
 from nous.content.contracts import (
     Artifact,
+    ContentSelection,
+    MaterialSource,
     SelectedInputs,
+    SelectedSource,
     SourceRole,
     SourceSelection,
 )
-from nous.media.contracts import MediaPlan, PreparedBatch
+from nous.media.contracts import MediaPlan, PreparedBatch, PreparedSource
 
 from .tasks import TaskDefinition
 
@@ -68,8 +71,8 @@ def semantic_units(
     material = [
         (index, selection)
         for index, source in enumerate(selected.sources)
-        if source.role != "context"
-        for selection in source.selections
+        if source.kind != "context"
+        for selection in source.input_selections
     ]
     if ranges:
         if len(material) != 1:
@@ -92,15 +95,32 @@ def semantic_units(
     if not material:
         return (SemanticUnit("U1", selected, mode),)
     units: list[SemanticUnit] = []
+
+    def narrow(source: SelectedSource, selection: ContentSelection) -> SelectedSource:
+        if not source.representations:
+            return source.model_copy(update={"selections": (selection,)})
+        for part in source.representations:
+            if part.content.artifact == selection.artifact:
+                try:
+                    if part.content.selection.restrict(selection.selection) == selection.selection:
+                        return source.model_copy(
+                            update={
+                                "representations": (part.model_copy(update={"content": selection}),)
+                            }
+                        )
+                except NousError:
+                    pass
+        raise NousError(
+            "model.invalid_input_mode", "Independent range is outside its representation"
+        )
+
     for index, selection in material:
         sources = tuple(
-            source.model_copy(update={"selections": (selection,)})
-            if source_index == index
-            else source
+            narrow(source, selection) if source_index == index else source
             for source_index, source in enumerate(selected.sources)
-            if source_index == index or source.role == "context"
+            if source_index == index or source.kind == "context"
         )
-        refs = {item.artifact.id for source in sources for item in source.selections}
+        refs = {item.artifact.id for source in sources for item in source.input_selections}
         inputs = SelectedInputs(
             sources=sources,
             facts=tuple(fact for fact in selected.facts if fact.artifact.id in refs),
@@ -121,17 +141,19 @@ async def _plan_unit(
 ) -> tuple[RoutePlan, tuple[MediaPlan, ...]]:
     originals: list[tuple[Artifact, SourceSelection, SourceRole, str]] = []
     for source in unit.inputs.sources:
-        artifacts = await preparer.artifacts.get_many([item.artifact for item in source.selections])
+        artifacts = await preparer.artifacts.get_many(
+            [item.artifact for item in source.input_selections]
+        )
         originals.extend(
             (
-                artifact.model_copy(update={"display_name": source.display_name})
-                if source.display_name is not None
+                artifact.model_copy(update={"display_name": source.name})
+                if source.name is not None
                 else artifact,
                 item.selection,
-                source.role,
-                source.slot_key,
+                source.kind,
+                source.key,
             )
-            for item, artifact in zip(source.selections, artifacts, strict=True)
+            for item, artifact in zip(source.input_selections, artifacts, strict=True)
         )
     slots = [slot for _, _, _, slot in originals]
     if any(any(char.isspace() for char in slot) for slot in slots):
@@ -252,8 +274,70 @@ async def plan_inputs(
 async def materialize(preparer: MediaPreparer, request: RoutePlan, max_bytes: int) -> PreparedBatch:
     batches: list[PreparedBatch] = []
     total = 0
+    choices = {source.key: source for source in request.unit.inputs.sources}
     for planned in request.batches:
         batch = await preparer.materialize(planned)
+        bound: list[PreparedSource] = []
+        for item in batch.sources:
+            group = item.group
+            if group is None:
+                bound.append(item)
+                continue
+            source = choices[group.slot_key]
+            consumed: list[ContentSelection] = []
+            for part in group.parts:
+                for origin in tuple(value.origin for value in part.origins) or (part.content,):
+                    targets = tuple(
+                        target
+                        for target in source.selections
+                        if target.artifact == origin.artifact
+                        or any(
+                            representation.content.artifact == origin.artifact
+                            and any(
+                                parent.origin.artifact == target.artifact
+                                for parent in representation.origins
+                            )
+                            for representation in source.representations
+                        )
+                    )
+                    for target in targets:
+                        mapped = (
+                            (origin,)
+                            if origin.artifact == target.artifact
+                            else tuple(
+                                value.origin
+                                for value in await preparer.artifacts.map_origins(
+                                    origin, target.artifact
+                                )
+                            )
+                        )
+                        for value in mapped:
+                            try:
+                                selection = target.selection.restrict(value.selection)
+                            except NousError:
+                                continue
+                            exact = value.model_copy(update={"selection": selection})
+                            if exact not in consumed:
+                                consumed.append(exact)
+            if not consumed:
+                raise NousError(
+                    "content.origin_unmapped",
+                    "Actual input has no declared original source",
+                    details={"key": group.key},
+                )
+            bound.append(
+                replace(
+                    item,
+                    material_source=MaterialSource(
+                        key=group.key,
+                        material=source.material,
+                        selections=tuple(consumed),
+                        kind=group.role,
+                        name=source.name,
+                    ),
+                )
+            )
+        batch = replace(batch, sources=tuple(bound))
         total += sum(
             len((source.text or "").encode()) + sum(len(item.data) for item in source.media)
             for source in batch.sources

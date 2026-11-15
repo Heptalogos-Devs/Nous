@@ -252,7 +252,7 @@ def test_wave_manifest_binds_paths_relative_to_client(tmp_path: Path) -> None:
             "query",
             snapshot,
             "CLIENT_CONTENT_MARKER",
-            "--mode",
+            "--program",
             "lexical",
         )
         assert result.returncode == 0, (result.stdout, result.stderr)
@@ -623,7 +623,7 @@ def test_relative_inputs_draft_stdin_and_live_model_output(tmp_path: Path) -> No
                 "query",
                 snapshot,
                 "CLIENT_CORPUS_CONTENT",
-                "--mode",
+                "--program",
                 "lexical",
                 cwd=client_dir,
             )

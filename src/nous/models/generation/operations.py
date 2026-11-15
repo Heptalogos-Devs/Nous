@@ -17,12 +17,10 @@ from nous.content.contracts import (
     InlineText,
     ModelProducer,
     OutputContent,
-    OutputMapping,
     ProcessingResult,
     ResultFacts,
     ResultRef,
     SelectedInputs,
-    SourceSelection,
 )
 from nous.content.results import ResultStore
 from nous.models.configuration import ModelRoute, PresetConfig, TaskAssignment
@@ -136,7 +134,7 @@ class GenerationOperations:
             selected = await call.inputs.read_text(
                 value.key, value.selection, call.settings.values.content.text_read_max_bytes
             )
-            return TypeAdapter(dict[str, JsonValue]).validate_json(selected.data)
+            return TypeAdapter(dict[str, JsonValue]).validate_json(selected)
         return value
 
     async def compute(self, request: GenerationRequest, call: CallContext) -> CompletedTask:
@@ -144,9 +142,9 @@ class GenerationOperations:
         if (
             request.input_mode == "independent"
             and sum(
-                len(source.selections)
+                len(source.input_selections)
                 for source in request.inputs.sources
-                if source.role != "context"
+                if source.kind != "context"
             )
             > 1
         ):
@@ -217,14 +215,14 @@ class GenerationOperations:
         if frozen.resource is None:
             raise NousError("model.task_contract_missing", "The task has no output contract")
         definition = self.executor.compiler.catalog.tasks[frozen.resource.manifest.contract_id]
-        outputs = await definition.outputs(
+        interpreted = await definition.outputs(
             generated.output,
             reading,
             self.results.artifacts,
             structured=prepared.compiled.schema is not None,
             producer=generated.producer,
         )
-        outputs = definition.describe_outputs(outputs)
+        outputs = definition.describe_outputs(interpreted.outputs)
         if generated.response:
             outputs["response"] = OutputContent(
                 data=json.dumps(generated.response, ensure_ascii=False, indent=2).encode(),
@@ -233,20 +231,9 @@ class GenerationOperations:
                 role="diagnostic",
             )
         actual = tuple(source.group for source in reading.sources if source.group is not None)
-        origins = tuple(dict.fromkeys(part.content for group in actual for part in group.parts))
-        mappings = tuple(
-            OutputMapping(
-                output_name=name,
-                selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
-                relation="derived",
-                origins=origins,
-            )
-            for name, output in outputs.items()
-            if output.role != "diagnostic" and output.data and origins
-        )
         selected = group.unit.inputs
         artifacts = await self.results.artifacts.get_many(
-            [item.artifact for source in selected.sources for item in source.selections]
+            [item.artifact for source in selected.sources for item in source.input_selections]
         )
         dependencies = tuple(
             dict.fromkeys(
@@ -277,6 +264,15 @@ class GenerationOperations:
             producer=ModelProducer.model_validate(generated.producer),
             selected_inputs=selected,
             inputs=actual,
+            material_sources=interpreted.material_sources
+            if interpreted.material_sources is not None
+            else tuple(
+                source.material_source
+                for source in reading.sources
+                if source.material_source is not None
+                and source.material_source.kind
+                in {"source", "reference", "current_basis", "inspiration"}
+            ),
             request=request_facts.model_dump(mode="json", by_alias=True),
             parameters={
                 "attempts": generated.attempts,
@@ -284,11 +280,12 @@ class GenerationOperations:
                 "finish_reason": generated.finish_reason,
             },
             coverage=generated.coverage,
-            mappings=mappings,
+            mappings=interpreted.mappings,
+            selections=interpreted.selections,
             dependencies=dependencies,
             formed_at=self.results.artifacts.clock.utc_now(),
         )
-        return CompletedTask(facts=facts, outputs=outputs)
+        return CompletedTask(facts=facts, outputs=outputs, value=interpreted.value)
 
     async def run(self, request: RunModel, call: CallContext) -> ModelOutcome:
         output_schema = await self.resolve_schema(request.output_schema, call)

@@ -5,12 +5,13 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import JsonValue, TypeAdapter
 
 from nous.application.contracts import BasicEvents, CallContext, LanguageEvents, define_operation
 from nous.common.errors import NousError
+from nous.common.material_refs import RecordRevisionRef, WorkRevisionRef
 from nous.common.operations import OperationIssue, add_error_context
 from nous.content.citations import normalize_source_links, parse_citations
 from nous.content.contracts import (
@@ -19,11 +20,13 @@ from nous.content.contracts import (
     ExternalInput,
     InputGroup,
     InputPart,
+    MaterialSource,
     OutputContent,
     OutputMapping,
     ProcessingResult,
     ProgramProducer,
     ResultFacts,
+    ResultOutput,
     ResultRef,
     SelectedInputs,
     SelectedSource,
@@ -34,8 +37,9 @@ from nous.content.contracts import (
 from nous.content.edits import PreparedTextEdit
 from nous.models.generation import GenerationOperations, GenerationRequest
 
-from ..contracts import NamespaceRef, RecordRevisionRef, RecordView, SourceBinding
-from ..sources import PreparedSources
+from ..contracts import NamespaceRef, RecordView
+from ..material_contracts import MaterialSelection
+from ..retrieval.adoption import SavedEvidence, read_saved_evidence
 from .contracts import (
     AdoptDraft,
     CitationContext,
@@ -62,11 +66,14 @@ from .reading import RecordReader
 from .records import WrittenRecords
 from .tasks import EditProposal, compose_edit, writing_body
 
+if TYPE_CHECKING:
+    from ..materials import Materials
 
-def _source_directory(sources: Sequence[SourceBinding]) -> str:
+
+def _source_directory(sources: Sequence[MaterialSource]) -> str:
     return json.dumps(
         [
-            {"key": source.key, "name": source.name or source.key, "usage": source.usage}
+            {"key": source.key, "name": source.name or source.key, "usage": source.kind}
             for source in sources
         ],
         ensure_ascii=False,
@@ -165,9 +172,11 @@ class WritingOperations:
         generation: GenerationOperations,
         drafts: DraftStore,
         records: RecordOperations,
+        materials: Materials,
     ) -> None:
         self.core, self.reader, self.generation = core, reader, generation
         self.drafts, self.records = drafts, records
+        self.materials = materials
         self.execution, self.database, self.results = (
             reader.execution,
             reader.database,
@@ -181,7 +190,7 @@ class WritingOperations:
             selected = await call.inputs.read_text(
                 value.key, value.selection, call.settings.values.content.text_read_max_bytes
             )
-            return TypeAdapter(tuple[SourceChoice, ...]).validate_json(selected.data)
+            return TypeAdapter(tuple[SourceChoice, ...]).validate_json(selected)
         return value
 
     async def _base(self, ref: RecordRevisionRef, namespace: NamespaceRef) -> RecordView:
@@ -195,10 +204,32 @@ class WritingOperations:
         self, base: RecordRevisionRef, refs: Sequence[str], mappings: Mapping[str, str]
     ) -> str:
         views = await self.records.feedback.select_for_edit(refs, base, mappings=mappings)
-        return "\n\n".join(
-            f"[{item.identifier}] {item.category}: {item.value or ''}\n{item.comment or ''}"
-            for item in views
-        )
+        deliveries: dict[ResultRef, SavedEvidence] = {}
+        output: list[str] = []
+        for item in views:
+            parts = [f"[{item.identifier}] {item.category}: {item.value or ''}", item.comment or ""]
+            query = item.target.query
+            if query is not None and query.evidence is not None:
+                if query.evidence not in deliveries:
+                    deliveries[query.evidence] = await read_saved_evidence(
+                        self.results, query.evidence
+                    )
+                delivery = deliveries[query.evidence]
+                parts.append(f"Query: {delivery.question}")
+                if query.passage_key is not None:
+                    passage = delivery.source(query.passage_key)
+                    content = await self.results.artifacts.read_selections(passage.selections)
+                    parts.append(
+                        f"Evidence {passage.key}:\n" + "".join(part.text for part in content)
+                    )
+            elif query is not None:
+                facts = query.model_dump(
+                    mode="json", exclude={"evidence", "passage_key", "snapshot_available"}
+                )
+                if facts:
+                    parts.append(json.dumps(facts, ensure_ascii=False))
+            output.append("\n".join(parts))
+        return "\n\n".join(output)
 
     async def _prepare(
         self, request: WriteDraft, call: CallContext
@@ -221,7 +252,7 @@ class WritingOperations:
         )
         namespace = await self.core.scope.resolve_for(request.namespace, owner)
         choices = await self._choices(request.sources, call)
-        inherited: tuple[SourceBinding, ...] = ()
+        inherited: tuple[MaterialSource, ...] = ()
         targets: dict[str, ContentSelection] = {}
         selected_targets: tuple[ContentSelection, ...] = ()
         feedback_mappings: dict[str, str] = {}
@@ -252,13 +283,9 @@ class WritingOperations:
             extra = await self.core.sources.prepare(
                 namespace, choices, prefix="N", input_reader=call.inputs
             )
-            prepared = PreparedSources(
-                first.namespace,
-                (*first.bindings, *extra.bindings),
-                SelectedInputs(
-                    sources=(*first.selected_inputs.sources, *extra.selected_inputs.sources),
-                    facts=(*first.selected_inputs.facts, *extra.selected_inputs.facts),
-                ),
+            prepared = SelectedInputs(
+                sources=(*first.sources, *extra.sources),
+                facts=(*first.facts, *extra.facts),
             )
         else:
             prepared = await self.core.sources.prepare(
@@ -276,9 +303,7 @@ class WritingOperations:
                     request.targets.selection,
                     call.settings.values.content.text_read_max_bytes,
                 )
-                selected_targets = TypeAdapter(tuple[ContentSelection, ...]).validate_json(
-                    selected.data
-                )
+                selected_targets = TypeAdapter(tuple[ContentSelection, ...]).validate_json(selected)
             else:
                 selected_targets = request.targets
             if not selected_targets:
@@ -290,10 +315,11 @@ class WritingOperations:
                 targets[key] = selected
                 inputs.append(
                     SelectedSource(
-                        slot_key=key,
-                        role="edit_target",
+                        key=key,
+                        kind="edit_target",
+                        material=base.revision_ref,
                         selections=(selected,),
-                        display_name=base.title,
+                        name=base.title,
                     )
                 )
             if isinstance(request.feedback_mappings, ExternalInput):
@@ -302,7 +328,7 @@ class WritingOperations:
                     request.feedback_mappings.selection,
                     call.settings.values.content.text_read_max_bytes,
                 )
-                feedback_mappings = TypeAdapter(dict[str, str]).validate_json(selected.data)
+                feedback_mappings = TypeAdapter(dict[str, str]).validate_json(selected)
             else:
                 feedback_mappings = request.feedback_mappings
             feedback = await self._feedback(request.base, request.feedback, feedback_mappings)
@@ -310,13 +336,14 @@ class WritingOperations:
             assert base is not None
             inputs.append(
                 SelectedSource(
-                    slot_key="BASE",
-                    role="revision_base",
+                    key="BASE",
+                    kind="revision_base",
+                    material=base.revision_ref,
                     selections=(base.body_selection,),
-                    display_name=base.title,
+                    name=base.title,
                 )
             )
-        inputs.extend(prepared.selected_inputs.sources)
+        inputs.extend(prepared.sources)
         if not inputs:
             raise NousError("input.sources_required", "Provide material for the writing request")
         settings = call.settings.values.cognition
@@ -375,10 +402,7 @@ class WritingOperations:
             namespace_ref=namespace,
             intent=request.intent,
             base_revision=base.revision_ref if base else None,
-            selected_sources=prepared.bindings,
-            citation_context=CitationContext(
-                inherited_sources=inherited, new_sources=prepared.bindings, targets=targets
-            ),
+            citation_context=CitationContext(inherited_sources=inherited, targets=targets),
             selected_edit_ranges=selected_targets,
             feedback_refs=tuple(dict.fromkeys(request.feedback))
             if isinstance(request, EditDraftRequest)
@@ -405,7 +429,7 @@ class WritingOperations:
         )
         return (
             context,
-            SelectedInputs(sources=tuple(inputs), facts=prepared.selected_inputs.facts),
+            SelectedInputs(sources=tuple(inputs), facts=prepared.facts),
             task,
             contract,
             question,
@@ -443,15 +467,29 @@ class WritingOperations:
                     else "no_material"
                 )
             context = context.model_copy(update={"output_state": output_state})
+            namespace = await self.core.scope.read(context.namespace_ref)
+            actual_sources = completed.facts.material_sources
+            formal_sources = (*context.citation_context.inherited_sources, *actual_sources)
             facts = completed.facts.model_copy(
                 update={
+                    "material_sources": formal_sources,
                     "parameters": {
                         **completed.facts.parameters,
-                        "writing": context.model_dump(mode="json"),
-                    }
+                        "writing": context.model_dump(
+                            mode="json",
+                            exclude={
+                                "citation_context": {"inherited_sources": True},
+                            },
+                        ),
+                    },
                 }
             )
-            product = await self.results.adopt(facts=facts, outputs=completed.outputs)
+            prepared_outputs = await self.results.prepare_outputs(completed.outputs)
+            async with self.database.write() as tx:
+                await self.core.validate_sources_in(tx, namespace, formal_sources)
+                product = await self.results.adopt_in(
+                    tx, facts=facts, prepared_outputs=prepared_outputs
+                )
             await call.saved(product.ref)
             try:
                 outcome = await self.draft_from_result(DraftFromResult(result=product.ref), call)
@@ -469,17 +507,6 @@ class WritingOperations:
             except BaseException as error:
                 add_error_context(error, {"product": product.ref.model_dump(mode="json")})
                 raise
-
-    async def _bindings(
-        self, product: ProcessingResult, context: WritingProductContext
-    ) -> tuple[SourceBinding, ...]:
-        if not context.selected_sources:
-            actual: tuple[SourceBinding, ...] = ()
-        else:
-            ns = await self.core.scope.read(context.namespace_ref)
-            prepared = PreparedSources(ns, context.selected_sources, product.selected_inputs)
-            actual = await self.core.sources.actual_bindings(product.inputs, prepared)
-        return (*context.citation_context.inherited_sources, *actual)
 
     async def _edit_targets(
         self, product: ProcessingResult, context: WritingProductContext, base: RecordView
@@ -516,7 +543,7 @@ class WritingOperations:
         return {key: tuple(values) for key, values in targets.items()}
 
     @staticmethod
-    def _issues(text: str, sources: Sequence[SourceBinding]) -> tuple[OperationIssue, ...]:
+    def _issues(text: str, sources: Sequence[MaterialSource]) -> tuple[OperationIssue, ...]:
         if not text.strip():
             raise NousError("input.empty_body", "A draft must contain Markdown")
         known = {source.key for source in sources}
@@ -546,7 +573,13 @@ class WritingOperations:
     ) -> DraftRef:
         selected = SelectedInputs(
             sources=tuple(
-                SelectedSource(slot_key=key, role=role, selections=(selection,), display_name=key)
+                SelectedSource(
+                    key=key,
+                    kind=role,
+                    material=selection.artifact,
+                    selections=(selection,),
+                    name=key,
+                )
                 for key, role, selection in inputs
             )
         )
@@ -558,11 +591,7 @@ class WritingOperations:
         )
         facts = ResultFacts(
             operation="writing.compose",
-            producer=(
-                ProgramProducer(operation="writing.compose")
-                if producer == "program"
-                else UserProducer()
-            ),
+            producer=(ProgramProducer() if producer == "program" else UserProducer()),
             selected_inputs=selected,
             inputs=groups,
             mappings=mappings,
@@ -594,16 +623,106 @@ class WritingOperations:
     ) -> WritingOutcome:
         product = await self.results.get(request.result)
         raw_context = product.parameters.get("writing")
-        if not isinstance(raw_context, dict):
-            raise NousError("cognition.writing_product_required", "Result is not a writing product")
-        context = WritingProductContext.model_validate(raw_context)
+        if isinstance(raw_context, dict):
+            context = WritingProductContext.model_validate(raw_context)
+            await self.core.scope.resolve_for(request.namespace, context.namespace_ref)
+        else:
+            namespace = await self.core.scope.resolve_for(request.namespace)
+            bindings = request.sources or ()
+            context = WritingProductContext(
+                namespace_ref=namespace,
+                intent="new",
+                citation_context=CitationContext(inherited_sources=bindings),
+                times=await self.core.prepare_times(None),
+                title=request.title,
+                output_state="material",
+            )
+        if request.sources is not None and isinstance(raw_context, dict):
+            context = context.model_copy(
+                update={
+                    "citation_context": CitationContext(inherited_sources=request.sources),
+                }
+            )
+        if request.title is not None:
+            context = context.model_copy(update={"title": request.title})
         if context.output_state == "no_material":
             return WritingOutcome(status="no_material", product=product.ref)
-        output = next((item for item in product.outputs if item.name == "output"), None)
+        output = next(
+            (item for item in product.outputs if item.name == (request.output or "output")), None
+        )
+        if output is None and request.output is None:
+            markdown: list[ResultOutput] = []
+            for item in product.outputs:
+                artifact = await self.results.artifacts.get(item.artifact)
+                if item.role != "diagnostic" and artifact.media_type == "text/markdown":
+                    markdown.append(item)
+            if len(markdown) == 1:
+                output = markdown[0]
         if output is None:
-            raise NousError("model.invalid_output", "Writing product has no output")
+            raise NousError(
+                "cognition.markdown_output_required", "Choose one Markdown output for the draft"
+            )
+        if context.intent != "edit":
+            artifact = await self.results.artifacts.get(output.artifact)
+            if artifact.media_type != "text/markdown":
+                raise NousError(
+                    "cognition.markdown_output_required", "The selected output is not Markdown"
+                )
+        formal_sources = product.sources_for(output.name)
+        if not formal_sources and request.sources is None and not isinstance(raw_context, dict):
+            selected: list[MaterialSource] = []
+            for item in product.selections:
+                artifact = item.sources[0].artifact
+                if any(selection.artifact != artifact for selection in item.sources):
+                    raise NousError(
+                        "cognition.source_identity_required",
+                        "Provide the formal source for selections spanning multiple artifacts",
+                        details={"key": item.key},
+                    )
+                selected.append(
+                    MaterialSource(
+                        key=item.key, material=artifact, selections=item.sources, kind="reference"
+                    )
+                )
+            formal_sources = tuple(selected)
+        owner: NamespaceRef | None = None
+        for source in formal_sources:
+            reference = source.material
+            if isinstance(reference, RecordRevisionRef):
+                ref = reference.record_ref
+            elif isinstance(reference, WorkRevisionRef):
+                ref = reference.work_ref
+            else:
+                continue
+            candidate = NamespaceRef(instance_id=ref.instance_id, id=ref.namespace_id)
+            if owner is not None and owner != candidate:
+                raise NousError(
+                    "cognition.namespace_mismatch", "Material sources span different namespaces"
+                )
+            owner = candidate
+        if formal_sources:
+            namespace = await self.core.scope.resolve_for(request.namespace, owner)
+            if isinstance(raw_context, dict):
+                await self.core.scope.resolve_for(namespace, context.namespace_ref)
+            else:
+                context = context.model_copy(update={"namespace_ref": namespace})
+            await self.materials.read_many(
+                tuple(
+                    MaterialSelection(material=item.material, selections=item.selections)
+                    for item in formal_sources
+                ),
+                namespace=context.namespace_ref,
+            )
+            if request.sources is None:
+                context = context.model_copy(
+                    update={
+                        "citation_context": context.citation_context.model_copy(
+                            update={"inherited_sources": formal_sources}
+                        )
+                    }
+                )
         raw = await self.results.artifacts.read_bytes(output.artifact)
-        bindings = await self._bindings(product, context)
+        bindings = context.citation_context.inherited_sources
         keys = tuple(item.key for item in bindings)
         base = (
             await self._base(context.base_revision, context.namespace_ref)
@@ -659,7 +778,7 @@ class WritingOperations:
             )
         draft_context = DraftContext.model_validate(
             {
-                **context.model_dump(mode="python"),
+                **context.model_dump(mode="python", include=set(DraftContext.model_fields)),
                 "source_bindings": bindings,
                 "normalized_edits": normalized_edits,
                 "issues": self._issues(body.decode("utf-8"), bindings),
@@ -707,7 +826,7 @@ class WritingOperations:
             selected = await call.inputs.read_text(
                 changes.key, changes.selection, call.settings.values.content.text_read_max_bytes
             )
-            changes = SourceChanges.model_validate_json(selected.data)
+            changes = SourceChanges.model_validate_json(selected)
         bindings = (
             changes.apply_to(old.context.source_bindings)
             if changes
@@ -727,7 +846,10 @@ class WritingOperations:
                 )
             )
         context = old.context.model_copy(
-            update={"source_bindings": bindings, "issues": tuple(issues)}
+            update={
+                "source_bindings": bindings,
+                "issues": tuple(issues),
+            }
         )
         ref = await self._save_composition(
             product=old.result_ref,

@@ -5,6 +5,12 @@ use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
 };
 use pyo3::prelude::*;
+#[pyfunction]
+#[pyo3(signature=(metadata_json,options_json="{}"))]
+pub fn context_masses(py: Python<'_>, metadata_json: &str, options_json: &str) -> PyResult<String> {
+    py.detach(|| nous_retrieval::context::context_masses(metadata_json, options_json))
+        .map_err(|error| native_error(failure("wave.invalid_input", error)))
+}
 #[pyclass(frozen, module = "nous_native._core")]
 pub struct ContextResult {
     vector: Vec<f32>,

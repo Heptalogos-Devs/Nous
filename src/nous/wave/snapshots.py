@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4, uuid5
 
 import sqlalchemy as sa
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 
 from nous.application.embedding import EmbeddingOperations
 from nous.application.preparation import TextPreparation
@@ -22,7 +22,7 @@ from nous.common.errors import NousError
 from nous.common.keyed_locks import KeyedLocks
 from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ArtifactRef, ContentSelection, SourceSelection
+from nous.content.contracts import ContentSelection
 from nous.content.results import ResultStore
 from nous.content.text import COMPLETE_BLOCKS_LAYOUT
 from nous.media.preparation import MediaPreparer
@@ -30,24 +30,17 @@ from nous.models.embeddings import resolved_space
 from nous.observability.instrumentation import get_logger
 from nous.runtime.execution import ExecutionManager, complete_cleanup
 from nous.runtime.paths import ResolvedPaths
-from nous.storage.database import Database, ReadTx
+from nous.storage.database import Database
 from nous.temporal.domains import TimeService
-from nous.temporal.values import CognitiveTimes
 
 from . import schema
 from .assets import freeze_inputs
 from .configuration import require_native_profiles
 from .contracts import (
     BuiltProduct,
-    CognitionOwner,
     CorpusView,
-    Document,
-    DocumentInput,
-    GroupDescriptor,
-    ProjectionFacts,
     ProjectionUnit,
     ResolvedBuildProfile,
-    ReusableDocument,
     SnapshotRef,
     WaveCleanupResult,
 )
@@ -55,7 +48,7 @@ from .importer import ManifestImporter
 from .mapping import CandidateMapping, SnapshotRow
 from .native_inputs import bundles
 from .native_inputs import component_signature as native_component_signature
-from .projection import capture_projections, layout_inputs, projection_inputs
+from .projection import layout_inputs, projection_inputs
 from .reading import SnapshotReader
 from .registry import SnapshotRegistry
 from .serialization import content_signature, encode_json
@@ -94,9 +87,8 @@ def view_profile(
 
 @dataclass
 class _Preparation:
-    users: int = 0
-    ready: int = 0
     asset: str | None = None
+    ready: bool = False
 
 
 class WaveSnapshots:
@@ -207,125 +199,6 @@ class WaveSnapshots:
             "loaded_channels": list(cached[1].capabilities) if cached else [],
         }
 
-    async def match_units_in(
-        self, tx: ReadTx, stamps: Sequence[str]
-    ) -> dict[str, tuple[ReusableDocument, GroupDescriptor]]:
-        """Find one published unit per input and its captured group context."""
-        found: dict[str, tuple[ReusableDocument, GroupDescriptor]] = {}
-        unique = list(dict.fromkeys(stamps))
-        for offset in range(0, len(unique), 400):
-            selected = (
-                sa.select(
-                    schema.projection_units.c.capture_stamp,
-                    sa.func.min(schema.projection_units.c.signature).label("signature"),
-                )
-                .where(
-                    schema.projection_units.c.capture_stamp.in_(unique[offset : offset + 400]),
-                    schema.projection_units.c.projection.is_not(None),
-                )
-                .group_by(schema.projection_units.c.capture_stamp)
-                .subquery()
-            )
-            first_snapshot = (
-                sa.select(schema.snapshot_members.c.snapshot_id)
-                .where(
-                    schema.snapshot_members.c.unit_signature == schema.projection_units.c.signature
-                )
-                .limit(1)
-                .scalar_subquery()
-            )
-            rows = (
-                await tx.connection.execute(
-                    sa.select(
-                        schema.projection_units.c.capture_stamp,
-                        schema.projection_units.c.document_key,
-                        schema.projection_units.c.document,
-                        schema.projection_units.c.roots,
-                        schema.projection_units.c.projection,
-                        schema.snapshot_groups.c.key,
-                        schema.snapshot_groups.c.title,
-                        schema.snapshot_groups.c.context,
-                    ).select_from(
-                        schema.projection_units.join(
-                            selected, selected.c.signature == schema.projection_units.c.signature
-                        ).join(
-                            schema.snapshot_groups,
-                            sa.and_(
-                                schema.snapshot_groups.c.snapshot_id == first_snapshot,
-                                schema.snapshot_groups.c.document_key
-                                == schema.projection_units.c.document_key,
-                            ),
-                        )
-                    )
-                )
-            ).mappings()
-            for row in rows:
-                stamp = cast(str, row["capture_stamp"])
-                found[stamp] = (
-                    self._reusable_document(row),
-                    GroupDescriptor(
-                        key=row["key"],
-                        document_key=row["document_key"],
-                        title=row["title"],
-                        context=row["context"],
-                    ),
-                )
-        return found
-
-    @staticmethod
-    def _reusable_document(row: sa.RowMapping) -> ReusableDocument:
-        mapped = row["document"]
-        return ReusableDocument(
-            document=Document(
-                key=row["document_key"],
-                input=DocumentInput(
-                    artifact=mapped["artifact"]["identifier"],
-                    selector=SourceSelection.model_validate(mapped["selector"]),
-                ),
-                title=mapped["title"],
-                derived_from=tuple(mapped["derived_from"]),
-                times=CognitiveTimes.model_validate(mapped["declared_times"])
-                if mapped["declared_times"] is not None
-                else None,
-            ),
-            roots=TypeAdapter(dict[str, tuple[ArtifactRef, ...]]).validate_python(row["roots"]),
-            memberships=tuple(mapped["roots"]),
-            projection=ProjectionFacts.model_validate(row["projection"]),
-        )
-
-    async def related_units_in(
-        self, tx: ReadTx, keys: Sequence[str]
-    ) -> dict[str, ReusableDocument]:
-        """Load each immutable source node once, without loading its descendants."""
-        found: dict[str, ReusableDocument] = {}
-        unique = list(dict.fromkeys(keys))
-        for offset in range(0, len(unique), 400):
-            selected = (
-                sa.select(
-                    schema.projection_units.c.document_key,
-                    sa.func.min(schema.projection_units.c.signature).label("signature"),
-                )
-                .where(
-                    schema.projection_units.c.document_key.in_(unique[offset : offset + 400]),
-                    schema.projection_units.c.projection.is_not(None),
-                )
-                .group_by(schema.projection_units.c.document_key)
-                .subquery()
-            )
-            rows = (
-                await tx.connection.execute(
-                    sa.select(
-                        schema.projection_units.c.document_key,
-                        schema.projection_units.c.document,
-                        schema.projection_units.c.roots,
-                        schema.projection_units.c.projection,
-                    ).join(selected, selected.c.signature == schema.projection_units.c.signature)
-                )
-            ).mappings()
-            for row in rows:
-                found[row["document_key"]] = self._reusable_document(row)
-        return found
-
     async def compute[T](self, call: Callable[[], T], token: nous_native.CancellationToken) -> T:
         from nous_native import NativeError
 
@@ -374,8 +247,7 @@ class WaveSnapshots:
                     sa.select(sa.exists().where(schema.snapshots.c.index_location == location))
                 )
             if referenced or any(
-                state.ready > 0 and state.asset == location
-                for state in self._active_builds.values()
+                state.ready and state.asset == location for state in self._active_builds.values()
             ):
                 raise NousError(
                     "wave.snapshot_invalid",
@@ -392,30 +264,21 @@ class WaveSnapshots:
     ) -> AsyncGenerator[BuiltProduct]:
         # Pydantic's frozen models can still contain caller-owned mutable dictionaries.
         view, profile = view.model_copy(deep=True), profile.model_copy(deep=True)
-        signature = content_signature(
-            {"view": view.model_dump(mode="json"), "profile": profile.model_dump(mode="json")}
-        )
         object_id = str(uuid4())
-        state = _Preparation(users=1)
+        state = _Preparation()
         self._active_builds[object_id] = state
         try:
             async with self.execution.operation("wave.build_product"):
-                prepared = await self._build_product(view, profile, signature, state)
-            state.ready += 1
-            try:
-                yield prepared
-            finally:
-                state.ready -= 1
+                prepared = await self._build_product(view, profile, state)
+            state.ready = True
+            yield prepared
         finally:
-            state.users -= 1
-            if state.users == 0:
-                del self._active_builds[object_id]
+            del self._active_builds[object_id]
 
     async def _build_product(
         self,
         view: CorpusView,
         profile: ResolvedBuildProfile,
-        signature: str,
         state: _Preparation,
     ) -> BuiltProduct:
         """Construct immutable components outside the publication transaction."""
@@ -425,7 +288,7 @@ class WaveSnapshots:
         root = self.paths.resolve_owned("index", "wave")
         component_root = root / "components"
         await self.execution.blocking(component_root.mkdir, parents=True, exist_ok=True)
-        async with self._build_locks.hold(signature):
+        async with self._build_locks.hold(view.name):
             inputs = projection_inputs(view)
             documents = {item.key: item for item in view.documents}
             input_documents = {
@@ -619,9 +482,6 @@ class WaveSnapshots:
             }
             mapping = frozen.mapping
             units: list[ProjectionUnit] = []
-            projections = (
-                capture_projections(view) if isinstance(view.owner, CognitionOwner) else {}
-            )
             candidate_vectors = {
                 cast(str, vector["key"]): vector
                 for vector in frozen.vector_mappings
@@ -658,10 +518,6 @@ class WaveSnapshots:
                 unit_data = {
                     "input_signature": signatures[document_key],
                     "layout_signature": layouts.get(document_key),
-                    "capture_stamp": view.capture_stamps.get(document_key),
-                    "projection": projections[document_key].model_dump(mode="json")
-                    if document_key in projections
-                    else None,
                     "roots": inputs[document_key]["roots"],
                     "document_key": document_key,
                     "document": document,

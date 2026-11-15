@@ -218,19 +218,14 @@ class PromptResource:
     manifest: PromptManifest
     templates: Mapping[str, str]
     manifest_text: str
-    version: str
+    execution_signature: str
     origin: str
     documentation_signature: str
-
-    @property
-    def execution_signature(self) -> str:
-        return self.version
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "id": self.id,
             "contract_id": self.manifest.contract_id,
-            "version": self.version,
             "execution_signature": self.execution_signature,
             "documentation_signature": self.documentation_signature,
             "origin": self.origin,
@@ -252,9 +247,7 @@ class CompiledPrompt:
         return {
             "prompt_id": self.resource.id,
             "contract_id": self.resource.manifest.contract_id,
-            "template_version": self.resource.version,
             "execution_signature": self.resource.execution_signature,
-            "documentation_signature": self.resource.documentation_signature,
             "messages": list(self.preview),
             "source_groups": [
                 source.group.model_dump(mode="json")
@@ -262,11 +255,6 @@ class CompiledPrompt:
                 if source.group is not None
             ],
             "schema": self.schema,
-            "schema_version": hashlib.sha256(
-                json.dumps(self.schema, sort_keys=True).encode()
-            ).hexdigest()
-            if self.schema
-            else None,
         }
 
 
@@ -311,7 +299,7 @@ class PromptCatalog:
     def get(
         self, prompt_id: str, *, origin: Literal["selected", "package", "instance"] = "selected"
     ) -> PromptResource:
-        """Read each dependency once and include the task contract in the resource version."""
+        """Read each dependency once and include the task contract in its execution signature."""
         root, selected = self._root(prompt_id)
         if origin == "package":
             root, selected = files("nous.models.resources").joinpath(prompt_id), "package"
@@ -402,7 +390,6 @@ class PromptCatalog:
         resource = self.get(prompt_id)
         return {
             "id": prompt_id,
-            "version": resource.version,
             "valid": True,
             "contract_id": resource.manifest.contract_id,
             "templates": list(resource.templates),
@@ -514,7 +501,8 @@ class PromptCatalog:
             "right": right,
             "instance_override": True,
             "changes": changes,
-            "execution_changed": resources[0].version != resources[1].version,
+            "execution_changed": resources[0].execution_signature
+            != resources[1].execution_signature,
             "documentation_changed": resources[0].documentation_signature
             != resources[1].documentation_signature,
         }
@@ -673,14 +661,14 @@ class PromptCompiler:
             self.bytecode_directory = path
 
     def _environment(self, resource: PromptResource) -> Environment:
-        environment = self._environments.get(resource.version)
+        environment = self._environments.get(resource.execution_signature)
         if environment is not None:
-            self._environments.move_to_end(resource.version)
+            self._environments.move_to_end(resource.execution_signature)
             return environment
         bytecode: FileSystemBytecodeCache | None = None
         if self.bytecode_directory is not None:
-            # Different resources may use the same template names; isolate their bytecode by version.
-            directory = self.bytecode_directory / resource.version
+            # Different resources may use the same template names.
+            directory = self.bytecode_directory / resource.execution_signature
             directory.mkdir(parents=True, exist_ok=True)
             bytecode = FileSystemBytecodeCache(str(directory))
         environment = Environment(
@@ -691,7 +679,7 @@ class PromptCompiler:
             bytecode_cache=bytecode,
         )
         if self.cache_entries:
-            self._environments[resource.version] = environment
+            self._environments[resource.execution_signature] = environment
             while len(self._environments) > self.cache_entries:
                 self._environments.popitem(last=False)
         return environment

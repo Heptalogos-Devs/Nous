@@ -14,6 +14,7 @@ from sqlalchemy.dialects.sqlite import insert
 from nous.application.contracts import BasicEvents, CallContext, LanguageEvents, define_operation
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier
+from nous.common.material_refs import RecordRevisionRef
 from nous.common.operations import OperationIssue, add_error_context, record_completed
 from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import (
@@ -40,7 +41,7 @@ from ..concept_contracts import (
     ConceptView,
 )
 from ..concepts import ConceptOperations, ConceptTarget
-from ..contracts import NamespaceRef, RecordRevisionRef, RevisionSelection
+from ..contracts import NamespaceRef, RevisionSelection
 from ..writing.reading import RecordReader, Target
 from .contracts import (
     AdoptAnnotation,
@@ -182,7 +183,10 @@ class AnnotationOperations:
             selected = SelectedInputs(
                 sources=(
                     SelectedSource(
-                        slot_key="S1", role="revision_base", selections=plan.body.selections
+                        key="S1",
+                        kind="revision_base",
+                        material=plan.body.revision,
+                        selections=plan.body.selections,
                     ),
                 )
             )
@@ -262,7 +266,7 @@ class AnnotationOperations:
                     proposal.selection,
                     call.settings.values.content.text_read_max_bytes,
                 )
-                proposal = AnnotationProposal.model_validate_json(selected.data)
+                proposal = AnnotationProposal.model_validate_json(selected)
             if proposal is None:
                 plan = await self._foreground_plan(
                     request.target, namespace, request.task, request.known_concepts, call
@@ -298,10 +302,10 @@ class AnnotationOperations:
             assert plans is not None
             reading = ReadingInput(sources=plans[0].batches[0].sources)
             validated = definition.validate(proposal.model_dump(mode="json"), reading)
-            outputs = await definition.outputs(
+            interpreted = await definition.outputs(
                 validated, reading, self.artifacts, structured=True, producer={"kind": "user"}
             )
-            annotation = AnnotationSet.model_validate_json(outputs["output"].data)
+            annotation = AnnotationSet.model_validate_json(interpreted.outputs["output"].data)
             unknown = {
                 concept.reuse_key for concept in annotation.concepts if concept.reuse_key
             } - set(candidates)
@@ -322,19 +326,22 @@ class AnnotationOperations:
                 selected_inputs=SelectedInputs(
                     sources=tuple(
                         SelectedSource(
-                            slot_key=slot,
-                            role="revision_base",
+                            material=artifact.ref,
+                            key=slot,
+                            kind="revision_base",
                             selections=(ContentSelection(artifact=artifact.ref),),
                         )
                         for slot in slots
                     )
                 ),
                 inputs=inputs,
+                mappings=interpreted.mappings,
+                selections=interpreted.selections,
                 parameters={"annotation_context": context.model_dump(mode="json")},
                 coverage=plans[0].coverage,
                 formed_at=self.artifacts.clock.utc_now(),
             )
-            result = await self.results.adopt(facts=facts, outputs=outputs)
+            result = await self.results.adopt(facts=facts, outputs=interpreted.outputs)
             await call.saved(result.ref)
             return await self.read_proposal(result.ref)
 
@@ -713,7 +720,7 @@ class AnnotationOperations:
             selected = await call.inputs.read_text(
                 bindings.key, bindings.selection, call.settings.values.content.text_read_max_bytes
             )
-            bindings = TypeAdapter(dict[str, ConceptChoice | None]).validate_json(selected.data)
+            bindings = TypeAdapter(dict[str, ConceptChoice | None]).validate_json(selected)
         result = await self._adopt(
             request.target,
             request.proposal,

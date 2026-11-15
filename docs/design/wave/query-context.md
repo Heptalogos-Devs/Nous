@@ -7,30 +7,28 @@ WaveQuery:
   snapshot
   text
   vector?
-  context[]: {key, role, sequence, content | text, weight?, time?}
+  context[]: {key, role, stage, parent_key, sequence, content | text, relevance, validity, distance, half_life?}
   core_concepts[]
   cues[]: {label, description, is_core}
   candidate_filter?
-  top_k, mode, include_trace, include_counterevidence
+  top_k, program?, delivery_budget?, include_trace, include_counterevidence
   thinking_stages?
 ```
 
 自然语言 text 是完整的一等查询；不要求用户先取得概念 ID。context 的 role 可以是 user/assistant/work/ego/source 等可解释通道，属于检索相关性输入，不具有模型指令权限。sequence 决定顺序；不需要真实时钟才能衰减。重复包含当前 query 的历史项由明确 key/source 去重，不能按文字相似擅自删句。
 
-core_concepts 解析为当前快照稳定 Concept。cues 可以是完整描述，调用 Embedding owner 按 Concept 的 document 编码规则取得 ghost 向量，不强制插入正式概念库。不在图内的 core/cue 按 VCP ghost 融合合同保留，不能编造边或持久节点。
+core_concepts 解析为当前快照稳定 Concept。cues 可以是完整描述，通过共同 Embedding 的 query 用途取得临时 ghost 向量，不强制插入正式概念库。不在图内的 core/cue 按 VCP ghost 融合合同保留。
 
 ## 上下文数值
 
-实现一项明确、可关闭的 Nous 上下文 profile：按 role 分组，对每组最近 window 条归一化向量做权重 `w_i = explicit_weight_i × decay^age_i`，结果归一化；再按配置 role_weight 合成 context 向量。零权重组略过，零范数明确诊断。
-
-explicit_weight 缺省为 1，必须为有限非负数；未知 role 保留名称并使用配置的 default_role_weight=1。默认 window=10、decay=0.75，role_weight 为 user=1、assistant=0.5、work=1、ego=0.25、source=1；这些是本轮起步设计值，全部可配置，效果由实际使用决定。没有 context 时 effective_query 与原始 query 一致。提供 context 时：
+检索、定位和评价分别使用明确分配到该阶段的情境，按角色和真实父材料聚合片段。每个父材料先以不重复的来源范围加权计算相关性和有效性；同一材料拆成多个片段不会因数量增加总质量。缺少半衰期表示不按距离衰减；有半衰期时按显式距离计算衰减。每组的质量分配为：
 
 ```text
-effective_query = normalize((1-context_mix) * normalize(raw_query)
-                            + context_mix * normalize(context))
+u_parent = relevance × validity × weight × 2 ** (-distance / half_life)
+mass_parent = role_budget × u_parent / (null_mass + Σ u_parent)
 ```
 
-默认 context_mix=0.2，可设 0。query/raw、角色聚合、effective_query 均可在诊断展开。权重影响搜索线索，不更改候选内容、证据根、事实边或认知置信度。
+role_budget 为 `context.mix × role_weight`，`null_mass` 为正，未使用的质量保留为空。父材料质量按不重复覆盖分给实际片段，再将其向量贡献加到原问题向量上，最后归一化。诊断记录 stage、parent_key 和每片段 contribution。原问题保留独立向量和词项分支；程序中的 `context.recall` 可以用检索阶段情境独立召回候选，`rank.context` 在共同候选上融合。定位仍使用原问题和明确分配到定位阶段的情境。
 
 上下文与原查询按空间的 query 用途编码；持久 Concept 按 document 用途编码。Native 接收上下文矩阵与序位并完成数值聚合；Python 负责选择片段、空间校验与实际向量生成。上游 ContextVectorManager 的角色衰减与语义分段功能一并提供为可选 `segment` 操作：按相邻向量相似度阈值分段、返回归一化均值与原范围。禁止拷贝其模糊向量复用或默认去 Emoji 清洗；Nous 精确输入与社会符号保留。
 
@@ -40,7 +38,7 @@ VCP `queryVector` 使用本次 effective_query；它在该次 VCP 内部称 orig
 
 `queryText` 使用实际查询文字及明确可见的字面 cue 名称，不塞全部历史文本干扰字面门控。已知 core_concepts 映射正节点 ID；临时 cues 按顺序携带 label/vector/is_core；ghost metadata 与矩阵行必须一一对应。
 
-无词项 query 但提供 core/cue/context 是合法的明确检索操作：有 context 时用其非零归一化聚合作为 effective_query；只有 core/cue 时将其明确描述按 query 用途编码，使用这些 query 向量的非零归一化均值作为 effective_query（ghost 的 document 向量仍单独保留）。raw_query 保持缺失，并记录 query_origin=context 或 concepts。所有贡献互相抵消为零时返回明确输入错误，不补随机/全零向量。需要向量的模式若全部信号为空则返回输入错误。纯 lexical 不强制模型调用。
+无词项 query 但提供 core/cue/context 是合法的明确检索操作：有 context 时用其非零聚合作为 effective_query；只有 core/cue 时将其描述按 query 用途编码。诊断记录 query_origin=context 或 concepts。所有贡献互相抵消为零时返回明确输入错误。需要向量的程序若全部信号为空则返回输入错误。纯词项程序不强制模型调用。
 
 ## 时间和过滤
 
@@ -57,6 +55,6 @@ concept-only 查询的内部聚合键分别使用 core/cue 的稳定序号，重
 
 WaveQuery 增加有空间身份与 query 用途的 VectorRef。通过共同 Embedding 读取即可离线执行，不绕过 Python 完整操作；同维度而不同空间返回明确错误。
 
-上下文先按 role/window、明确的 key/source 去重及零权重规则选取实际片段，再调用共同向量能力。已选片段的权重和序位完整保留。临时 text/cue 使用 encode_query 或对应 document 用途的同一批次核心，默认不持久接纳一次性查询；明确保存时才产生正式产物。
+上下文先按阶段、role/window、父材料和精确来源范围选择实际片段，再调用共同向量能力。已选片段的权重和序位完整保留。临时 text/cue 使用 encode_query 或对应 document 用途的同一批次核心，默认不持久接纳一次性查询；明确保存时才产生正式产物。
 
 严格历史/知情视图与软时间偏好按 [时间视图](temporal-views.md) 分开。当前本轮只以显式来源子集建快照作实验，不声称已实现任意 $asof。

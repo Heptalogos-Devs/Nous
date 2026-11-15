@@ -95,6 +95,11 @@ impl VectorGeneration {
             &previous_path.join(CANDIDATES_FILE),
             cancelled,
         )?;
+        *generation
+            .candidate_effort
+            .get_mut()
+            .map_err(|_| anyhow::anyhow!("ANN search effort lock poisoned"))? =
+            generation.candidates.expansion_search();
         let tags = update_lane(
             &mut generation.tags,
             &before.tags,
@@ -134,9 +139,11 @@ impl VectorGeneration {
         verify_stamp(&tags_path, &manifest.tags_file)?;
         let candidates = load_index(&candidates_path, &expected.identity, &expected.candidates)?;
         let tags = load_index(&tags_path, &expected.identity, &expected.tags)?;
+        let candidate_effort = RwLock::new(candidates.expansion_search());
         Ok(Self {
             frozen: expected,
             candidates,
+            candidate_effort,
             tags,
         })
     }

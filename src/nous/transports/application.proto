@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package nous.transport;
+
+import "google/protobuf/wrappers.proto";
+
+// Every non-content envelope contains UTF-8 JSON in BytesValue.value.
+// Call and StreamCall accept optional select: [JSON Pointer, ...] for the result.
+// Upload's first message is JSON metadata {name, source}; later messages are bytes.
+// Download's first message is JSON metadata; later messages are content bytes.
+service Application {
+  rpc Describe(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc Call(google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc StreamCall(google.protobuf.BytesValue) returns (stream google.protobuf.BytesValue);
+  rpc Upload(stream google.protobuf.BytesValue) returns (google.protobuf.BytesValue);
+  rpc Download(google.protobuf.BytesValue) returns (stream google.protobuf.BytesValue);
+}

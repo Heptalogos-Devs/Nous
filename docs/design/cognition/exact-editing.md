@@ -61,7 +61,7 @@ create/replace/apply 的语义验证进入同一 WrittenRecords；patch 不另�
 
 ## 来源映射继承
 
-`SourceChanges(preserve=True, add=(), remove=())` 负责目录合并：省略时沿用全部旧绑定；add 仅列新增 SourceBinding；remove 列确切旧键；preserve=False 明确清空旧目录再加入 add。新增重复键、未知移除键和移除后正文仍残留的真实 source 链接都会失败。手工 apply/replace 和 ReviseDraft 使用同一值与合并能力。
+`SourceChanges(preserve=True, add=(), remove=())` 负责目录合并：省略时沿用全部旧绑定；add 仅列新增 MaterialSource；remove 列确切旧键；preserve=False 明确清空旧目录再加入 add。新增重复键、未知移除键和移除后正文仍残留的真实 source 链接都会失败。手工 apply/replace 和 ReviseDraft 使用同一值与合并能力。
 
 `CitationContext` 在准备修改时固定：base_revision、原 source-key→精确来源映射、本次新来源、允许编辑范围。旧正文中的 key 原样可解释，不让模型重新为未改动内容编号。
 
@@ -93,11 +93,11 @@ recorded 由提交写入。排版和文字编辑默认保留原 formed；调用�
 
 `SelectedSource.slot_key` 标识逻辑槽，`InputGroup.slot_key` 保留它，`InputGroup.key` 是本次实际显示键。同槽的多个离散选区使用 F1/F2 子键；媒体分片、转写、任务特有分块和备用路线完整保留 slot_key。例如 key=N1:P3 属于 slot_key=N1；消费者不解析冒号恢复来源归属。
 
-SourceBinding 的正式目标为 `selections: tuple[ContentSelection, ...]`，普通单来源也是长度一的同一形状。保留 key、owner_revision?、usage、name。多个不连续实际源片段分别保存，不能以最小起点和最大终点扩大。所有 targets 需要属于声明的精确认知正文时逐个核对。`CitationContext` 保留调用者选定的范围；实际阅读覆盖以 ResultFacts.inputs 及其 origins 为准。
+MaterialSource 保存正式材料身份、局部 key、用途、名称和 `selections: tuple[ContentSelection, ...]`。多个不连续实际源片段分别保存，不能以最小起点和最大终点扩大。所有选区逐个核对其正式材料归属；实际阅读覆盖以 ResultFacts.inputs 及其 origins 为准。
 
 持久来源使用 `revision_sources` 保存有序 source group，`revision_source_targets` 按组和 ordinal 保存每项 ContentSelection。迁移 `contracts/schema/reading/records/drafts/feedback/basis/capture/projection` 和 JSON 示例、CLI 反序列化；删除原单 ContentSelection 字段的读写分支。Content InputGroup 表同步持久 slot_key，ResultStore 读写使用新正式定义。已授权开发实例按当前表结构重建；无内部旧格式兼容。
 
-写作提案冻结旧 SourceBinding 与新 slot 目录。完成后用实际组的 slot_key 取得源身份，以 origin 精确坐标构造新的 binding targets。一个 key 对应多 part 时读取多项 ContentReadView；向量和 source root 的独立性不因 part 数量增加。
+写作提案冻结旧来源与新 slot 目录。完成后用实际组的 slot_key 取得源身份，以 origin 精确坐标构造新的来源选区。一个 key 对应多 part 时读取多项 ContentReadView；向量和 source root 的独立性不因 part 数量增加。
 
 输入资料包含既有 `source:S1` 的正文时，不对正文做字符串全局替换。旧稿自己的引用目录作为独立命名域交付；任务只可生成程序提供的允许键。未修改旧正文继续使用旧目录；必要的新增键由程序预分配为不冲突的 N 键。共同解析器处理链接 token，代码示例和原始引文不重写。
 

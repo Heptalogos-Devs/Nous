@@ -1,5 +1,7 @@
 """Written Note/Journal owner: immutable bodies, exact sources and short transactions."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 from collections.abc import Sequence
@@ -11,6 +13,7 @@ import sqlalchemy as sa
 
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier, split_revision
+from nous.common.material_refs import RecordRevisionRef
 from nous.content import schema as content_schema
 from nous.content.artifacts import ArtifactStore
 from nous.content.citations import parse_citations
@@ -19,6 +22,7 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     InputPart,
+    MaterialSource,
     ResultFacts,
     SelectedInputs,
     SelectedSource,
@@ -31,17 +35,14 @@ from nous.temporal.domains import TimeService
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
 from .. import basis, schema
-from ..contracts import (
-    Namespace,
-    RecordRevisionRef,
-    SourceBinding,
-    TitleSource,
-)
+from ..contracts import Namespace, TitleSource
 from ..scope import NamespaceOperations
+from ..source_storage import save_sources_in
 from .contracts import CommittedRecord
 from .reading import RecordReader, RecordRow, RevisionRow, Target
 
 if TYPE_CHECKING:
+    from ..materials import Materials
     from ..sources import SourceResolver
 
 
@@ -50,7 +51,7 @@ class AdoptionValues(TypedDict):
     purpose: str | None
     author: str | None
     viewpoint: str | None
-    sources: Sequence[SourceBinding]
+    sources: Sequence[MaterialSource]
     times: CognitiveTimes
     origin_result_id: str
     body_artifact: ArtifactRef | None
@@ -69,7 +70,7 @@ class CreateMetadata(TypedDict, total=False):
     purpose: str | None
     author: str | None
     viewpoint: str | None
-    sources: Sequence[SourceBinding]
+    sources: Sequence[MaterialSource]
     times: CognitiveTimes | None
 
 
@@ -88,7 +89,7 @@ class PreparedRevision:
     row: RecordRow
     previous: RevisionRow
     namespace: Namespace
-    bindings: tuple[SourceBinding, ...]
+    bindings: tuple[MaterialSource, ...]
     values: RevisionValues
     times: CognitiveTimes
     changed: bool
@@ -110,9 +111,11 @@ class WrittenRecords:
         results: ResultStore,
         reader: RecordReader,
         sources: SourceResolver,
+        materials: Materials,
     ):
         self.database, self.artifacts, self.time = database, artifacts, time
         self.scope, self.results, self.reader, self.sources = scope, results, reader, sources
+        self.materials = materials
 
     @staticmethod
     def resolve_title(
@@ -126,7 +129,7 @@ class WrittenRecords:
         return heading, "heading" if heading is not None else "none"
 
     @staticmethod
-    def validate_body(body: str, sources: Sequence[SourceBinding]) -> str | None:
+    def validate_body(body: str, sources: Sequence[MaterialSource]) -> str | None:
         """Validate nonempty Markdown and its source keys; return its parsed heading.
 
         Raises:
@@ -149,7 +152,7 @@ class WrittenRecords:
         return parsed.title
 
     async def validate_sources_in(
-        self, tx: ReadTx, namespace: Namespace, sources: Sequence[SourceBinding]
+        self, tx: ReadTx, namespace: Namespace, sources: Sequence[MaterialSource]
     ) -> None:
         """Validate source artifacts and exact owner revisions in the caller's read view."""
         await self.sources.validate_in(tx, namespace.ref, sources)
@@ -179,7 +182,7 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] = (),
+        sources: Sequence[MaterialSource] = (),
         times: CognitiveTimes,
         recall: bool = True,
         origin_result_id: str | None = None,
@@ -243,22 +246,13 @@ class WrittenRecords:
     async def manual_inputs_in(
         self,
         tx: ReadTx,
-        sources: Sequence[SourceBinding],
+        sources: Sequence[MaterialSource],
         *,
         parent_id: str | None,
         origin_result_id: str | None,
     ) -> tuple[InputGroup, ...]:
         """Keep source support and editing lineage distinct in content provenance."""
-        inputs = [
-            InputGroup(
-                key=source.key,
-                slot_key=source.key,
-                name=source.name or source.key,
-                role=source.usage,
-                parts=tuple(InputPart(content=selection) for selection in source.selections),
-            )
-            for source in sources
-        ]
+        inputs: list[InputGroup] = []
         bases: list[str] = []
         if parent_id:
             body = await tx.connection.scalar(
@@ -273,14 +267,20 @@ class WrittenRecords:
                 str(value)
                 for value in (
                     await tx.connection.scalars(
-                        sa.select(content_schema.outputs.c.artifact_id).where(
+                        sa.select(content_schema.outputs.c.artifact_id)
+                        .select_from(content_schema.outputs.join(content_schema.artifacts))
+                        .where(
                             content_schema.outputs.c.result_id == origin_result_id,
-                            content_schema.outputs.c.name == "output",
+                            content_schema.outputs.c.role != "diagnostic",
+                            sa.or_(
+                                content_schema.outputs.c.name == "output",
+                                content_schema.artifacts.c.media_type == "text/markdown",
+                            ),
                         )
                     )
                 ).all()
             )
-        keys = {group.key for group in inputs}
+        keys = {source.key for source in sources}
         for body in dict.fromkeys(bases):
             artifact = await self.artifacts.get_in(tx, body)
             index = len(inputs) + 1
@@ -315,7 +315,7 @@ class WrittenRecords:
         author: str | None,
         viewpoint: str | None,
         times: CognitiveTimes,
-        sources: Sequence[SourceBinding],
+        sources: Sequence[MaterialSource],
         change_kind: str,
         reason: str | None,
         origin_result_id: str | None,
@@ -335,7 +335,7 @@ class WrittenRecords:
             inputs = await self.manual_inputs_in(
                 tx, sources, parent_id=parent_id, origin_result_id=origin_result_id
             )
-            if inputs:
+            if inputs or sources:
                 result = await self.results.adopt_in(
                     tx,
                     facts=ResultFacts(
@@ -344,15 +344,17 @@ class WrittenRecords:
                         selected_inputs=SelectedInputs(
                             sources=tuple(
                                 SelectedSource(
-                                    slot_key=group.slot_key,
-                                    role=group.role,
-                                    display_name=group.name,
+                                    key=group.slot_key,
+                                    kind=group.role,
+                                    material=group.parts[0].content.artifact,
+                                    name=group.name,
                                     selections=tuple(part.content for part in group.parts),
                                 )
                                 for group in inputs
                             )
                         ),
                         inputs=inputs,
+                        material_sources=tuple(sources),
                         parameters={"change_kind": change_kind, "reason": reason},
                         formed_at=self.time.clock.utc_now(),
                     ),
@@ -414,32 +416,7 @@ class WrittenRecords:
             "recorded_at": recorded_at.isoformat(),
         }
         await tx.connection.execute(sa.insert(schema.revisions).values(**revision))
-        for index, source in enumerate(sources):
-            await tx.connection.execute(
-                sa.insert(schema.sources).values(
-                    revision_id=revision_id,
-                    key=source.key,
-                    ordinal=index,
-                    target_revision_id=source.owner_revision.revision_id
-                    if source.owner_revision
-                    else None,
-                    usage=source.usage,
-                    name=source.name,
-                )
-            )
-            await tx.connection.execute(
-                sa.insert(schema.source_targets),
-                [
-                    {
-                        "revision_id": revision_id,
-                        "key": source.key,
-                        "ordinal": ordinal,
-                        "artifact_id": selection.artifact.id,
-                        "selection": selection.selection.model_dump(mode="json"),
-                    }
-                    for ordinal, selection in enumerate(source.selections)
-                ],
-            )
+        await save_sources_in(tx, revision_id, sources)
         return revision
 
     async def resolve_expected_in(
@@ -557,16 +534,15 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] | None = None,
+        sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
     ) -> PreparedRevision:
         """Resolve and compare a proposed revision in the caller's consistent view."""
         row, old, ns = await self.resolve_expected_in(
             tx, target, expected_revision, namespace, body
         )
-        bindings = (
-            await self.reader.sources_in(tx, old["id"]) if sources is None else tuple(sources)
-        )
+        previous_bindings = await self.reader.sources_in(tx, old["id"])
+        bindings = previous_bindings if sources is None else tuple(sources)
         resolved_title, title_source = self.resolve_title(
             title, self.validate_body(body, bindings), old
         )
@@ -594,7 +570,7 @@ class WrittenRecords:
                 values["viewpoint"],
             )
             == (old["title"], old["title_source"], old["purpose"], old["author"], old["viewpoint"])
-            and bindings == await self.reader.sources_in(tx, old["id"])
+            and bindings == previous_bindings
             and equal_times
         )
         return PreparedRevision(row, old, ns, bindings, values, effective_times, not unchanged)
@@ -612,7 +588,7 @@ class WrittenRecords:
         purpose: str | None = None,
         author: str | None = None,
         viewpoint: str | None = None,
-        sources: Sequence[SourceBinding] | None = None,
+        sources: Sequence[MaterialSource] | None = None,
         times: CognitiveTimes | None = None,
         change_kind: str = "edit",
         reason: str | None = None,

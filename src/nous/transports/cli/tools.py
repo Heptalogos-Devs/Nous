@@ -38,16 +38,24 @@ from nous.common.identifier import identifier_type
 from nous.content.contracts import (
     AcceptContent,
     ArtifactInput,
-    ContentReadView,
+    DeleteResult,
     ExportContent,
     ExternalInput,
     InlineText,
     ReadArtifact,
     ReadResult,
+    ResultRef,
+    ResultView,
     SourceSelection,
     SourceTarget,
 )
-from nous.content.operations import ACCEPT_CONTENT, EXPORT_CONTENT, READ_ARTIFACT, READ_RESULT
+from nous.content.operations import (
+    ACCEPT_CONTENT,
+    DELETE_RESULT,
+    EXPORT_CONTENT,
+    READ_ARTIFACT,
+    READ_RESULT,
+)
 from nous.media.analysis import ANALYZE_MEDIA, INSPECT_MEDIA, AnalyzeMedia, InspectMedia
 from nous.models.generation.contracts import DiscoverModels, PreviewPrompt, ProbeModel, RunModel
 from nous.models.generation.operations import MODEL_DISCOVER, MODEL_PROBE, MODEL_RUN, PROMPT_PREVIEW
@@ -94,17 +102,16 @@ def _model_inputs(
     return tuple(sources), bindings
 
 
-def _result_views(ctx: typer.Context, refs: object, *, details: bool) -> dict[str, object]:
-    from nous.content.contracts import ResultRef
+def _result_views(
+    ctx: typer.Context, refs: tuple[ResultRef, ...], *, details: bool
+) -> tuple[ResultView, ...]:
+    return tuple(
+        application_call(ctx, READ_RESULT, ReadResult(ref=ref, details=details)) for ref in refs
+    )
 
-    return {
-        "results": [
-            application_call(ctx, READ_RESULT, ReadResult(ref=ref, details=details)).model_dump(
-                mode="json"
-            )
-            for ref in cast(tuple[ResultRef, ...], refs)
-        ]
-    }
+
+def _result_json(results: tuple[ResultView, ...]) -> dict[str, object]:
+    return {"results": [result.model_dump(mode="json") for result in results]}
 
 
 def _schema(path: Path | None, bindings: dict[str, InputProvider]) -> ExternalInput | None:
@@ -174,26 +181,31 @@ def _independent_range(value: str, crop: str | None) -> SourceSelection:
         ) from error
 
 
-def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
-    """Present named bodies and readable references; machine output keeps the complete value."""
+def _emit_results(
+    ctx: typer.Context,
+    results: tuple[ResultView, ...],
+    *,
+    extra: Mapping[str, object] | None = None,
+    single: bool = False,
+) -> None:
+    """Present named bodies and the exact sources returned by the result owner."""
     if options(ctx).json_mode:
-        emit(ctx, value)
+        value = results[0].model_dump(mode="json") if single else _result_json(results)
+        emit(ctx, {**value, **(extra or {})})
         return
-    results = cast(list[dict[str, object]], value.get("results", [value]))
     for result in results:
-        outputs = cast(list[dict[str, object]], result.get("outputs", []))
-        visible = [output for output in outputs if output.get("role") != "diagnostic"]
+        visible = [output for output in result.outputs if output.role != "diagnostic"]
         for output in visible:
             if len(visible) > 1:
-                typer.echo(f"\n{output['name']}")
-            emit_content_view(ContentReadView.model_validate(output["view"]))
-        for key, views in cast(dict[str, list[object]], result.get("source_views", {})).items():
-            typer.echo(f"\n[{key}]")
-            for view in views:
-                emit_content_view(ContentReadView.model_validate(view))
-        reference = cast(dict[str, object], result.get("ref", {})).get("identifier")
-        if reference:
-            typer.echo(f"\n{reference}")
+                typer.echo(f"\n{output.name}")
+            emit_content_view(output.view)
+        by_selection = {view.source: view for view in result.content_views}
+        for source in result.readable_sources:
+            typer.echo(f"\n[{source.key}]")
+            for selection in source.selections:
+                if selection in by_selection:
+                    emit_content_view(by_selection[selection])
+        typer.echo(f"\n{result.ref.identifier}")
 
 
 @model_cli.command("list")
@@ -282,10 +294,10 @@ def model_run(
         ctx, outcome.results, details=details or show_request or options(ctx).json_mode
     )
     if show_request:
-        for item in cast(list[dict[str, object]], value["results"]):
-            typer.echo(json.dumps(item.get("request"), ensure_ascii=False), err=True)
+        for item in value:
+            typer.echo(json.dumps(item.request, ensure_ascii=False), err=True)
     if details or options(ctx).json_mode:
-        emit(ctx, value)
+        emit(ctx, _result_json(value))
     elif not stream:
         _emit_results(ctx, value)
 
@@ -531,13 +543,15 @@ def media_analyze(
     value = _result_views(
         ctx, outcome.results or outcome.descriptions, details=details or options(ctx).json_mode
     )
-    value["original"] = outcome.original.model_dump(mode="json")
-    value["descriptions"] = [item.model_dump(mode="json") for item in outcome.descriptions]
-    value["coverage"] = outcome.coverage
+    extra = {
+        "original": outcome.original.model_dump(mode="json"),
+        "descriptions": [item.model_dump(mode="json") for item in outcome.descriptions],
+        "coverage": outcome.coverage,
+    }
     if details:
-        emit(ctx, value)
+        emit(ctx, {**_result_json(value), **extra})
     else:
-        _emit_results(ctx, value)
+        _emit_results(ctx, value, extra=extra)
 
 
 @result_cli.command("read")
@@ -552,11 +566,19 @@ def result_read(
         READ_RESULT,
         ReadResult(ref=ref, sources=sources, details=details or options(ctx).json_mode),
     )
-    value = result.model_dump(mode="json")
     if details:
-        emit(ctx, value)
+        emit(ctx, result.model_dump(mode="json"))
     else:
-        _emit_results(ctx, value)
+        _emit_results(ctx, (result,), single=True)
+
+
+@result_cli.command("delete")
+def result_delete(ctx: typer.Context, ref: str) -> None:
+    result = application_call(ctx, DELETE_RESULT, DeleteResult(ref=ref))
+    if options(ctx).json_mode:
+        emit(ctx, result.model_dump(mode="json"))
+    else:
+        typer.echo(result.identifier)
 
 
 @embedding_cli.command("probe")

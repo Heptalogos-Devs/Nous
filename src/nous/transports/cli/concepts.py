@@ -1,6 +1,5 @@
 """Concept meaning management and exact-body annotation commands."""
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -49,7 +48,7 @@ journal_cli.add_typer(annotation_cli, name="annotation")
 
 def emit_concept(ctx: typer.Context, result: ConceptView) -> None:
     if options(ctx).json_mode:
-        typer.echo(result.model_dump_json())
+        emit(ctx, result.model_dump(mode="json"))
     else:
         typer.echo(f"{result.label} — {result.ref.identifier}\n{result.description}")
         if result.aliases:
@@ -101,11 +100,7 @@ def concept_find(
         FindConcepts(namespace=namespace, text=text, offset=offset, limit=limit),
     )
     if options(ctx).json_mode:
-        typer.echo(
-            json.dumps(
-                {"concepts": [item.model_dump(mode="json") for item in result]}, ensure_ascii=False
-            )
-        )
+        emit(ctx, {"concepts": [item.model_dump(mode="json") for item in result]})
     else:
         for concept in result:
             emit_concept(ctx, concept)
@@ -156,7 +151,7 @@ def concept_revise(
 
 def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | AnnotationView):
     if options(ctx).json_mode:
-        typer.echo(result.model_dump_json())
+        emit(ctx, result.model_dump(mode="json"))
     elif isinstance(result, AnnotationProposalView):
         typer.echo(
             f"{translate('Proposal', language_for(options(ctx)))}: {result.result_ref.identifier}\n{translate('Body', language_for(options(ctx)))}: {result.body_revision.identifier}"

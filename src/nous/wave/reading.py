@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import cast
 
+import numpy as np
+import numpy.typing as npt
 import sqlalchemy as sa
 from sqlalchemy.engine import RowMapping
 
 from nous.common.errors import NousError
+from nous.content.artifacts import ArtifactStore
+from nous.content.contracts import ContentSelection
 from nous.storage.database import Database
 
 from . import schema
@@ -16,6 +21,8 @@ from .contracts import (
     GroupDescriptor,
     SnapshotDescriptor,
     SnapshotRef,
+    WaveNeighborhoodResult,
+    WaveReadResult,
 )
 from .mapping import CandidateMapping, SnapshotRow
 from .registry import SnapshotRegistry
@@ -260,3 +267,107 @@ class SnapshotReader:
             "candidates": candidates,
         }
         return cast(SnapshotRow, value)
+
+
+async def read_candidate(
+    row: SnapshotRow,
+    candidate_key: str,
+    artifacts: ArtifactStore,
+    instance_id: str,
+    *,
+    sources: bool = False,
+) -> WaveReadResult:
+    """Read the exact source and optional support facts of a snapshot candidate."""
+    mapping = row["mapping"]
+    candidate = next((item for item in mapping["candidates"] if item["key"] == candidate_key), None)
+    if candidate is None:
+        raise NousError(
+            "wave.candidate_not_found",
+            "Candidate does not exist in this snapshot",
+            details={"candidate": candidate_key},
+        )
+    content = ContentSelection.model_validate(candidate["content"])
+    return WaveReadResult.model_validate(
+        {
+            "snapshot": {
+                "instance_id": instance_id,
+                "id": row["id"],
+                "identifier": row["identifier"],
+            },
+            "candidate": {"snapshot": row["identifier"], "key": candidate_key},
+            "content": content,
+            "origin_contents": candidate["origin_contents"],
+            "text": await artifacts.read_selection(content),
+            "group": mapping["groups"][candidate["group_key"]],
+            "concepts": candidate["concepts"],
+            "paths": candidate["paths"],
+            "sources": [
+                {"evidence_root": root, "artifacts": mapping["roots"][root]}
+                for root in candidate["roots"]
+            ]
+            if sources
+            else None,
+        }
+    )
+
+
+def neighborhood_rows(row: SnapshotRow, concepts: Sequence[str]) -> npt.NDArray[np.uint64]:
+    """Bind requested concept identities to their rows in this snapshot."""
+    rows = {item["key"]: index for index, item in enumerate(row["mapping"]["concepts"])}
+    unknown = set(concepts) - rows.keys()
+    if unknown:
+        raise NousError(
+            "wave.concept_not_found",
+            "Neighborhood refers to unknown concept keys",
+            details={"concepts": sorted(unknown)},
+        )
+    return np.asarray([rows[key] for key in concepts], dtype=np.uint64)
+
+
+def describe_neighborhood(
+    row: SnapshotRow, concepts: Sequence[str], result: str, instance_id: str
+) -> WaveNeighborhoodResult:
+    """Translate snapshot-local neighborhood rows into formal identities."""
+    all_concepts = row["mapping"]["concepts"]
+    neighborhood = json.loads(result)
+    for edge in neighborhood.get("edges", []):
+        edge["source"] = all_concepts[edge["source"]]["key"]
+        edge["target"] = all_concepts[edge["target"]]["key"]
+    for node in neighborhood.get("nodes", []):
+        node["concept"] = all_concepts[node.pop("row")]["key"]
+        node["roots"] = [row["mapping"]["root_order"][index] for index in node.pop("root_rows", [])]
+        node["source_witness_groups"] = [
+            [row["mapping"]["root_order"][index] for index in group]
+            for group in node.get("source_witness_groups", [])
+        ]
+        node["candidates"] = [
+            row["mapping"]["candidates"][index]["key"] for index in node.pop("candidate_rows", [])
+        ]
+    for association in neighborhood.get("associations", []):
+        association["source"] = all_concepts[association["source"]]["key"]
+        association["target"] = all_concepts[association["target"]]["key"]
+        group = association.get("support_group")
+        if isinstance(group, dict):
+            group = cast(dict[str, object], group)
+            association["support_group"] = next(
+                (
+                    item
+                    for item in row["mapping"]["support_groups"]
+                    if item["key"] == group.get("key")
+                ),
+                group,
+            )
+        association["evidence_roots"] = [
+            row["mapping"]["root_order"][index] for index in association["evidence_roots"]
+        ]
+    return WaveNeighborhoodResult.model_validate(
+        {
+            "snapshot": {
+                "instance_id": instance_id,
+                "id": row["id"],
+                "identifier": row["identifier"],
+            },
+            "concepts": concepts,
+            "neighborhood": neighborhood,
+        }
+    )

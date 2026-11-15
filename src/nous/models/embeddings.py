@@ -21,6 +21,7 @@ from .contracts import EmbeddingResult
 from .policy import (
     attempt_reports,
     attempt_scope,
+    endpoint_path,
     error_report,
     model_error,
     retry_delay,
@@ -279,6 +280,7 @@ class EmbeddingExecutor:
                         "model_id": model_id,
                         "provider": model.provider,
                         "protocol": "openai-chat-completions",
+                        "endpoint_path": endpoint_path(snapshot, model.provider, "embeddings"),
                         "input_count": len(texts),
                         "input_indices": list[JsonValue](original_indices),
                     },

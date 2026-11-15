@@ -16,7 +16,7 @@ Provider 保存 ID、明确协议、API base URL、credential_ref 和网络覆�
 
 沿用现有 providers/models/presets/tasks 值模型，补齐 [字段专题](../foundation/configuration-model-media.md)。配置 ID 是小写 slug；网关模型名保持原样。
 
-capabilities 表示已经确认的操作能力；input_formats 说明可接受的实际 MIME；output_modes 指定 text/native/tool。`structured_output` 这类概括声明仍需落到具体输出模式。无法匹配时准备阶段返回能力缺项，不能通过移除参数悄悄改变所请求的语义。
+capabilities 表示已经确认的操作能力；input_formats 说明可接受的实际 MIME；模型的 output_modes 指定 text/native/tool。任务可选择 `prompted`，由文本路线接收 Schema 提示并经过完整校验；该策略不要求原生 Schema 或工具调用。`native` 和 `tool` 需要明确声明结构化能力及对应模式。无法匹配时准备阶段返回能力缺项。
 
 `nous tools model list` 读取本地配置。`nous tools model discover` 显式调用所选 Provider 的模型目录，得到可选模型名；目录存在并不证明视觉、音频、原生 Schema 或维度，真实调用按相应能力确认。探测使用同一执行资源，没有独立脚本 SDK 路径。
 

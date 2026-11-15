@@ -12,20 +12,18 @@ credential_ref = "gateway-key"
 
 [models.text]
 provider = "gateway"
-model_name = "REPLACE_WITH_ACTUAL_TEXT_MODEL"
-capabilities = ["text", "stream", "structured_output"]
-input_formats = ["text/plain"]
-output_modes = ["text", "native"]
+model_name = "REPLACE_WITH_ACTUAL_GENERAL_MODEL"
+capabilities = ["text", "image"]
+input_formats = ["text/plain", "image/png"]
+output_modes = ["text"]
 
-# 完成真实原生视频验证的模型可在 capabilities 增加 "video"，
-# 并在 input_formats 增加实际视频 MIME（如 "video/mp4"）；
-# 此时优先发送原生视频。仅声明图片格式时继续使用采样画面。
-[models.vision]
+# 按实际服务支持的媒体格式声明能力；这里只展示一种多媒体路线。
+[models.multimodal]
 provider = "gateway"
-model_name = "REPLACE_WITH_ACTUAL_VISION_MODEL"
-capabilities = ["text", "image", "structured_output"]
-input_formats = ["text/plain", "image/png", "image/jpeg"]
-output_modes = ["text", "native"]
+model_name = "REPLACE_WITH_ACTUAL_MULTIMODAL_MODEL"
+capabilities = ["text", "image", "audio", "video"]
+input_formats = ["text/plain", "image/png", "audio/wav", "video/mp4"]
+output_modes = ["text"]
 
 [models.text-embedding]
 provider = "gateway"
@@ -47,21 +45,51 @@ prompt = "summarize"
 output_mode = "text"
 
 [tasks.describe-media]
-model = "vision"
+model = "multimodal"
 preset = "reading"
 prompt = "describe-media"
 output_mode = "text"
 
 [tasks.extract-information]
-model = "vision"
+model = "multimodal"
 preset = "reading"
 prompt = "extract-information"
-output_mode = "native"
+output_mode = "prompted"
 
 [tasks.select-passages]
 model = "text"
 prompt = "select-passages"
-output_mode = "native"
+output_mode = "prompted"
+
+[tasks.arrange-reading]
+model = "text"
+prompt = "arrange-reading"
+output_mode = "prompted"
+
+[tasks.evaluate-passages]
+model = "text"
+prompt = "evaluate-passages"
+output_mode = "prompted"
+
+# 可选的专用重排端点：地址、凭据和模型都由实际服务配置。
+# [credentials.rerank-key]
+# kind = "file"
+# path = "credentials/rerank.key"
+#
+# [providers.rerank]
+# protocol = "http-rerank"
+# endpoint = "https://REPLACE_WITH_RERANK_API_BASE"
+# credential_ref = "rerank-key"
+#
+# [models.rerank]
+# provider = "rerank"
+# model_name = "REPLACE_WITH_ACTUAL_RERANK_MODEL"
+# capabilities = ["rerank"]
+# input_formats = ["text/plain"]
+#
+# [tasks.rank-passages]
+# model = "rerank"
+# operation = "rerank"
 
 [tasks.journal-draft]
 model = "text"
@@ -71,7 +99,7 @@ output_mode = "text"
 [tasks.journal-edit]
 model = "text"
 prompt = "journal-edit"
-output_mode = "native"
+output_mode = "prompted"
 
 [tasks.journal-rewrite]
 model = "text"
@@ -95,7 +123,7 @@ task = "journal-reflect"
 [tasks.annotate-concepts]
 model = "text"
 prompt = "annotate-concepts"
-output_mode = "native"
+output_mode = "prompted"
 
 [media.analysis]
 description_task = "describe-media"

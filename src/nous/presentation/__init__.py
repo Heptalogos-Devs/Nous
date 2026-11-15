@@ -132,6 +132,57 @@ def error_message(error: NousError, language: str = "zh-CN") -> str:
 
 def render_error(error: NousError, language: str = "zh-CN") -> str:
     lines = [f"[{error.code}] {error_message(error, language)}"]
+    if error.code == "model.request_failed":
+        route = error.details.get("route")
+        if isinstance(route, dict):
+            resource = " · ".join(
+                str(route[key]) for key in ("model_id", "provider", "protocol") if route.get(key)
+            )
+            if resource:
+                lines.append(
+                    translate("Model resource: {resource}", language).format(resource=resource)
+                )
+        method, path, status = (
+            error.details.get(key) for key in ("method", "endpoint_path", "status_code")
+        )
+        interface = " ".join(str(item) for item in (method, path) if item)
+        if status is not None:
+            interface = f"{interface} · HTTP {status}" if interface else f"HTTP {status}"
+        if interface:
+            lines.append(translate("Interface: {interface}", language).format(interface=interface))
+        if error.retry_after is not None:
+            lines.append(
+                translate("Retry after {seconds} seconds.", language).format(
+                    seconds=error.retry_after
+                )
+            )
+        request_id = error.details.get("request_id")
+        if isinstance(request_id, str) and request_id:
+            lines.append(
+                translate("Service request: {request}", language).format(request=request_id)
+            )
+        if error.operation_id:
+            lines.append(
+                translate("Operation: {operation}", language).format(operation=error.operation_id)
+            )
+        completed = error.details.get("completed_refs")
+        if isinstance(completed, list):
+            refs = [
+                str(item.get("identifier") or item.get("id"))
+                for item in completed
+                if isinstance(item, dict) and (item.get("identifier") or item.get("id"))
+            ]
+            if refs:
+                lines.append(
+                    translate("Completed: {references}", language).format(
+                        references=", ".join(refs)
+                    )
+                )
+        return "\n".join(lines)
+    if error.retry_after is not None:
+        lines.append(
+            translate("Retry after {seconds} seconds.", language).format(seconds=error.retry_after)
+        )
     if error.details:
         if error.code in {
             "configuration.apply_failed",

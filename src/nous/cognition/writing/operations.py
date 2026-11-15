@@ -14,6 +14,7 @@ from pydantic_core import to_jsonable_python
 
 from nous.application.contracts import BasicEvents, CallContext, LanguageEvents, define_operation
 from nous.common.errors import NousError, failure_code, failure_message
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.common.operations import (
     OperationIssue,
     add_error_context,
@@ -26,14 +27,7 @@ from nous.content.edits import TextChange, prepare_text_edit
 from nous.storage.content import PublishedContent
 
 from .. import schema
-from ..contracts import (
-    NamespaceRef,
-    NamespaceSelector,
-    RecordRef,
-    RecordRevisionRef,
-    RecordView,
-    RevisionSummary,
-)
+from ..contracts import NamespaceRef, NamespaceSelector, RecordView, RevisionSummary
 from ..feedback import FeedbackOperations
 from ..maintenance.contracts import MaintenanceCompleted, MaintenanceNotStarted
 from ..maintenance.operations import MaintenanceOperations
@@ -87,11 +81,11 @@ class RecordOperations:
         )
         return await self.core.scope.resolve_for(selector, owner)
 
-    async def _json(self, value: ExternalInput, call: CallContext) -> bytes:
+    async def _json(self, value: ExternalInput, call: CallContext) -> str:
         selected = await call.inputs.read_text(
             value.key, value.selection, call.settings.values.content.text_read_max_bytes
         )
-        return selected.data
+        return selected
 
     async def _source_choices(
         self, value: tuple[SourceChoice, ...] | ExternalInput, call: CallContext
@@ -163,7 +157,7 @@ class RecordOperations:
         body = await call.inputs.body(request.body)
         choices = await self._source_choices(request.sources, call)
         selected = await self.core.sources.prepare(namespace, choices, input_reader=call.inputs)
-        self.core.validate_body(body, selected.bindings)
+        self.core.validate_body(body, selected.sources)
         times = await self.core.prepare_times(request.times)
         published = await self.core.artifacts.content.publish_bytes(body.encode("utf-8"))
         async with self.database.write() as tx:
@@ -179,7 +173,7 @@ class RecordOperations:
                 purpose=request.purpose,
                 author=request.author,
                 viewpoint=request.viewpoint,
-                sources=selected.bindings,
+                sources=selected.sources,
             )
         return await self._after(commit, request.after, call)
 
@@ -265,7 +259,7 @@ class RecordOperations:
             additions = await self.core.sources.prepare(
                 namespace, choices, prefix="N", reserved_keys=reserved, input_reader=call.inputs
             )
-            changes = changes.model_copy(update={"add": (*changes.add, *additions.bindings)})
+            changes = changes.model_copy(update={"add": (*changes.add, *additions.sources)})
         bindings = changes.apply_to(original.sources)
         if changes.add:
             prepared = await self.core.sources.prepare(
@@ -276,7 +270,7 @@ class RecordOperations:
                 preserve_keys=True,
                 input_reader=call.inputs,
             )
-            bindings = changes.model_copy(update={"add": prepared.bindings}).apply_to(
+            bindings = changes.model_copy(update={"add": prepared.sources}).apply_to(
                 original.sources
             )
         times = metadata.get("times")

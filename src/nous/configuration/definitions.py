@@ -14,6 +14,7 @@ from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
     CredentialReference,
     EmbeddingConfig,
+    EvaluationConfig,
     ModelConfig,
     ModelExecutionConfig,
     PresetConfig,
@@ -22,6 +23,7 @@ from nous.models.configuration import (
     TaskAssignment,
 )
 from nous.temporal.coordinates import validate_coordinates
+from nous.transports.configuration import TransportConfig
 from nous.wave.configuration import WaveConfig
 
 from .metadata import ConfigMap, ConfigModel, setting
@@ -319,12 +321,14 @@ class NousConfig(ConfigModel):
     media: MediaConfig = Field(default_factory=MediaConfig)
     time: TimeConfig = Field(default_factory=TimeConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
+    transports: TransportConfig = Field(default_factory=TransportConfig)
     credentials: ConfigMap[ResourceId, CredentialReference] = Field(default_factory=dict)
     providers: ConfigMap[ResourceId, ProviderConfig] = Field(default_factory=dict)
     models: ConfigMap[ResourceId, ModelConfig] = Field(default_factory=dict)
     presets: ConfigMap[ResourceId, PresetConfig] = Field(default_factory=dict)
     tasks: ConfigMap[ResourceId, TaskAssignment] = Field(default_factory=dict)
     model_execution: ModelExecutionConfig = Field(default_factory=ModelExecutionConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     wave: WaveConfig = Field(default_factory=WaveConfig)
@@ -332,6 +336,12 @@ class NousConfig(ConfigModel):
 
     @model_validator(mode="after")
     def references_exist(self) -> Self:
+        for key in ("http", "mcp", "grpc"):
+            listener = getattr(self.transports, key)
+            if listener.credential_ref and listener.credential_ref not in self.credentials:
+                raise ValueError(
+                    f"transports.{key}.credential_ref: unknown credential {listener.credential_ref}"
+                )
         for key, provider in self.providers.items():
             if provider.credential_ref and provider.credential_ref not in self.credentials:
                 raise ValueError(

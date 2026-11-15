@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from nous.common.errors import NousError
+from nous.common.material_refs import RecordRevisionRef, WorkRevisionRef
 from nous.storage.content_types import BlobRef as BlobRef
 
 
@@ -35,6 +36,11 @@ class ContentValue(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class DeliveryBudget(ContentValue):
+    amount: int = Field(ge=1)
+    unit: Literal["characters", "bytes", "tokens"] = "characters"
+
+
 class ArtifactRef(ContentValue):
     kind: Literal["artifact"] = "artifact"
     id: str
@@ -57,6 +63,9 @@ class ResultOutputRef(ContentValue):
 
     result: ResultRef
     output: str = Field(min_length=1)
+
+
+type MaterialRef = RecordRevisionRef | ArtifactRef | ResultOutputRef | WorkRevisionRef
 
 
 class SourceSelection(ContentValue):
@@ -192,15 +201,22 @@ class ContentSelection(ContentValue):
     selection: SourceSelection = Field(default_factory=SourceSelection)
 
 
+class MaterialSource(ContentValue):
+    """One task-local source and its precise formal material selection."""
+
+    key: str = Field(min_length=1)
+    material: MaterialRef
+    selections: tuple[ContentSelection, ...] = Field(min_length=1)
+    kind: str = Field(default="source", min_length=1)
+    name: str | None = None
+
+
 class SelectedText(ContentValue):
-    """Exact source bytes and their absolute coordinate origin."""
+    """Text and its exact immutable source selection."""
 
     content: ContentSelection
     blob: BlobRef
-    data: bytes
     text: str
-    start_byte: int
-    end_byte: int
     first_line: int
 
 
@@ -225,8 +241,6 @@ class ContentReadView(ContentValue):
     byte_length: int
     body_text: str | None = None
     available_representations: tuple[ContentRepresentation, ...] = ()
-    export_ref: ArtifactRef
-    coverage: dict[str, JsonValue]
 
 
 class OriginSlice(ContentValue):
@@ -248,13 +262,15 @@ SourceRole = Literal[
 ]
 
 
-class SelectedSource(ContentValue):
-    """One logical source slot and its ordered, independently selected regions."""
+class SelectedSource(MaterialSource):
+    """A formal source and, when different, the selected input representations."""
 
-    slot_key: str = Field(min_length=1)
-    role: SourceRole = "source"
-    selections: tuple[ContentSelection, ...] = Field(min_length=1)
-    display_name: str | None = None
+    kind: SourceRole = "source"  # pyright: ignore[reportIncompatibleVariableOverride]
+    representations: tuple[InputPart, ...] = ()
+
+    @property
+    def input_selections(self) -> tuple[ContentSelection, ...]:
+        return tuple(part.content for part in self.representations) or self.selections
 
 
 class SourceFacts(ContentValue):
@@ -361,6 +377,13 @@ class OutputMapping(ContentValue):
     origins: tuple[ContentSelection, ...] = Field(min_length=1)
 
 
+class NamedSelection(ContentValue):
+    """Exact sources selected by a completed task under a task-local key."""
+
+    key: str = Field(min_length=1)
+    sources: tuple[ContentSelection, ...] = Field(min_length=1)
+
+
 class ModelProducer(ContentValue):
     """The model route and provider response that produced the result."""
 
@@ -373,17 +396,13 @@ class ModelProducer(ContentValue):
     deployment_revision: str | None = None
     request_id: str | None = None
     generated_at: datetime | None = None
-    template_version: str | None = None
     execution_signature: str | None = None
-    documentation_signature: str | None = None
 
 
 class ProgramProducer(ContentValue):
     """A deterministic or local program responsible for the completed output."""
 
     kind: Literal["program"] = "program"
-    operation: str = Field(min_length=1)
-    parameters: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class UserProducer(ContentValue):
@@ -401,12 +420,14 @@ class ResultFacts(ContentValue):
 
     operation: str = Field(min_length=1)
     producer: ProducerFacts
-    selected_inputs: SelectedInputs
+    selected_inputs: SelectedInputs = Field(default_factory=lambda: SelectedInputs(sources=()))
     inputs: tuple[InputGroup, ...] = ()
     request: dict[str, JsonValue] = Field(default_factory=dict)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
     coverage: dict[str, JsonValue] = Field(default_factory=dict)
     mappings: tuple[OutputMapping, ...] = ()
+    selections: tuple[NamedSelection, ...] = ()
+    material_sources: tuple[MaterialSource, ...] = ()
     dependencies: tuple[ContentDependency, ...] = ()
     formed_at: datetime
 
@@ -415,25 +436,80 @@ class ProcessingResult(ResultFacts):
     ref: ResultRef
     outputs: tuple[ResultOutput, ...]
     recorded_at: datetime
+    output_sources: dict[str, tuple[MaterialSource, ...]] = Field(exclude=True)
+
+    @model_validator(mode="after")
+    def output_source_associations(self) -> ProcessingResult:
+        if set(self.output_sources) != {output.name for output in self.outputs}:
+            raise ValueError("Every output must have an explicit source association")
+        if any(
+            source not in self.material_sources
+            for values in self.output_sources.values()
+            for source in values
+        ):
+            raise ValueError("Output source is absent from the result")
+        return self
+
+    def sources_for(self, output: str) -> tuple[MaterialSource, ...]:
+        if not any(item.name == output for item in self.outputs):
+            raise NousError("content.not_found", "Result output does not exist")
+        return self.output_sources[output]
 
 
 class ResultOutputView(ResultOutput):
     view: ContentReadView
+    sources: tuple[MaterialSource, ...] | None = None
 
 
-class ResultView(ResultFacts):
+class ResultView(ContentValue):
     ref: ResultRef
+    operation: str
+    producer: ProducerFacts
     outputs: tuple[ResultOutputView, ...]
     recorded_at: datetime
+    formed_at: datetime
+    selected_inputs: SelectedInputs | None = None
+    inputs: tuple[InputGroup, ...] | None = None
+    mappings: tuple[OutputMapping, ...] = ()
+    selections: tuple[NamedSelection, ...] = ()
+    sources: tuple[MaterialSource, ...] = ()
+    dependencies: tuple[ContentDependency, ...] = ()
     request: dict[str, JsonValue] = Field(default_factory=dict)
-    source_views: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
-    input_views: dict[str, tuple[ContentReadView, ...]] = Field(default_factory=dict)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    coverage: dict[str, JsonValue] = Field(default_factory=dict)
+    content_views: tuple[ContentReadView, ...] = ()
+
+    @property
+    def readable_sources(self) -> tuple[MaterialSource, ...]:
+        """Sources to display in order, without duplicating shared output sources."""
+        return tuple(
+            dict.fromkeys(
+                (
+                    *(source for output in self.outputs for source in (output.sources or ())),
+                    *self.sources,
+                    *(
+                        MaterialSource(
+                            key=source.key,
+                            material=source.material,
+                            selections=source.selections,
+                            kind=source.kind,
+                            name=source.name,
+                        )
+                        for source in (self.selected_inputs.sources if self.selected_inputs else ())
+                    ),
+                )
+            )
+        )
 
 
 class ReadResult(ContentValue):
     ref: str | ResultRef
     details: bool = False
     sources: bool = True
+
+
+class DeleteResult(ContentValue):
+    ref: str | ResultRef
 
 
 class ReadSelections(ContentValue):

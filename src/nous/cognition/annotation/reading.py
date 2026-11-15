@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import RowMapping
 
 from nous.common.errors import NousError
+from nous.common.material_refs import RecordRef, RecordRevisionRef
 from nous.content.contracts import ContentSelection, ResultRef
 from nous.content.schema import results as processing_results
 from nous.storage.database import ReadTx
@@ -21,7 +22,6 @@ from ..concept_contracts import (
     ConceptView,
 )
 from ..concepts import ConceptOperations
-from ..contracts import RecordRef, RecordRevisionRef
 
 
 async def read_views_in(

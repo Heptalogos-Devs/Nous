@@ -58,7 +58,7 @@ class ModelConnections:
                 "The model provider is not configured.",
                 details={"provider": provider_id},
             )
-        if provider.protocol != "openai-chat-completions":
+        if provider.protocol not in {"openai-chat-completions", "http-rerank"}:
             raise NousError(
                 "model.protocol_unsupported",
                 "The configured model protocol is not supported.",

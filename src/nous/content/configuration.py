@@ -12,6 +12,9 @@ class TextCacheConfig(ConfigModel):
 
 class ContentConfig(ConfigModel):
     text_cache: TextCacheConfig = Field(default_factory=TextCacheConfig)
+    tokenizer_path: str | None = setting(
+        None, min_length=1, description="Local tokenizer.json used for token delivery budgets."
+    )
     io_chunk_bytes: int = setting(
         1048576, ge=4096, apply="restart", description="Streaming content I/O block size in bytes."
     )

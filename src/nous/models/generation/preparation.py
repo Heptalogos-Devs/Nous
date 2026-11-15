@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import JsonValue
 
@@ -14,7 +14,6 @@ from nous.content.contracts import (
     ResultRef,
     SelectedInputs,
     SelectedSource,
-    SourceFacts,
     SourceTarget,
 )
 from nous.content.results import ResultStore
@@ -67,46 +66,22 @@ class GenerationPreparation:
             artifact, selection = await call.inputs.accept_target(target)
             sources.append(
                 SelectedSource(
-                    slot_key=f"S{index}",
+                    key=f"S{index}",
+                    material=artifact.ref,
                     selections=(ContentSelection(artifact=artifact.ref, selection=selection),),
-                    display_name=artifact.display_name,
+                    name=artifact.display_name,
                 )
             )
-        return await self._inspect_selected(SelectedInputs(sources=tuple(sources)), call.settings)
-
-    async def _inspect_selected(
-        self, selected: SelectedInputs, snapshot: ConfigSnapshot
-    ) -> SelectedInputs:
-        existing = {fact.artifact.id: fact for fact in selected.facts}
-        references = tuple(
-            dict.fromkeys(
-                item.artifact for source in selected.sources for item in source.selections
-            )
+        normalized, facts = await self.preparer.validate_selections(
+            [source.selections[0] for source in sources], settings=call.settings.values.media
         )
-        missing = tuple(ref for ref in references if ref.id not in existing)
-        for artifact in await self.results.artifacts.get_many(missing):
-            info = await self.preparer.inspect(artifact, snapshot.values.media)
-            existing[artifact.ref.id] = SourceFacts(
-                artifact=artifact.ref,
-                declared_mime=artifact.media_type,
-                detected_mime=str(info["media_type"]),
-                kind=cast(Literal["text", "image", "pdf", "audio", "video"], info["kind"]),
-                details=info,
-            )
-        normalized = await self.preparer.validate_selections(
-            [item for source in selected.sources for item in source.selections],
-            settings=snapshot.values.media,
-            facts={key: fact.details for key, fact in existing.items()},
+        return SelectedInputs(
+            sources=tuple(
+                source.model_copy(update={"selections": (selection,)})
+                for source, selection in zip(sources, normalized, strict=True)
+            ),
+            facts=facts,
         )
-        sources: list[SelectedSource] = []
-        offset = 0
-        for source in selected.sources:
-            count = len(source.selections)
-            sources.append(
-                source.model_copy(update={"selections": normalized[offset : offset + count]})
-            )
-            offset += count
-        return SelectedInputs(sources=tuple(sources), facts=tuple(existing.values()))
 
     async def prepare_input(
         self,
@@ -121,7 +96,17 @@ class GenerationPreparation:
     ) -> PreparedRun:
         async with self.execution.operation("model.prepare_input", snapshot):
             frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-            selected_inputs = await self._inspect_selected(input, snapshot)
+            existing = {fact.artifact.id: fact for fact in input.facts}
+            missing = tuple(
+                dict.fromkeys(
+                    selection.artifact
+                    for source in input.sources
+                    for selection in source.input_selections
+                    if selection.artifact.id not in existing
+                )
+            )
+            facts = await self.preparer.inspect_facts(missing, snapshot.values.media)
+            selected_inputs = input.model_copy(update={"facts": (*input.facts, *facts)})
             if unit is not None:
                 unit = replace(unit, inputs=selected_inputs)
             unavailable: dict[str, JsonValue] = {}
@@ -179,7 +164,7 @@ class GenerationPreparation:
                         [
                             item.artifact
                             for source in selected_inputs.sources
-                            for item in source.selections
+                            for item in source.input_selections
                         ]
                     )
                 ),

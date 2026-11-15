@@ -45,19 +45,23 @@ class ReflectionConfig(ConfigModel):
 
 
 class SearchConfig(ConfigModel):
+    steward: Literal["off", "optional", "required"] = setting(
+        "off", description="Default reading arrangement policy for cognitive queries."
+    )
+    include_work: bool = setting(False, description="Include current work states in retrieval.")
+    active_use_half_life: float | None = setting(
+        None, gt=0, description="Decay half-life in use-record distance for active memory, or none."
+    )
     passages_per_record: int = setting(
         2, ge=1, description="Maximum useful passages delivered per formal document."
     )
     space: str | None = setting(
         None, min_length=1, description="Embedding space for current retrieval."
     )
-    default_mode: Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] = (
-        setting("auto", description="Default current retrieval mode.")
-    )
     include_review: bool = setting(False, description="Include records awaiting review by default.")
     include_exploration: bool = setting(True, description="Include exploratory records by default.")
     local_candidate_max_bytes: int = setting(
-        4096, ge=256, description="Target maximum size for a complete-block retrieval candidate."
+        384, ge=256, description="Target maximum size for a complete-block retrieval candidate."
     )
 
 

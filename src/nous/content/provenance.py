@@ -12,7 +12,7 @@ from nous.common.errors import NousError
 from nous.storage.database import Database
 
 from . import schema
-from .contracts import ArtifactRef, SourceRole
+from .contracts import ArtifactRef
 
 if TYPE_CHECKING:
     from .artifacts import ArtifactStore
@@ -23,7 +23,7 @@ class ProvenanceRelation(BaseModel):
     child: ArtifactRef
     parent: ArtifactRef
     result_id: str
-    role: SourceRole
+    role: str
 
 
 class ProvenanceSummary(BaseModel):
@@ -86,21 +86,38 @@ class ProvenanceReader:
                 .where(schema.artifacts.c.id.in_(object_ids))
                 .cte("ancestors", recursive=True)
             )
-            part_step = sa.select(
-                walk.c.root, schema.parts.c.artifact_id.label("node")
+
+            def input_step(table: sa.Table):
+                return sa.select(walk.c.root, table.c.artifact_id.label("node")).select_from(
+                    walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node).join(
+                        table, table.c.result_id == schema.outputs.c.result_id
+                    )
+                )
+
+            part_step = input_step(schema.parts)
+            origin_step = input_step(schema.origins)
+            material_step = sa.select(
+                walk.c.root, schema.material_source_targets.c.artifact_id.label("node")
             ).select_from(
-                walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node).join(
-                    schema.parts, schema.parts.c.result_id == schema.outputs.c.result_id
+                walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node)
+                .join(
+                    schema.material_source_outputs,
+                    sa.and_(
+                        schema.material_source_outputs.c.result_id == schema.outputs.c.result_id,
+                        schema.material_source_outputs.c.output_name == schema.outputs.c.name,
+                    ),
+                )
+                .join(
+                    schema.material_source_targets,
+                    sa.and_(
+                        schema.material_source_targets.c.result_id
+                        == schema.material_source_outputs.c.result_id,
+                        schema.material_source_targets.c.source_ordinal
+                        == schema.material_source_outputs.c.source_ordinal,
+                    ),
                 )
             )
-            origin_step = sa.select(
-                walk.c.root, schema.origins.c.artifact_id.label("node")
-            ).select_from(
-                walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node).join(
-                    schema.origins, schema.origins.c.result_id == schema.outputs.c.result_id
-                )
-            )
-            walk = walk.union(part_step, origin_step)
+            walk = walk.union(part_step, origin_step, material_step)
             nodes = (
                 (
                     await tx.connection.execute(
@@ -134,10 +151,45 @@ class ProvenanceReader:
                     )
                 )
 
+            material_edges = sa.select(
+                schema.outputs.c.artifact_id.label("child"),
+                schema.material_source_targets.c.artifact_id.label("parent"),
+                schema.outputs.c.result_id,
+                schema.material_sources.c.kind.label("role"),
+            ).select_from(
+                reachable.join(schema.outputs, schema.outputs.c.artifact_id == reachable.c.node)
+                .join(
+                    schema.material_source_outputs,
+                    sa.and_(
+                        schema.material_source_outputs.c.result_id == schema.outputs.c.result_id,
+                        schema.material_source_outputs.c.output_name == schema.outputs.c.name,
+                    ),
+                )
+                .join(
+                    schema.material_sources,
+                    sa.and_(
+                        schema.material_sources.c.result_id
+                        == schema.material_source_outputs.c.result_id,
+                        schema.material_sources.c.ordinal
+                        == schema.material_source_outputs.c.source_ordinal,
+                    ),
+                )
+                .join(
+                    schema.material_source_targets,
+                    sa.and_(
+                        schema.material_source_targets.c.result_id
+                        == schema.material_source_outputs.c.result_id,
+                        schema.material_source_targets.c.source_ordinal
+                        == schema.material_source_outputs.c.source_ordinal,
+                    ),
+                )
+            )
             edges = (
                 (
                     await tx.connection.execute(
-                        sa.union(edge_select(schema.parts), edge_select(schema.origins))
+                        sa.union(
+                            edge_select(schema.parts), edge_select(schema.origins), material_edges
+                        )
                     )
                 )
                 .mappings()
@@ -156,7 +208,7 @@ class ProvenanceReader:
             )
             per_target[str(row["root"])].add(object_id)
         parents: dict[str, set[str]] = {}
-        supporting: dict[str, set[tuple[str, SourceRole]]] = {}
+        supporting: dict[str, set[tuple[str, str]]] = {}
         for edge in edges:
             parents.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
             if edge["role"] in {

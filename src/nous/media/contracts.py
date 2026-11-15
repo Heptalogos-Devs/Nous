@@ -10,6 +10,7 @@ from nous.content.contracts import (
     ArtifactRef,
     ContentSelection,
     InputGroup,
+    MaterialSource,
     ResultRef,
     SourceRole,
     SourceSelection,
@@ -50,6 +51,7 @@ class PreparedSource:
     media: tuple[BinaryContent, ...] = ()
     group: InputGroup | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    material_source: MaterialSource | None = None
 
     def bind_slot(
         self, slot_key: str, prefix: str, role: SourceRole, *, preserve_key: bool = False
