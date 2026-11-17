@@ -1,20 +1,14 @@
-# Nous design and development documents
+# Nous 文档责任与治理
 
-- (*) `agents/` holds Agent governance documents. An Agent reads and follows them when a requirement says to.
-- `design/` holds the design. Record only the current state, not the evolution and not the history.
-- `plans/` arranges work requested by the developer or supplied by a spec.
-- (*) `sources/` retains the original design discussions. A proposal there is not an approved decision.
-- `research/` holds research conclusions and external comparisons. A conclusion can change the implementation. It becomes a contract when a formal spec adopts it.
-- `development/` holds operating instructions and implementation records. They follow the current implementation and are not a design contract.
-- `examples/` holds configuration and manifest examples, and stays current with the actual format.
-- (*) `notes/` holds the developer's notes. Agents only read them.
+- (*) agents/：当前 Agent 规范与方法。有效 AntiRLHF 和 LLM 使用规范保持原貌。
+- design/：获接受的当前基础平台设计与实施合同；新领域设计另行讨论后进入。
+- references/：旧 Nous 产品语义、使用方式的历史参考。保留设计意图；旧实现细节没有现行约束效力。
+- research/：算法与产品使用研究；研究结论不自动转化为实施要求。
+- (*) sources/：原始设计讨论，保留原文；历史提案未经接受时只是研究材料。
+- (*) notes/：开发者笔记，默认只读。
 
-See [README.md](README.md) for navigation. No Agent may modify a document marked (*) unless the developer has explicitly requested it. When a change is required, produce the patch described by the root file, hand it to the developer for review, and edit the document directly only after authorization.
+标记 (*) 的文件或目录及根 AGENTS.md 属于治理保护范围，除开发者明确要求外不得改动；需要改变时按根指引交付提议补丁。
 
-## Update rules
+新仓基础阶段的真实实施必须记录在当前 design/ 与 CURRENT.md；代码完成状态由实际代码决定。旧 Python/PyO3 实现、旧施工计划、旧 CLI 操作记录完整保存在 legacy/nous-python/，不复制其实现约束。
 
-Define each rule in the topic that owns it. When a decision changes, replace the original text and migrate the related examples.
-Do not keep a compatibility note for a retired scheme in the body. CURRENT does not list a discussion archive.
-State a rule proposed by research, and a capability the source already has, as separate facts. The scheme chosen in a formal spec is the build contract.
-
-When changing an existing topic, start from the current text in the repository and edit only the paragraphs the new decision affects. Keep a contract the developer added while it remains in force. Update an external spec with a contextual patch, not by replacing the directory.
+更新设计时直接修订负责的现行文档，清除失效定义与索引。不得新增旧内部合同兼容路径。

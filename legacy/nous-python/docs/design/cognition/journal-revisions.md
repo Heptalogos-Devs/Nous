@@ -1,0 +1,41 @@
+# Journal 修订、并存观点与历史读取
+
+## 修订意义
+
+同一篇认识的纠错、补充和编辑产生新的 JournalRevision；旧版本保留其原文和来源。内容版本、现实中的变化、观点差异分别表达。
+
+| 情境 | 采用方式 |
+|---|---|
+| 日期/人物/理解写错 | 修订当前文稿，记录更正依据 |
+| 过去真实为 A，后来变成 B | 保留 A 的适用区间，写 B 的新状态/后续经历；必要时链接 successor |
+| 同一材料有不同视角 | 各自成篇并标作者/视角，不相互覆盖 |
+| 后来反思当年的经历 | 新反思 Journal 引用旧版本，可同时呈现当时与现在 |
+| 排版/语句修改 | 正文新版本，沿用仍准确的来源；标注重新绑定新正文 |
+
+正文不是每条主张唯一的时间数据库；需要局部有效时间或支持关系时，绑定其正文块及精确来源。不同关系的语义由所属 owner 维护。
+
+## 保存
+
+```text
+records.replace(exact_base, markdown, sources?, reason?, intent=edit, after=AfterWrite())
+records.apply(exact_base, changes, sources?, reason?, intent=edit, after=AfterWrite())
+  -> RecordOutcome
+```
+
+新字节先通过 CAS 发布；短 WriteTx 核对 expected_revision，登记新 revision 及引用，切换 current。并发发现当前版本已变化时返回实际 current 引用，调用者据新正文继续；不默默合并，也不自动重跑模型。
+
+修订是产品需要的历史。开发中调整内部表结构时，在明确选择的新实例使用当前定义；正式修订和精确来源按产品合同保留。
+
+## 标注与索引
+
+正文修订后旧 AnnotationSet 继续绑定旧正文，新 current 尚未标注时仍可普通读取与 lexical/dense 检索。需要路径计算时明确报告尚无对应标注，不把旧块位置装到新正文。
+
+索引快照固定正文、标注、Concept 意义及关系版本。保存推进 namespace generation，当前查询按 [当前检索](current-retrieval.md)捕获并发布一次完整视图；进行中的查询固定自己已捕获的快照。旧命中可读回精确旧版本，并提示有新版本；不能把旧分数对应的正文偷偷换成新正文。
+
+引用旧文稿的后续 Journal 保留正文。只有明确 current_basis 和对应依据纠正才产生待复核含义，状态通过有索引的依赖关系查询，普通 reference/inspiration 继续成立。具体采用与查询规则见 [时间和纠正](temporal-use.md)。
+
+## 历史视图
+
+历史 recorded 截面从实际保存的版本选择；同一时间戳用提交次序或 revision 顺序消除歧义。关于主体“当时知道什么”的查询还需要 observed、formed 和对应视角，不能只按 current_revision 或 recorded 时间猜测。
+
+精确时间规则见 [时间视图](../wave/temporal-views.md)。没有提供历史视图能力时明确仅支持当前/精确版本读取。

@@ -1,112 +1,35 @@
 # Nous Development Guide
 
-This file applies to the entire repository. When modifying content in one part of it, follow the `AGENTS.md` of the corresponding directory, such as [src/nous/AGENTS.md](src/nous/AGENTS.md). Rules belong in the file that loads where the work happens: native-side constraints live in `native/`, not in `src/nous/`.
+## 当前唯一开发目标
 
-No Agent may modify, move, or delete `AGENTS.md` or another file that governs Agents, such as the (*) documents listed in [docs/AGENTS.md](docs/AGENTS.md), unless the developer has explicitly permitted and requested it. When a requested change requires such a modification and that permission is absent, deliver it as `<TOPIC>.proposal.patch` in the repository root, remind the developer to review it, and keep working on unrelated parts. The patch is not repository content: Git ignores it, and you delete it once it has been applied.
+新仓优先完成一个**可单独安装、使用和发布**的通用 TypeScript/Rust 基础平台。独立平台经过真实、与 Nous 无关的应用使用并确认其可独立发布后停止本阶段，未经新的产品授权不继续编写 Nous 的记忆、Wave、Steward 等业务。
 
-If an action is rejected, do not bypass the rejection by wrapping or rephrasing the same action; report it if no separately authorized safe action is available.
+旧 Python/PyO3 系统保存在 legacy/nous-python/；PR #60 仍为独立历史开发分支。历史类名、包结构、内部表、测试和流程没有新仓实施权威。正常开发与检索排除 legacy/，研究特定算法或用户操作时按需定向阅读。
 
-Proactively use applicable Skills unless they require explicit invocation. Apply their methods within the user's instructions and repository rules; when a Skill conflicts with either, follow the applicable higher-priority instruction.
+产品目标参见 docs/design/FOUNDATION.md；真实进度见 docs/CURRENT.md。项目产品语义以项目宪纲和获接受的设计为先，旧讨论与文档用于研究，不能自动成为已批准决定。
 
-## AntiRLHF
+## 工程治理
 
-Read and apply the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md) before acting; if its complete text has already been supplied in the session, use that copy. The [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) explains its background and intent; read it when writing or assessing governance text or when a requirement's intent is unclear.
+开发前完整阅读并应用 docs/agents/antirlhf/CONSTITUTION.zh-CN.md，按需阅读 docs/agents/llm-use.md 及相关 Skills。治理原则、原始设计讨论和开发者笔记保持原有权限：未获明确请求不得修改治理文件、AGENTS.md 或 docs/AGENTS.md 指定的受保护内容。需要变更时提交议案补丁，继续其余已授权工作。
 
-## The Project and Current Work
+从完整用户操作决定接口、所有权及数据形状。模块应具有可直接使用的深接口；新增字段、参数、状态、转换、检查或适配层必须服务真实消费者。发现旧结构不适合需求，修改定义者及所有实际消费者并删除旧结构，不保留内部双轨或历史兼容。
 
-Nous is an independently installed long-term cognitive service, oriented toward memory, knowledge, sources, time, retrieval, and cognitive growth. The Python main application unifies domain operations and the formal entry points. Necessary Rust PyO3 Native takes on the performance hotspots.
+优先使用 Bun/标准库、成熟依赖和 Rust 既有计算成果；高性能计算由 Rust crate 负责，TS 负责业务及资源组织。跨包只能使用 exports 公共入口；包内相对导入合法，禁令按目标实际包归属判断。单次内部对象尽量直接传递值，正式引用仅在确有长期身份时建立。
 
-The code currently running is in `src/nous/`. `legacy/` is retired research material and does not participate in running; when a capability in it is needed, migrate/adapt it in according to the current contract, and do not restore the entire old runtime stack.
+禁用 TDD/红绿循环及机械测试清单。真实完整操作、独立失败和关键数值算法需要有价值的检查；单纯字段存在、成熟依赖内部及过时私有结构不必重复测试。审查应评估复杂性是否真正下降，不以通过率或代码行数代表架构质量。
 
-Read the relevant entries according to the task. There is no need to read all of the designs and historical discussions all the way through:
+## 工具与运行约定
 
-| What to understand | Entry |
-| --- | --- |
-| Current capabilities, goals, and subsequent work | [docs/CURRENT.md](docs/CURRENT.md) |
-| Ownership, dependency direction, and product boundaries | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Design topics, implementation plans, and document responsibilities | [docs/README.md](docs/README.md) |
-| Existing implementations, symbols, and owners | [src/nous/INDEX.md](src/nous/INDEX.md) |
-| Installation, running, and product entry points | [README.md](README.md) |
+Bun 1.4.4，TypeScript 7.0.2，Zod 4.6.7，Rust 1.100.0，napi-rs 3.x。Bun workspaces/catalog/isolated linker、bun.lock；Cargo workspace/Cargo.lock。TS 严格类型与项目引用；Rust 算子 crate 与薄 napi crate 分开，每个 worktree 自行构建其 Native 产物。
 
-`docs/design/` defines the current contract, `docs/plans/` arranges the dependencies and delivery of specific work, and `docs/sources/` retains the original discussions. Proposals in the original discussions cannot be taken directly as approved decisions. When code and design are inconsistent, judge, in conjunction with the current requirements, which side should be modified, and do not take the old implementation or old tests as the final standard.
+构建和检查由新仓统一命令 check:repo 提供，提交工具采用 Lefthook。此时新仓尚未创建该脚本，故不得假装旧 uv、PyO3 或 Python 脚本是有效构建命令。不要用外部 CI 或过时测试代替实际功能。
 
-## Engineering Choices & Principles
+仅在项目确实存在真实 Native/CLI 实现时运行相应检查；文档描述当前可用功能与尚未实现的能力，不编造通过记录。
 
-- The project is a prototype with no external consumers; keep `v0.1.0`. Replace unsuitable internal structures directly, migrate their producers, consumers, configuration, tests, and documents, and remove the replaced implementation and its support. Do not add incrementing internal version identifiers such as `v1`/`v2`, version chains, compatibility branches, or dual paths. Do not retain or back up old formats of internal structures being eliminated. Preserve user manuscript revisions and precise historical citations according to the product contract.
-- Use the formal capabilities of the project's mature dependencies for protocol clients, media parsing, and databases; do not duplicate them or add forwarding layers to preserve an unsuitable structure. Do not mechanically create a service, repository, or manager for every concept.
-- Remain vendor-neutral. LLM services are accessed through a unified gateway. "New API" is one usable gateway. Production code does not add special business behavior for a particular external platform. Configure the work according to explicit protocol, capability, and task, and do not guess capabilities from model names.
-- Follow the [LLM usage and prompt guide](docs/agents/llm-use.md) when designing or assessing model calls. Provide the context needed for the task and assess outputs using the information actually available to the model.
+临时工作和样本放入仓库忽略的 temp/。跨平台代码不写入开发者机器的绝对路径，Portable 发行必须含程序、资源与对应平台 Native 模块。不要通过自动安装或自启动更改开发者环境。
 
-## Code Review
+## 文档与参考
 
-Review the scope the user requests. For work in progress, inspect the relevant staged, unstaged, and new files; use the user request and available design when there is no separate specification or issue.
+docs/design/ 是当前接受的基础平台方案；docs/references/ 保存旧产品设计与使用场景；docs/research/ 是研究；docs/sources/ 是历史原始资料；legacy/ 保留旧实现和执行文档。活动文档随职责和合同变化原地更新，移除失效机制的描述。
 
-## Verification
-
-TDD and red-green cycles are prohibited. Do not add shallow tests, field-existence tests, or repeated verification of behavior that a dependency already owns. Prefer the real user entry point for complete-path verification; use focused tests for key contracts, security details, and independently failing behavior with protective value. Testing invalid input or failures does not constitute a red-green cycle.
-
-Choose verification that can expose problems in the change, including relevant success and failure behavior. Report what was actually run, distinguish simulation from real external services, and state unverified scope. Do not substitute test counts or an all-green run for observed results and product judgment. DO NOT treat a development report or remote CI as evidence.
-
-When an old test only protects an old implementation, delete it together with the old implementation. Migrate usage situations that still have value to the new entry point. Do not, for tests, add a dedicated export point or a parallel implementation to production code, or set up an extra test framework.
-
-Tests are located in `tests`; scaffolding, probes and experimental scripts go in `temp/` under the Temporary Data rules.
-
-## Document Maintenance
-
-When design, a public contract, or responsibilities change, update the responsible topic and affected indexes in place, and remove statements that no longer hold. Define each rule in one responsible place; other places cite it.
-
-For important classes and methods, use comments to state responsibilities, state boundaries, or non-obvious invariants, and do not restate the implementation line by line. For the details, see [docstring standard](docs/agents/docstring-std.md).
-
-`CURRENT.md` records current capabilities, decisions in effect, and remaining work. DO NOT write it as an operations log or changelog. DO NOT write each correction up as a permanent prohibition, and DO NOT leave retired schemes, the implementation process, or self-review explanations in product documents, code comments, or the UI.
-
-## Development Environment and Commands
-
-Use Python 3.14 and uv. When running or building the project, first set up the development environment in the repository root so the virtual environment, downloads, and caches are located in `temp/`. A source build also needs Rust 1.97 and a C/C++ toolchain: `uv sync --locked` builds the PyO3 extension through maturin.
-
-Linux / macOS:
-
-```bash
-source ./dev.sh env
-```
-
-Windows PowerShell:
-
-```powershell
-. ./dev.ps1 env
-```
-
-Install development dependencies with `uv sync --locked`. Product entry points are in [README.md](README.md); use `uv run --locked nous --help` or `uv run --locked nous tools --help` for command help.
-
-Before a commit, run the development check from the repository root:
-
-```powershell
-pwsh -File ./scripts/check/run.ps1
-```
-
-```sh
-sh scripts/check/run.sh
-```
-
-Choose targeted tests or `all` as appropriate for the change. Options, thresholds, the CI profile, and hook commands are in [scripts/check/README.md](scripts/check/README.md).
-
-When a change affects product behavior, check the relevant operation through a real `nous` command on the instance described in [README.md](README.md).
-
-Audio and video processing requires FFmpeg and ffprobe. Configure them through PATH, or through `media.ffmpeg_path` and `media.ffprobe_path`. For the concrete product commands, see the [Tools CLI](docs/design/interfaces/tools-cli.md). When model resources are involved, read the [model configuration example](docs/examples/models.toml) and the related design. Do not write the gateway address, model name, or credentials of a particular development machine as product defaults.
-
-This project is cross-platform. Except where the requirement itself involves platform adaptation, do not write the development machine's absolute paths or its particular settings into project documents or Git, and do not create long-term autostart or background services.
-
-## Temporary Data
-
-Put temporary generated products, reference repositories, worktrees, downloads, installations, and experimental scripts in `temp/`. Keep requested deliverables and generated project files at their required destinations. Do not scatter temporary project content into the user directory or other locations; existing external development tools may continue to be used.
-
-Use the [temp management tool](scripts/temp/README.md) to create directories, view status, and clean up. Recursive shell deletion commands are prohibited and usually blocked. For authorized temporary cleanup, use the temp tool to preview and select the specific paths, then apply the intended cleanup.
-
-## Code and Reference Retrieval
-
-`src/nous/INDEX.md` owns the file, symbol and owner map; the `AGENTS.md` files state the constraints at each insertion point. When a `.codegraph/` index exists, use CodeGraph for symbols and code relationships; otherwise skip it. Use Zvec-grep for semantic and lexical discovery when available. See the [retrieval handbook](docs/agents/retrieval.md) for tool usage and reference projects.
-
-```sh
-codegraph explore "<symbols or questions>"
-```
-
-Refresh an existing index when needed. Initialize retrieval tools through `. ./dev.ps1 init` or `source ./dev.sh init` when the user requests setup; initialization installs tools, creates indexes and updates Codex MCP configuration. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.
+根 AGENTS.md 保护和目录 AGENTS.md 的文档权限限制延续。
