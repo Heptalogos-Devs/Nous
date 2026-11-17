@@ -1,0 +1,70 @@
+# Local workspace and runtime files
+/temp/
+/work/
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.log
+
+# Agent governance change proposals (reviewed and applied by the developer)
+*.proposal.patch
+
+# Python environments, caches, and distributions
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Rust
+target/
+
+# Node.js dependencies and caches
+node_modules/
+.zvec-grep/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Editors and IDEs
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+
+# macOS, Windows, and Linux desktop metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.directory

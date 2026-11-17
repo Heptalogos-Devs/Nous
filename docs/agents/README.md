@@ -1,12 +1,10 @@
-# 编码 Agent 文档
+# Agent 规范与工程说明
 
-| 内容 | 入口 |
-| --- | --- |
-| AntiRLHF 行为要求、背景与配套材料 | [antirlhf/](antirlhf/README.md) |
-| temp 目录、材料组织与管理命令 | [temp 管理工具](../../scripts/temp/README.md) |
-| 开发检查、格式、长度与测试 | [开发检查工具](../../scripts/check/README.md) |
-| 代码、文档与参考项目检索 | [retrieval.md](retrieval.md) |
-| 模型任务、输入与提示词 | [llm-use.md](llm-use.md) |
-| Python 接口文档 | [docstring-std.md](docstring-std.md) |
+本目录保留真正影响工程行为的治理规范。AntiRLHF 的完整正文及关联资料原样保留。
 
-项目开发入口仍是根目录的 [AGENTS.md](../../AGENTS.md)，源码职责定位见 [src/nous/INDEX.md](../../src/nous/INDEX.md)。
+- antirlhf/：适用于当前开发的价值标准及原则。
+- llm-use.md：LLM 使用、真实输入、结构化输出和 Prompt 设计原则。
+- interface-docs.md：TypeScript SDK 的接口文档要求。
+- retrieval.md：新工作区检索和参考资料使用方法。
+
+原 Python docstring 规范保存在 legacy/nous-python/docs/agents/docstring-std.md，不再用于本仓现行代码。
